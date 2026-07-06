@@ -80,6 +80,10 @@ export interface AssignIssueInput {
   actor: string | null;
 }
 
+export interface ArchiveIssueInput {
+  identifier: string;
+}
+
 export interface IssueReference {
   id: string;
   identifier: string;
@@ -233,11 +237,15 @@ export function listIssues(context: ServiceContext, filters: ListIssueFilters = 
     conditions.push(inArray(issues.cycleId, cycleIds));
   }
 
-  return context.db.query.issues.findMany({
-    where: conditions.length ? and(...conditions) : undefined,
-    orderBy: [asc(issues.teamId), asc(issues.number)],
-    limit: filters.limit
-  }).sync().map((issue) => withIssueDetails(context, issue));
+  return context.db
+    .select({ issue: issues })
+    .from(issues)
+    .innerJoin(teams, eq(teams.id, issues.teamId))
+    .where(conditions.length ? and(...conditions) : undefined)
+    .orderBy(asc(teams.key), asc(issues.number), asc(issues.id))
+    .limit(filters.limit ?? -1)
+    .all()
+    .map(({ issue }) => withIssueDetails(context, issue));
 }
 
 export function updateIssue(context: ServiceContext, issueIdentifier: string, input: UpdateIssueInput) {
@@ -356,6 +364,38 @@ export function assignIssue(
         }
       });
     }
+
+    return getIssue(txContext, issue.identifier);
+  });
+}
+
+export function archiveIssue(context: ServiceContext, issueIdentifier: string) {
+  requireActor(context);
+
+  return inTransaction(context, (txContext) => {
+    const issue = getIssueByIdOrIdentifier(txContext, issueIdentifier);
+
+    if (issue.archivedAt !== null) {
+      return getIssue(txContext, issue.identifier);
+    }
+
+    const now = txContext.clock.now().toISOString();
+
+    txContext.db
+      .update(issues)
+      .set({
+        archivedAt: now,
+        updatedAt: now
+      })
+      .where(eq(issues.id, issue.id))
+      .run();
+
+    appendActivity(txContext, {
+      issueId: issue.id,
+      actorId: requireActor(txContext).id,
+      action: "archived",
+      data: { identifier: issue.identifier }
+    });
 
     return getIssue(txContext, issue.identifier);
   });

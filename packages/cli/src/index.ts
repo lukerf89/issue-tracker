@@ -5,6 +5,8 @@ import {
   ConfigKey,
   addComment,
   addCommentInputSchema,
+  archiveIssue,
+  archiveIssueInputSchema,
   archiveLabel,
   archiveLabelInputSchema,
   assignIssue,
@@ -505,6 +507,20 @@ export function createProgram(): Command {
         printComment(
           addComment(cli.context, issueCommentInput(identifier, body, options)),
           options
+        );
+      })
+    );
+  issue
+    .command("archive")
+    .argument("<identifier>")
+    .option("--json", "print JSON output")
+    .action((identifier, _options, command) =>
+      withContext(command, {}, (cli) => {
+        const input = archiveIssueInputSchema.parse({ identifier });
+        printIssue(
+          cli.context,
+          archiveIssue(cli.context, input.identifier),
+          optionsWithGlobals(command)
         );
       })
     );

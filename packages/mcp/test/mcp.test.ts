@@ -10,14 +10,17 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   applyMigrations,
+  archiveIssue,
   archiveLabel,
   createActor,
   createCycle,
   createIssue,
   createLabel,
+  createProject,
   getActor,
   init,
   listActors,
+  moveIssue,
   openDb,
   whoami,
   type Clock,
@@ -78,6 +81,53 @@ describe("MCP server", () => {
       const cliOutput = tracker(dbPath, ["issue", "view", created.identifier, "--json"]);
 
       expect(`${JSON.stringify(fetched)}\n`).toBe(cliOutput);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("returns byte-identical list_issues JSON to CLI issue list --json for combined filters", async () => {
+    const dbPath = initializedDbPath();
+    createListFilterFixtures(dbPath);
+    const client = await connectClient(dbPath, { handle: "list-agent" });
+
+    try {
+      const filter = {
+        state: "In Progress",
+        assignee: "build-agent",
+        project: "Platform Foundations",
+        cycle: 1,
+        label: "Bug",
+        priority: 1,
+        team: "ENG",
+        includeArchived: true
+      };
+      const listed = await callJsonTool(client, "list_issues", filter);
+      const cliOutput = tracker(dbPath, [
+        "issue",
+        "list",
+        "--state",
+        filter.state,
+        "--assignee",
+        filter.assignee,
+        "--project",
+        filter.project,
+        "--cycle",
+        String(filter.cycle),
+        "--label",
+        filter.label,
+        "--priority",
+        String(filter.priority),
+        "--team",
+        filter.team,
+        "--include-archived",
+        "--json"
+      ]);
+
+      expect(
+        (listed as unknown as Array<Record<string, unknown>>).map((issue) => issue.identifier)
+      ).toEqual(["ENG-1", "ENG-2"]);
+      expect(`${JSON.stringify(listed)}\n`).toBe(cliOutput);
     } finally {
       await client.close();
     }
@@ -489,6 +539,67 @@ function createCycleFixtures(dbPath: string) {
       firstCycleId: first.id,
       secondCycleId: second.id
     };
+  } finally {
+    setup.close();
+  }
+}
+
+function createListFilterFixtures(dbPath: string): void {
+  const setup = openContext(dbPath);
+
+  try {
+    setup.context.actor = whoami(setup.context);
+    createActor(setup.context, {
+      type: "agent",
+      name: "Build Agent",
+      handle: "build-agent"
+    });
+    createProject(setup.context, {
+      name: "Platform Foundations",
+      status: "planned"
+    });
+    createLabel(setup.context, { name: "Bug", color: "#EF4444" });
+    createLabel(setup.context, { name: "Docs", color: "#22C55E" });
+    createCycle(setup.context, { team: "ENG", name: "Cycle 1" });
+
+    createIssue(setup.context, {
+      title: "Active matching issue",
+      assignee: "build-agent",
+      project: "Platform Foundations",
+      cycle: 1,
+      priority: 1,
+      labels: ["Bug"]
+    });
+    createIssue(setup.context, {
+      title: "Archived matching issue",
+      assignee: "build-agent",
+      project: "Platform Foundations",
+      cycle: 1,
+      priority: 1,
+      labels: ["Bug"]
+    });
+    createIssue(setup.context, {
+      title: "Wrong priority",
+      assignee: "build-agent",
+      project: "Platform Foundations",
+      cycle: 1,
+      priority: 2,
+      labels: ["Bug"]
+    });
+    createIssue(setup.context, {
+      title: "Wrong label",
+      assignee: "build-agent",
+      project: "Platform Foundations",
+      cycle: 1,
+      priority: 1,
+      labels: ["Docs"]
+    });
+
+    moveIssue(setup.context, "ENG-1", "In Progress");
+    moveIssue(setup.context, "ENG-2", "In Progress");
+    moveIssue(setup.context, "ENG-3", "In Progress");
+    moveIssue(setup.context, "ENG-4", "In Progress");
+    archiveIssue(setup.context, "ENG-2");
   } finally {
     setup.close();
   }

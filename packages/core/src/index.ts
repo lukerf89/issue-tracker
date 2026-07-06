@@ -64,12 +64,14 @@ export {
   type ListLabelsOptions
 } from "./services/label.js";
 export {
+  archiveIssue,
   assignIssue,
   createIssue,
   getIssue,
   listIssues,
   moveIssue,
   updateIssue,
+  type ArchiveIssueInput,
   type AssignIssueInput,
   type CreateIssueInput,
   type IssueReference,
@@ -111,6 +113,7 @@ export {
 } from "./schemas/cycle.js";
 export { addCommentInputSchema } from "./schemas/comment.js";
 export {
+  archiveIssueInputSchema,
   assignIssueInputSchema,
   createIssueInputSchema,
   getIssueInputSchema,

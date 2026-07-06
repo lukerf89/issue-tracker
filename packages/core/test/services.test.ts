@@ -9,6 +9,7 @@ import {
   addComment,
   addCommentInputSchema,
   applyMigrations,
+  archiveIssue,
   archiveLabel,
   assignIssue,
   assignIssueInputSchema,
@@ -428,6 +429,132 @@ describe("core services", () => {
         "ENG-1",
         "ENG-3"
       ]);
+    } finally {
+      close();
+    }
+  });
+
+  it("composes issue list filters, orders by team key and number, and hides archived issues by default", () => {
+    const { context, db, close } = initializedContext();
+
+    try {
+      createTeam(context, { key: "OPS", name: "Operations" });
+      createActor(context, {
+        type: "agent",
+        name: "Build Agent",
+        handle: "build-agent"
+      });
+      const project = createProject(context, {
+        name: "Platform Foundations",
+        status: "planned"
+      });
+      createLabel(context, { name: "Bug", color: "#EF4444" });
+      createLabel(context, { name: "Docs", color: "#22C55E" });
+      createCycle(context, { team: "ENG", name: "Cycle 1" });
+      createCycle(context, { team: "OPS", name: "Cycle 1" });
+
+      createIssue(context, {
+        title: "Matching engineering issue",
+        team: "ENG",
+        assignee: "build-agent",
+        project: project.id,
+        cycle: 1,
+        priority: 1,
+        labels: ["Bug"]
+      });
+      createIssue(context, {
+        title: "Wrong state",
+        team: "ENG",
+        assignee: "build-agent",
+        project: project.id,
+        cycle: 1,
+        priority: 1,
+        labels: ["Bug"]
+      });
+      createIssue(context, {
+        title: "Wrong priority",
+        team: "ENG",
+        assignee: "build-agent",
+        project: project.id,
+        cycle: 1,
+        priority: 2,
+        labels: ["Bug"]
+      });
+      createIssue(context, {
+        title: "Wrong label",
+        team: "ENG",
+        assignee: "build-agent",
+        project: project.id,
+        cycle: 1,
+        priority: 1,
+        labels: ["Docs"]
+      });
+      createIssue(context, {
+        title: "Matching operations issue",
+        team: "OPS",
+        assignee: "build-agent",
+        project: project.id,
+        cycle: 1,
+        priority: 1,
+        labels: ["Bug"]
+      });
+
+      moveIssue(context, "ENG-1", "In Progress");
+      moveIssue(context, "ENG-3", "In Progress");
+      moveIssue(context, "ENG-4", "In Progress");
+      moveIssue(context, "OPS-1", "In Progress");
+
+      expect(listIssues(context, { team: "OPS" }).map((issue) => issue.identifier)).toEqual([
+        "OPS-1"
+      ]);
+      expect(listIssues(context, { limit: 2 }).map((issue) => issue.identifier)).toEqual([
+        "ENG-1",
+        "ENG-2"
+      ]);
+      expect(
+        listIssues(context, {
+          state: "In Progress",
+          assignee: "build-agent",
+          project: project.id,
+          cycle: 1,
+          label: "Bug",
+          priority: 1,
+          team: "ENG"
+        }).map((issue) => issue.identifier)
+      ).toEqual(["ENG-1"]);
+
+      context.clock = fixedClock("2026-01-01T00:30:00.000Z");
+      const archived = archiveIssue(context, "ENG-1");
+
+      expect(archived.archivedAt).toBe("2026-01-01T00:30:00.000Z");
+      expect(getIssue(context, "ENG-1").archivedAt).toBe("2026-01-01T00:30:00.000Z");
+      expect(
+        listIssues(context, {
+          state: "In Progress",
+          assignee: "build-agent",
+          project: project.id,
+          cycle: 1,
+          label: "Bug",
+          priority: 1,
+          team: "ENG"
+        })
+      ).toEqual([]);
+      expect(
+        listIssues(context, {
+          state: "In Progress",
+          assignee: "build-agent",
+          project: project.id,
+          cycle: 1,
+          label: "Bug",
+          priority: 1,
+          team: "ENG",
+          includeArchived: true
+        }).map((issue) => issue.identifier)
+      ).toEqual(["ENG-1"]);
+      expect(readActivityEntries(db).at(-1)).toMatchObject({
+        action: "archived",
+        data: { identifier: "ENG-1" }
+      });
     } finally {
       close();
     }

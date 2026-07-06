@@ -203,6 +203,48 @@ describe("tracker CLI", () => {
     expect(records.map((record) => record.priority)).toEqual([1]);
   });
 
+  it("archives issues, hides them from list by default, includes them on request, and still views them", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Archive completed work"])).status).toBe(
+      0
+    );
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Keep active work"])).status).toBe(
+      0
+    );
+
+    const archived = await tracker(dbPath, ["issue", "archive", "ENG-1", "--json"]);
+    expect(archived.status).toBe(0);
+    expect(JSON.parse(archived.stdout)).toMatchObject({
+      identifier: "ENG-1",
+      archivedAt: expect.any(String)
+    });
+
+    const visible = await tracker(dbPath, ["issue", "list", "--json"]);
+    expect(visible.status).toBe(0);
+    expect(
+      (JSON.parse(visible.stdout) as Array<Record<string, unknown>>).map(
+        (issue) => issue.identifier
+      )
+    ).toEqual(["ENG-2"]);
+
+    const all = await tracker(dbPath, ["issue", "list", "--include-archived", "--json"]);
+    expect(all.status).toBe(0);
+    expect(
+      (JSON.parse(all.stdout) as Array<Record<string, unknown>>).map(
+        (issue) => issue.identifier
+      )
+    ).toEqual(["ENG-1", "ENG-2"]);
+
+    const viewed = await tracker(dbPath, ["issue", "view", "ENG-1", "--json"]);
+    expect(viewed.status).toBe(0);
+    expect(JSON.parse(viewed.stdout)).toMatchObject({
+      identifier: "ENG-1",
+      archivedAt: expect.any(String)
+    });
+  });
+
   it("creates and clears sub-issues through parent flags and shows relationships in view JSON", async () => {
     const dbPath = tempDbPath();
 
