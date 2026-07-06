@@ -58,6 +58,8 @@ implementation is optimized for two consumers with equal weight:
 - Not aiming for 100% Linear feature parity (no triage inbox, SLAs, insights
   dashboards, integrations marketplace, etc.). We implement the subset I actually
   use.
+- No hard-delete-first workflows. Normal deletion-like actions archive records or
+  move issues to a terminal canceled state so history remains intact.
 - No mobile app.
 
 ---
@@ -221,7 +223,7 @@ seeded per team on creation.
 | `estimate`      | points, optional                                            |
 | `dueDate`       | optional                                                    |
 | `sortOrder`     | float for manual ordering                                   |
-| `createdAt` / `updatedAt` / `startedAt` / `completedAt` / `canceledAt` | timestamps |
+| `createdAt` / `updatedAt` / `startedAt` / `completedAt` / `canceledAt` / `archivedAt` | timestamps |
 
 **Label** — `id`, `name`, `color`, optional `group`. Many-to-many with issues via
 `issue_labels`.
@@ -237,13 +239,15 @@ regardless of whether the actor is me or an agent.
 | -------- | ---------------------------------- |
 | `id`     | UUID                               |
 | `type`   | `human \| agent`                   |
-| `name`   | display name (e.g. `Luke`, `claude-code`) |
+| `name`   | display name (e.g. `Human Owner`, `claude-code`) |
 | `handle` | unique short handle                |
 
 **Attachment / Link** — connects an issue to external work: a branch, a PR/commit
-URL, or an arbitrary link. `id`, `issueId`, `kind` (`link \| branch \| pr`),
-`title`, `url`, `createdAt`. Lets agent output (a branch, a PR) point back at the
-issue that spawned it.
+URL, or an arbitrary link. `id`, `issueId`, `kind`
+(`link \| branch \| pr \| commit`), `title`, `url?`, `repoPath?`, `remote?`,
+`branchName?`, `commitSha?`, `createdAt`. Generic links require `url`. Repo-aware
+kinds require `repoPath` plus the relevant branch, PR URL, or commit SHA so agent
+output is traceable even across multiple local repositories.
 
 **Activity** — append-only audit log. `id`, `issueId`, `actorId`, `action`
 (`created \| state_changed \| assigned \| commented \| …`), `data` (JSON diff),
@@ -256,20 +260,74 @@ from the owning team's monotonic `issueCounter`, allocated in the same transacti
 as the insert so numbers never collide or reuse. The internal `id` (UUID) is the
 foreign-key target everywhere else.
 
+### 5.3 Behavioral Contracts
+
+These rules belong in the core package and apply equally to CLI and MCP calls.
+
+- **Default state:** creating an issue without an explicit state puts it in the
+  team's `unstarted` default state, seeded as `Todo`.
+- **Lifecycle timestamps:** moving an issue into a `started` state sets
+  `startedAt` if it is empty. Moving into a `completed` state sets `completedAt`
+  and clears `canceledAt`. Moving into a `canceled` state sets `canceledAt` and
+  clears `completedAt`. Reopening a completed or canceled issue clears terminal
+  timestamps, then sets `startedAt` again if the target state is started.
+- **Issue numbering:** the team counter increment and issue insert happen in one
+  transaction. Identifiers are never reused, including after archive/cancel.
+- **Actor attribution:** CLI writes default to `tracker whoami`. MCP writes require
+  an actor handle from the calling agent context. Unknown MCP agent handles are
+  auto-created as `agent` actors; human actors must be created explicitly.
+- **Archival over deletion:** normal workflows archive teams, projects, labels,
+  and issues instead of hard deleting them. Archived records are hidden from
+  default list commands but remain addressable by ID/identifier and visible with
+  explicit include-archived filters.
+- **Activity log:** create, update, move, assign, comment, link, and archive actions
+  append an activity record in the same transaction as the change.
+- **JSON contract:** JSON responses use ISO 8601 timestamps, explicit `null` for
+  absent optional values, stable camelCase field names, and deterministic default
+  ordering. Errors include `code`, `message`, and optional `details`.
+- **Concurrency:** SQLite runs in WAL mode with a busy timeout. Mutating service
+  methods use explicit transactions so concurrent agents cannot allocate duplicate
+  issue numbers or write partial activity records.
+
+### 5.4 Data Integrity
+
+The database should enforce the core invariants, not rely on callers to remember
+them.
+
+- **Unique constraints:** team keys are unique; actor handles are unique; issue
+  `(teamId, number)` pairs are unique; issue identifiers are unique; workflow state
+  names are unique per team; cycle numbers are unique per team; label names are
+  unique within their optional group.
+- **Foreign keys:** issue references to team, state, project, cycle, parent,
+  assignee, and creator are enforced. Comments, attachments, labels, and activity
+  records must reference existing issues and actors.
+- **Delete policy:** regular product commands archive records. Internal hard deletes
+  are reserved for tests, failed setup cleanup, or explicit future maintenance
+  commands. Issue history, comments, attachments, and activity are retained when an
+  issue is archived.
+- **Ordering:** workflow states, milestones, and manually ordered issues use stable
+  numeric positions. Reordering should only change the affected collection.
+- **Validation boundaries:** Zod validates external input at CLI/MCP edges; core
+  services re-check invariants that depend on database state.
+
 ---
 
 ## 6. CLI Surface (`tracker`)
 
 Human-first, keyboard-fast. Every read command accepts `--json` for scripting and
 agents. Global flags: `--db <path>`, `--json`, `--team <key>`.
+List commands hide archived records by default and accept `--include-archived`
+where archived records are meaningful.
 
 ```
-tracker init                       # create the DB, seed a first team + states + me
+tracker init                       # create the DB, seed a first team + states + actor
 tracker whoami                     # show the current default actor
 tracker config [get|set] <k> [v]   # local settings
+tracker backup [--output <path>]    # copy the SQLite DB to a timestamped backup
+tracker export --json [--output <path>]
 
-tracker team    create|list
-tracker project create|list|view|update
+tracker team    create|list|archive
+tracker project create|list|view|update|archive
 tracker cycle   create|list
 
 tracker issue create   [--title] [--desc] [--team] [--project] [--priority]
@@ -281,14 +339,31 @@ tracker issue update   <identifier> [--title] [--desc] [--priority] ...
 tracker issue move     <identifier> <state>        # change workflow state
 tracker issue assign   <identifier> <actor|--me|--none>
 tracker issue comment  <identifier> <body>
-tracker issue link     <identifier> <url> [--kind pr|branch|link]
+tracker issue link     <identifier> <url> [--kind link]
+tracker issue link     <identifier> --kind branch --repo <path> --branch <name>
+tracker issue link     <identifier> --kind pr --repo <path> --url <url>
+tracker issue link     <identifier> --kind commit --repo <path> --sha <sha>
+tracker issue archive  <identifier>
 
-tracker label   create|list
+tracker actor   create|list
+tracker label   create|list|archive
 tracker mcp                        # run the MCP server on stdio
 ```
 
 Default `issue list` output is a compact table (identifier, priority, state, title,
 assignee). `--json` returns the full structured records.
+
+Example error shape:
+
+```json
+{
+  "error": {
+    "code": "ISSUE_NOT_FOUND",
+    "message": "Issue ENG-404 was not found.",
+    "details": { "identifier": "ENG-404" }
+  }
+}
+```
 
 ---
 
@@ -297,20 +372,27 @@ assignee). `--json` returns the full structured records.
 The MCP server exposes the core as tools an agent calls directly. Input schemas are
 the **same Zod schemas** the CLI uses, so validation and behavior are identical.
 
-### Tools (initial set)
+### M0 tools
 
 | Tool                | Purpose                                             |
 | ------------------- | --------------------------------------------------- |
 | `list_issues`       | Query the backlog with filters                      |
-| `get_issue`         | Full issue detail incl. comments, links, activity   |
+| `get_issue`         | Full issue detail                                   |
 | `create_issue`      | Create an issue                                      |
 | `update_issue`      | Edit fields                                          |
 | `move_issue`        | Change workflow state                                |
+| `list_projects` / `get_project` / `create_project` | Project ops           |
+| `list_teams`        | Reference data                                      |
+
+### Later tools
+
+| Tool                | Purpose                                             |
+| ------------------- | --------------------------------------------------- |
 | `assign_issue`      | Assign to an actor (including an agent)              |
 | `comment_on_issue`  | Add a comment as an actor                            |
-| `link_issue`        | Attach a branch / PR / URL                           |
-| `list_projects` / `get_project` / `create_project` | Project ops           |
-| `list_teams` / `list_cycles` / `list_labels`       | Reference data        |
+| `link_issue`        | Attach a repo-aware branch, PR, commit, or URL       |
+| `archive_issue`     | Hide an issue from normal workflows without deleting |
+| `list_cycles` / `list_labels` / `list_actors`       | Reference data        |
 | `search`            | Text search across issues                            |
 
 ### Resources (later)
@@ -338,6 +420,11 @@ the **same Zod schemas** the CLI uses, so validation and behavior are identical.
 - **Overrides:** `--db <path>` flag or `ISSUE_TRACKER_DB` environment variable.
 - **Migrations:** Drizzle Kit generates SQL migrations checked into the repo;
   `tracker init` (and startup) applies any pending migrations.
+- **SQLite runtime:** connections enable foreign keys, WAL mode, and a busy timeout
+  during initialization.
+- **Backup/export:** `tracker backup` copies the database file safely for recovery.
+  `tracker export --json` emits a portable JSON snapshot for inspection, migration,
+  or future sync work.
 - **The database file is never committed.** See §11.
 
 ---
@@ -366,17 +453,30 @@ Delivered in thin, working vertical slices — each milestone is usable end-to-e
 
 - **M0 — Foundation** *(current)*
   Monorepo scaffold · core schema + migrations · `tracker init` · issue & project
-  create/list/view/update/move · MCP server exposing the core tool set · README.
+  create/list/view/update/move · basic MCP read/create/update tools · README.
 - **M1 — Core workflows**
   Labels, cycles, sub-issues, comments, activity log, rich `issue list` filtering,
-  text search, `--json` everywhere.
+  text search, `--json` everywhere, `tracker backup`, `tracker export --json`.
 - **M2 — Deeper agent orchestration**
-  Agent actors & assignment flows, attachments (branch/PR), MCP resources, an
-  optional `tracker watch`/event feed for agent triggers.
+  Agent actors & assignment flows, repo-aware attachments (branch/PR/commit), MCP
+  resources, an optional `tracker watch`/event feed for agent triggers.
 - **M3 — Web UI**
   Next.js over the same core: board and list views, keyboard shortcuts, issue detail.
 - **M4 — Polish**
-  Saved views, templates, import/export, optional sync/backup, maybe a TUI.
+  Saved views, templates, optional sync, maybe a TUI.
+
+### Acceptance checks
+
+- **M0:** from an empty machine, `tracker init` creates the DB, seeds a team and
+  default states, creates a project and issue, lists issues as JSON, moves an issue
+  through workflow states, and exposes the same issue through MCP.
+- **M1:** labels, cycles, sub-issues, comments, activity records, filtering, search,
+  backup, and JSON export work through the CLI with tests covering activity writes.
+- **M2:** an MCP agent can identify itself, receive or claim an issue, update state,
+  attach a repo-aware branch/PR/commit, and leave a comment with a complete audit
+  trail.
+- **M3:** the web UI can show board/list views and issue detail from the same core
+  without adding separate business logic.
 
 ---
 
@@ -395,14 +495,21 @@ This repository is **public**; my project data is **private**. To keep it that w
 
 ---
 
-## 12. Open Questions
+## 12. Resolved Questions
 
-- **Sub-issue numbering** — do sub-issues get their own `KEY-N` (Linear does) or a
-  nested identifier? *Leaning: their own top-level identifier.*
-- **Cycles vs. no cycles** — I may not use cycles heavily; keep them optional and
-  lightweight.
-- **Search** — start with SQL `LIKE`; graduate to SQLite FTS5 if it's too coarse.
-- **Multiple workspaces / DB profiles** — single global DB for now; revisit if I
-  want to silo work vs. personal.
-- **Web auth when the UI lands** — likely none (localhost-only), but confirm before
-  building M3.
+Decided 2026-07-05. Each landed on the leaning noted below.
+
+- **Sub-issue numbering** — **Decided:** sub-issues get their own top-level `KEY-N`
+  from the shared team counter (Linear-style); `parentId` is only a link, not a second
+  numbering scheme.
+- **Cycles vs. no cycles** — **Decided:** optional and lightweight. The `cycles` table
+  and `issue.cycleId` exist from the start, but cycle features stay thin (create/list,
+  landing in M1); issues work fully without ever touching a cycle.
+- **Search** — **Decided:** start with SQL `LIKE` over title/description (M1); graduate
+  to SQLite FTS5 only if it proves too coarse.
+- **Multiple workspaces / DB profiles** — **Decided:** a single global DB at the XDG
+  default path. `--db` / `ISSUE_TRACKER_DB` still override per invocation; named profiles
+  are deferred until there's a concrete need to silo work vs. personal.
+- **Web auth when the UI lands** — **Decided:** none; the M3 web UI binds to localhost
+  only, with the machine as the security boundary. Revisit only if the UI ever needs to
+  be exposed beyond localhost.

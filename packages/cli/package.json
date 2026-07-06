@@ -1,0 +1,28 @@
+{
+  "name": "@issue-tracker/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "tracker": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@issue-tracker/core": "0.0.0",
+    "@issue-tracker/mcp": "0.0.0",
+    "commander": "^15.0.0",
+    "picocolors": "^1.1.1"
+  }
+}
