@@ -4,7 +4,7 @@ import { inTransaction, type ServiceContext } from "../context.js";
 import { actors, comments, issues, type Actor, type Comment, type Issue } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { uuid } from "../ids.js";
-import { appendActivity } from "./activity.js";
+import { appendActivityInTransaction } from "./activity.js";
 
 export interface AddCommentInput {
   issue: string;
@@ -39,7 +39,7 @@ export function addComment(context: ServiceContext, input: AddCommentInput): Com
 
     txContext.db.insert(comments).values(row).run();
     touchIssue(txContext, issue.id, now);
-    appendActivity(txContext, {
+    appendActivityInTransaction(txContext, {
       issueId: issue.id,
       actorId: actor.id,
       action: "commented",

@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   addComment,
   addCommentInputSchema,
+  appendActivity,
   applyMigrations,
   archiveIssue,
   archiveLabel,
@@ -36,9 +37,11 @@ import {
   openDb,
   searchInputSchema,
   searchIssues,
+  seedDefaultWorkflowStates,
   serializeIssue,
   serializeActivity,
   serializeCycle,
+  setConfig,
   updateIssue,
   updateIssueInputSchema,
   whoami,
@@ -809,6 +812,92 @@ describe("core services", () => {
     }
   });
 
+  it("uses immediate transactions for public mutating service boundaries", () => {
+    const db = openTempDb();
+    applyMigrations(db);
+    const transactionOptions = recordTransactionOptions(db);
+    const context: ServiceContext = {
+      db,
+      actor: null,
+      clock: fixedClock("2026-01-01T00:00:00.000Z")
+    };
+
+    try {
+      init(context);
+      context.actor = whoami(context);
+
+      const actor = context.actor;
+      if (!actor) {
+        throw new Error("Expected init to configure the default actor.");
+      }
+
+      createActor(context, {
+        type: "agent",
+        name: "Build Agent",
+        handle: "build-agent"
+      });
+      createTeam(context, { key: "OPS", name: "Operations" });
+      db.insert(teams).values({ id: "team-raw", key: "RAW", name: "Raw Team" }).run();
+      seedDefaultWorkflowStates(context, "team-raw");
+      setConfig(context, "test_flag", "enabled");
+      createLabel(context, { name: "Bug", color: "#EF4444" });
+      createProject(context, { name: "Platform Foundations", status: "planned" });
+
+      const issue = createIssue(context, { title: "Check transaction behavior" });
+      appendActivity(context, {
+        issueId: issue.id,
+        actorId: actor.id,
+        action: "audited",
+        data: { source: "transaction-test" }
+      });
+
+      expect(transactionOptions).toEqual(
+        Array.from({ length: 9 }, () => ({ behavior: "immediate" }))
+      );
+    } finally {
+      db.$client.close();
+    }
+  });
+
+  it("allocates distinct gapless issue numbers across two WAL connections", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "issue-tracker-services-"));
+    tempDirs.push(tempDir);
+    const dbPath = join(tempDir, "tracker.db");
+    const firstDb = openDb(dbPath);
+    const secondDb = openDb(dbPath);
+
+    try {
+      applyMigrations(firstDb);
+
+      const firstContext: ServiceContext = {
+        db: firstDb,
+        actor: null,
+        clock: fixedClock("2026-01-01T00:00:00.000Z")
+      };
+      init(firstContext);
+      firstContext.actor = whoami(firstContext);
+
+      const secondContext: ServiceContext = {
+        db: secondDb,
+        actor: whoami({ ...firstContext, db: secondDb }),
+        clock: fixedClock("2026-01-01T00:01:00.000Z")
+      };
+
+      const first = createIssue(firstContext, { title: "Create from first connection" });
+      const second = createIssue(secondContext, { title: "Create from second connection" });
+
+      expect([first.number, second.number]).toEqual([1, 2]);
+      expect([first.identifier, second.identifier]).toEqual(["ENG-1", "ENG-2"]);
+      expect(new Set([first.identifier, second.identifier]).size).toBe(2);
+
+      const [team] = secondDb.select().from(teams).where(eq(teams.key, "ENG")).all();
+      expect(team?.issueCounter).toBe(2);
+    } finally {
+      firstDb.$client.close();
+      secondDb.$client.close();
+    }
+  });
+
   it("writes exactly one activity row per issue mutation", () => {
     const { context, db, close } = initializedContext();
 
@@ -1089,6 +1178,21 @@ function readActivityEntries(db: Db): Array<{ action: string; data: unknown }> {
     action: entry.action,
     data: typeof entry.data === "string" ? JSON.parse(entry.data) : entry.data
   }));
+}
+
+function recordTransactionOptions(db: Db): unknown[] {
+  const options: unknown[] = [];
+  const originalTransaction = db.transaction.bind(db) as (
+    work: unknown,
+    config?: unknown
+  ) => unknown;
+
+  db.transaction = ((work: unknown, config?: unknown) => {
+    options.push(config);
+    return originalTransaction(work, config);
+  }) as typeof db.transaction;
+
+  return options;
 }
 
 function expectIssueParentCycle(work: () => unknown): void {

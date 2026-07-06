@@ -4,7 +4,7 @@ import { inTransaction, type ServiceContext } from "../context.js";
 import { actors, issueLabels, issues, labels, projects, teams, workflowStates, type Actor, type Issue } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { identifier, uuid } from "../ids.js";
-import { appendActivity } from "./activity.js";
+import { appendActivityInTransaction } from "./activity.js";
 import { ConfigKey, getConfig } from "./config.js";
 import {
   cycleIdsForIssueFilter,
@@ -157,7 +157,7 @@ export function createIssue(context: ServiceContext, input: CreateIssueInput) {
     };
 
     txContext.db.insert(issues).values(row).run();
-    appendActivity(txContext, {
+    appendActivityInTransaction(txContext, {
       issueId: row.id,
       actorId: row.creatorId,
       action: "created",
@@ -334,7 +334,7 @@ export function updateIssue(context: ServiceContext, issueIdentifier: string, in
 
     if (Object.keys(changedFields).length > 0) {
       txContext.db.update(issues).set(changes).where(eq(issues.id, issue.id)).run();
-      appendActivity(txContext, {
+      appendActivityInTransaction(txContext, {
         issueId: issue.id,
         actorId: requireActor(txContext).id,
         action: "updated",
@@ -379,7 +379,7 @@ export function assignIssue(
         .where(eq(issues.id, issue.id))
         .run();
 
-      appendActivity(txContext, {
+      appendActivityInTransaction(txContext, {
         issueId: issue.id,
         actorId: requireActor(txContext).id,
         action: "assigned",
@@ -417,7 +417,7 @@ export function archiveIssue(context: ServiceContext, issueIdentifier: string) {
       .where(eq(issues.id, issue.id))
       .run();
 
-    appendActivity(txContext, {
+    appendActivityInTransaction(txContext, {
       issueId: issue.id,
       actorId: requireActor(txContext).id,
       action: "archived",
@@ -449,7 +449,7 @@ export function moveIssue(context: ServiceContext, issueIdentifier: string, stat
       .where(eq(issues.id, issue.id))
       .run();
 
-    appendActivity(txContext, {
+    appendActivityInTransaction(txContext, {
       issueId: issue.id,
       actorId: requireActor(txContext).id,
       action: "state_changed",

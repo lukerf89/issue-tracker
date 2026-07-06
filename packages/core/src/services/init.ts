@@ -4,8 +4,8 @@ import { inTransaction, type ServiceContext } from "../context.js";
 import { actors, config, workspace } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { uuid } from "../ids.js";
-import { ConfigKey, setConfig } from "./config.js";
-import { createTeam } from "./team.js";
+import { ConfigKey, setConfigInTransaction } from "./config.js";
+import { createTeamInTransaction } from "./team.js";
 
 export interface InitInput {
   workspaceName?: string;
@@ -42,7 +42,7 @@ export function init(context: ServiceContext, input: InitInput = {}) {
 
     txContext.db.insert(workspace).values(workspaceRow).run();
 
-    const team = createTeam(txContext, {
+    const team = createTeamInTransaction(txContext, {
       key: input.teamKey ?? "ENG",
       name: input.teamName ?? "Engineering"
     });
@@ -56,8 +56,8 @@ export function init(context: ServiceContext, input: InitInput = {}) {
     };
 
     txContext.db.insert(actors).values(actor).run();
-    setConfig(txContext, ConfigKey.DEFAULT_TEAM, team.id);
-    setConfig(txContext, ConfigKey.DEFAULT_ACTOR, actor.id);
+    setConfigInTransaction(txContext, ConfigKey.DEFAULT_TEAM, team.id);
+    setConfigInTransaction(txContext, ConfigKey.DEFAULT_ACTOR, actor.id);
 
     return { workspace: workspaceRow, team, actor };
   });

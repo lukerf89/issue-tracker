@@ -4,7 +4,7 @@ import { inTransaction, type ServiceContext, type ServiceTransaction } from "../
 import { issueLabels, issues, labels, type Issue, type Label } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { uuid } from "../ids.js";
-import { appendActivity } from "./activity.js";
+import { appendActivityInTransaction } from "./activity.js";
 
 export interface CreateLabelInput {
   name: string;
@@ -21,29 +21,31 @@ export type IssueWithLabels = Issue & { labels: Label[] };
 const defaultLabelColor = "#6B7280";
 
 export function createLabel(context: ServiceContext, input: CreateLabelInput) {
-  const group = input.group ?? null;
-  const existing = context.db.query.labels.findFirst({
-    where: and(eq(labels.name, input.name), eq(labels.groupKey, groupKey(group)))
-  }).sync();
+  return inTransaction(context, (txContext) => {
+    const group = input.group ?? null;
+    const existing = txContext.db.query.labels.findFirst({
+      where: and(eq(labels.name, input.name), eq(labels.groupKey, groupKey(group)))
+    }).sync();
 
-  if (existing) {
-    throw new AppError(
-      AppErrorCode.CONSTRAINT_VIOLATION,
-      labelTakenMessage(input.name, group),
-      { name: input.name, group }
-    );
-  }
+    if (existing) {
+      throw new AppError(
+        AppErrorCode.CONSTRAINT_VIOLATION,
+        labelTakenMessage(input.name, group),
+        { name: input.name, group }
+      );
+    }
 
-  const row = {
-    id: uuid(),
-    name: input.name,
-    color: input.color ?? defaultLabelColor,
-    group,
-    archivedAt: null
-  };
+    const row = {
+      id: uuid(),
+      name: input.name,
+      color: input.color ?? defaultLabelColor,
+      group,
+      archivedAt: null
+    };
 
-  context.db.insert(labels).values(row).run();
-  return getLabelById(context, row.id);
+    txContext.db.insert(labels).values(row).run();
+    return getLabelById(txContext, row.id);
+  });
 }
 
 export function listLabels(
@@ -117,7 +119,7 @@ export function attachLabelInTransaction(
 
   context.db.insert(issueLabels).values({ issueId: issue.id, labelId: label.id }).run();
   touchIssue(context, issue.id);
-  appendActivity(context, {
+  appendActivityInTransaction(context, {
     issueId: issue.id,
     actorId: actor.id,
     action: "label_added",
@@ -149,7 +151,7 @@ export function detachLabelInTransaction(
     .where(and(eq(issueLabels.issueId, issue.id), eq(issueLabels.labelId, label.id)))
     .run();
   touchIssue(context, issue.id);
-  appendActivity(context, {
+  appendActivityInTransaction(context, {
     issueId: issue.id,
     actorId: actor.id,
     action: "label_removed",

@@ -17,19 +17,21 @@ export interface CreateProjectInput {
 export type UpdateProjectInput = Partial<CreateProjectInput>;
 
 export function createProject(context: ServiceContext, input: CreateProjectInput) {
-  const row = {
-    id: uuid(),
-    name: input.name,
-    description: input.description ?? null,
-    status: input.status ?? "backlog",
-    leadId: input.leadId ?? null,
-    startDate: input.startDate ?? null,
-    targetDate: input.targetDate ?? null,
-    archivedAt: null
-  };
+  return inTransaction(context, (txContext) => {
+    const row = {
+      id: uuid(),
+      name: input.name,
+      description: input.description ?? null,
+      status: input.status ?? "backlog",
+      leadId: input.leadId ?? null,
+      startDate: input.startDate ?? null,
+      targetDate: input.targetDate ?? null,
+      archivedAt: null
+    };
 
-  context.db.insert(projects).values(row).run();
-  return row;
+    txContext.db.insert(projects).values(row).run();
+    return row;
+  });
 }
 
 export function listProjects(

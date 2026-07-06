@@ -1,6 +1,6 @@
 import { asc, eq, isNull } from "drizzle-orm";
 
-import type { ServiceContext } from "../context.js";
+import { inTransaction, type ServiceContext } from "../context.js";
 import { actors } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { uuid } from "../ids.js";
@@ -16,28 +16,30 @@ export interface ListActorsOptions {
 }
 
 export function createActor(context: ServiceContext, input: CreateActorInput) {
-  const existing = context.db.query.actors.findFirst({
-    where: eq(actors.handle, input.handle)
-  }).sync();
+  return inTransaction(context, (txContext) => {
+    const existing = txContext.db.query.actors.findFirst({
+      where: eq(actors.handle, input.handle)
+    }).sync();
 
-  if (existing) {
-    throw new AppError(
-      AppErrorCode.ACTOR_HANDLE_TAKEN,
-      `Actor handle ${input.handle} is already taken.`,
-      { handle: input.handle }
-    );
-  }
+    if (existing) {
+      throw new AppError(
+        AppErrorCode.ACTOR_HANDLE_TAKEN,
+        `Actor handle ${input.handle} is already taken.`,
+        { handle: input.handle }
+      );
+    }
 
-  const row = {
-    id: uuid(),
-    type: input.type,
-    name: input.name,
-    handle: input.handle,
-    archivedAt: null
-  };
+    const row = {
+      id: uuid(),
+      type: input.type,
+      name: input.name,
+      handle: input.handle,
+      archivedAt: null
+    };
 
-  context.db.insert(actors).values(row).run();
-  return row;
+    txContext.db.insert(actors).values(row).run();
+    return row;
+  });
 }
 
 export function listActors(context: ServiceContext, options: ListActorsOptions = {}) {

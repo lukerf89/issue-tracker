@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 
-import type { ServiceContext } from "../context.js";
+import { inTransaction, type ServiceContext, type ServiceTransaction } from "../context.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { actors, config } from "../db/schema.js";
 
@@ -18,6 +18,14 @@ export function getConfig(context: ServiceContext, key: string): string | null {
 }
 
 export function setConfig(context: ServiceContext, key: string, value: string): void {
+  inTransaction(context, (txContext) => setConfigInTransaction(txContext, key, value));
+}
+
+export function setConfigInTransaction(
+  context: ServiceContext & { db: ServiceTransaction },
+  key: string,
+  value: string
+): void {
   const now = context.clock.now().toISOString();
 
   context.db
