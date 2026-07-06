@@ -1,5 +1,13 @@
 import type { Activity, Actor, Cycle, Issue, Label, Project, Team, WorkflowState } from "./db/schema.js";
 
+interface IssueReference {
+  id: string;
+  identifier: string;
+  teamId: string;
+  number: number;
+  title: string;
+}
+
 export function serializeTeam(team: Team) {
   return {
     id: team.id,
@@ -65,7 +73,22 @@ export function serializeLabel(label: Label) {
   };
 }
 
-export function serializeIssue(issue: Issue & { labels?: Label[] }) {
+export function serializeIssue(
+  issue: Issue & {
+    labels?: Label[];
+    parent?: IssueReference | null;
+    children?: IssueReference[];
+  }
+) {
+  const relationFields = {
+    ...(hasOwn(issue, "parent")
+      ? { parent: issue.parent ? serializeIssueReference(issue.parent) : null }
+      : {}),
+    ...(hasOwn(issue, "children")
+      ? { children: (issue.children ?? []).map(serializeIssueReference) }
+      : {})
+  };
+
   return {
     id: issue.id,
     identifier: issue.identifier,
@@ -80,6 +103,7 @@ export function serializeIssue(issue: Issue & { labels?: Label[] }) {
     projectId: issue.projectId ?? null,
     cycleId: issue.cycleId ?? null,
     parentId: issue.parentId ?? null,
+    ...relationFields,
     estimate: issue.estimate ?? null,
     dueDate: issue.dueDate ?? null,
     sortOrder: issue.sortOrder,
@@ -90,6 +114,16 @@ export function serializeIssue(issue: Issue & { labels?: Label[] }) {
     canceledAt: toIsoOrNull(issue.canceledAt),
     archivedAt: toIsoOrNull(issue.archivedAt),
     labels: (issue.labels ?? []).map(serializeLabel)
+  };
+}
+
+function serializeIssueReference(issue: IssueReference) {
+  return {
+    id: issue.id,
+    identifier: issue.identifier,
+    teamId: issue.teamId,
+    number: issue.number,
+    title: issue.title
   };
 }
 
@@ -110,4 +144,8 @@ function toIso(value: string): string {
 
 function toIsoOrNull(value: string | null): string | null {
   return value === null ? null : toIso(value);
+}
+
+function hasOwn<T extends object>(object: T, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(object, key);
 }

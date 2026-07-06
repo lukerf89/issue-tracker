@@ -121,6 +121,62 @@ describe("tracker CLI", () => {
     expect(records.map((record) => record.priority)).toEqual([1]);
   });
 
+  it("creates and clears sub-issues through parent flags and shows relationships in view JSON", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+
+    const parentResult = await tracker(dbPath, [
+      "issue",
+      "create",
+      "--title",
+      "Build issue hierarchy",
+      "--json"
+    ]);
+    expect(parentResult.status).toBe(0);
+    const parent = JSON.parse(parentResult.stdout) as Record<string, unknown>;
+
+    const childResult = await tracker(dbPath, [
+      "issue",
+      "create",
+      "--title",
+      "Add child issue",
+      "--parent",
+      "ENG-1",
+      "--json"
+    ]);
+    expect(childResult.status).toBe(0);
+    const child = JSON.parse(childResult.stdout) as Record<string, unknown>;
+    expect(child).toMatchObject({
+      identifier: "ENG-2",
+      parentId: parent.id,
+      parent: { identifier: "ENG-1" }
+    });
+
+    const parentView = await tracker(dbPath, ["issue", "view", "ENG-1", "--json"]);
+    expect(parentView.status).toBe(0);
+    expect(JSON.parse(parentView.stdout)).toMatchObject({
+      identifier: "ENG-1",
+      parent: null,
+      children: [{ identifier: "ENG-2", title: "Add child issue" }]
+    });
+
+    const cleared = await tracker(dbPath, [
+      "issue",
+      "update",
+      "ENG-2",
+      "--parent",
+      "none",
+      "--json"
+    ]);
+    expect(cleared.status).toBe(0);
+    expect(JSON.parse(cleared.stdout)).toMatchObject({
+      identifier: "ENG-2",
+      parentId: null,
+      parent: null
+    });
+  });
+
   it("creates, lists, archives, and applies labels through JSON commands", async () => {
     const dbPath = tempDbPath();
 

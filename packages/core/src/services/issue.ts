@@ -15,7 +15,8 @@ import {
   attachLabelInTransaction,
   detachLabelInTransaction,
   resolveIssueLabels,
-  withIssueLabels
+  withIssueLabels,
+  type IssueWithLabels
 } from "./label.js";
 import { getState, resolveDefaultUnstartedState } from "./state.js";
 import { getTeam, getTeamByKey } from "./team.js";
@@ -34,6 +35,7 @@ export interface CreateIssueInput {
   projectId?: string | null;
   cycle?: CycleRef | null;
   cycleId?: string | null;
+  parent?: string | null;
   parentId?: string | null;
   estimate?: number | null;
   dueDate?: string | null;
@@ -63,6 +65,7 @@ export interface UpdateIssueInput {
   projectId?: string | null;
   cycle?: CycleRef | null;
   cycleId?: string | null;
+  parent?: string | null;
   parentId?: string | null;
   estimate?: number | null;
   dueDate?: string | null;
@@ -70,6 +73,19 @@ export interface UpdateIssueInput {
   labels?: string[];
   removeLabels?: string[];
 }
+
+export interface IssueReference {
+  id: string;
+  identifier: string;
+  teamId: string;
+  number: number;
+  title: string;
+}
+
+export type IssueWithDetails = IssueWithLabels & {
+  parent: IssueReference | null;
+  children: IssueReference[];
+};
 
 export function createIssue(context: ServiceContext, input: CreateIssueInput) {
   requireActor(context);
@@ -86,6 +102,7 @@ export function createIssue(context: ServiceContext, input: CreateIssueInput) {
       input.cycleId ?? input.cycle,
       team.id
     );
+    const parentId = resolveOptionalParentId(txContext, parentInput(input));
     const labelRows = resolveIssueLabels(txContext, input.labels);
 
     txContext.db
@@ -110,7 +127,7 @@ export function createIssue(context: ServiceContext, input: CreateIssueInput) {
       creatorId: requireActor(txContext).id,
       projectId,
       cycleId,
-      parentId: input.parentId ?? null,
+      parentId,
       estimate: input.estimate ?? null,
       dueDate: input.dueDate ?? null,
       sortOrder: input.sortOrder ?? 0,
@@ -151,7 +168,7 @@ export function getIssue(context: ServiceContext, issueIdentifier: string) {
     );
   }
 
-  return withIssueLabels(context, issue);
+  return withIssueDetails(context, issue);
 }
 
 export function listIssues(context: ServiceContext, filters: ListIssueFilters = {}) {
@@ -213,7 +230,7 @@ export function listIssues(context: ServiceContext, filters: ListIssueFilters = 
     where: conditions.length ? and(...conditions) : undefined,
     orderBy: [asc(issues.teamId), asc(issues.number)],
     limit: filters.limit
-  }).sync().map((issue) => withIssueLabels(context, issue));
+  }).sync().map((issue) => withIssueDetails(context, issue));
 }
 
 export function updateIssue(context: ServiceContext, issueIdentifier: string, input: UpdateIssueInput) {
@@ -261,7 +278,14 @@ export function updateIssue(context: ServiceContext, issueIdentifier: string, in
         )
       );
     }
-    if (has(input, "parentId")) addChange(changes, changedFields, "parentId", input.parentId ?? null);
+    if (has(input, "parent") || has(input, "parentId")) {
+      const parentId = resolveOptionalParentId(
+        txContext,
+        has(input, "parentId") ? input.parentId : input.parent
+      );
+      assertValidParent(txContext, issue, parentId);
+      addChange(changes, changedFields, "parentId", parentId);
+    }
     if (has(input, "estimate")) addChange(changes, changedFields, "estimate", input.estimate ?? null);
     if (has(input, "dueDate")) addChange(changes, changedFields, "dueDate", input.dueDate ?? null);
     if (has(input, "sortOrder")) addChange(changes, changedFields, "sortOrder", input.sortOrder!);
@@ -357,6 +381,110 @@ function lifecycleTimestampChanges(
   }
 
   return { updatedAt: now, startedAt, completedAt, canceledAt };
+}
+
+function withIssueDetails(context: ServiceContext, issue: Issue): IssueWithDetails {
+  return {
+    ...withIssueLabels(context, issue),
+    parent: issue.parentId ? issueReference(getIssueById(context, issue.parentId)) : null,
+    children: listChildIssueReferences(context, issue.id)
+  };
+}
+
+function listChildIssueReferences(context: ServiceContext, parentId: string): IssueReference[] {
+  return context.db.query.issues.findMany({
+    where: eq(issues.parentId, parentId),
+    orderBy: [asc(issues.teamId), asc(issues.number), asc(issues.id)]
+  }).sync().map(issueReference);
+}
+
+function resolveOptionalParentId(
+  context: ServiceContext,
+  parentRef: string | null | undefined
+): string | null {
+  return parentRef == null ? null : getIssueByIdOrIdentifier(context, parentRef).id;
+}
+
+function assertValidParent(
+  context: ServiceContext,
+  issue: Issue,
+  parentId: string | null
+): void {
+  if (parentId === null) return;
+
+  let current = getIssueById(context, parentId);
+  const seen = new Set<string>();
+
+  while (true) {
+    if (current.id === issue.id) {
+      throw new AppError(
+        AppErrorCode.ISSUE_PARENT_CYCLE,
+        `Parent ${parentId} would create a cycle for issue ${issue.identifier}.`,
+        {
+          issueId: issue.id,
+          issueIdentifier: issue.identifier,
+          parentId
+        }
+      );
+    }
+
+    if (current.parentId === null) {
+      return;
+    }
+
+    if (seen.has(current.id)) {
+      throw new AppError(
+        AppErrorCode.ISSUE_PARENT_CYCLE,
+        `Existing parent chain for issue ${current.identifier} contains a cycle.`,
+        {
+          issueId: issue.id,
+          issueIdentifier: issue.identifier,
+          parentId
+        }
+      );
+    }
+
+    seen.add(current.id);
+    current = getIssueById(context, current.parentId);
+  }
+}
+
+function getIssueByIdOrIdentifier(context: ServiceContext, idOrIdentifier: string): Issue {
+  return findIssueByIdOrIdentifier(context, idOrIdentifier) ?? notFound(idOrIdentifier);
+}
+
+function getIssueById(context: ServiceContext, id: string): Issue {
+  const issue = context.db.query.issues.findFirst({
+    where: eq(issues.id, id)
+  }).sync();
+
+  return issue ?? notFound(id);
+}
+
+function findIssueByIdOrIdentifier(context: ServiceContext, idOrIdentifier: string): Issue | null {
+  return (
+    context.db.query.issues.findFirst({ where: eq(issues.id, idOrIdentifier) }).sync() ??
+    context.db.query.issues.findFirst({ where: eq(issues.identifier, idOrIdentifier) }).sync() ??
+    null
+  );
+}
+
+function notFound(identifier: string): never {
+  throw new AppError(
+    AppErrorCode.ISSUE_NOT_FOUND,
+    `Issue ${identifier} was not found.`,
+    { identifier }
+  );
+}
+
+function issueReference(issue: Issue): IssueReference {
+  return {
+    id: issue.id,
+    identifier: issue.identifier,
+    teamId: issue.teamId,
+    number: issue.number,
+    title: issue.title
+  };
 }
 
 function issueIdsForLabelName(context: ServiceContext, labelName: string): string[] {
@@ -465,6 +593,10 @@ function resolveProjectId(context: ServiceContext, projectRef: string) {
   }
 
   return project.id;
+}
+
+function parentInput(input: CreateIssueInput): string | null | undefined {
+  return has(input, "parentId") ? input.parentId : input.parent;
 }
 
 function requireActor(context: ServiceContext) {

@@ -254,6 +254,52 @@ describe("MCP server", () => {
       await client.close();
     }
   });
+
+  it("honors parent fields on issue tools and returns relationship details", async () => {
+    const dbPath = initializedDbPath();
+    const client = await connectClient(dbPath, { handle: "subissue-agent" });
+
+    try {
+      const firstParent = await callJsonTool(client, "create_issue", {
+        title: "Build issue hierarchy"
+      });
+      const secondParent = await callJsonTool(client, "create_issue", {
+        title: "Retarget issue hierarchy"
+      });
+      const child = await callJsonTool(client, "create_issue", {
+        title: "Add child issue",
+        parent: firstParent.identifier
+      });
+
+      expect(child).toMatchObject({
+        identifier: "ENG-3",
+        parentId: firstParent.id,
+        parent: { identifier: "ENG-1" },
+        children: []
+      });
+
+      const fetchedFirstParent = await callJsonTool(client, "get_issue", {
+        identifier: firstParent.identifier
+      });
+      expect(fetchedFirstParent).toMatchObject({
+        identifier: "ENG-1",
+        parent: null,
+        children: [{ identifier: "ENG-3", title: "Add child issue" }]
+      });
+
+      const updated = await callJsonTool(client, "update_issue", {
+        identifier: child.identifier,
+        parentId: secondParent.id
+      });
+      expect(updated).toMatchObject({
+        identifier: "ENG-3",
+        parentId: secondParent.id,
+        parent: { identifier: "ENG-2" }
+      });
+    } finally {
+      await client.close();
+    }
+  });
 });
 
 function createCycleFixtures(dbPath: string) {

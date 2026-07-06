@@ -61,6 +61,8 @@ export {
   moveIssue,
   updateIssue,
   type CreateIssueInput,
+  type IssueReference,
+  type IssueWithDetails,
   type ListIssueFilters,
   type UpdateIssueInput
 } from "./services/issue.js";

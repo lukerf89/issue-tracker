@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   applyMigrations,
   archiveLabel,
+  AppErrorCode,
   attachLabel,
   createCycle,
   createIssue,
@@ -213,6 +214,108 @@ describe("core services", () => {
     }
   });
 
+  it("links sub-issues by parent reference without changing top-level numbering", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      const parent = createIssue(context, { title: "Build issue hierarchy" });
+      const child = createIssue(context, {
+        title: "Add child issue",
+        parent: parent.identifier
+      });
+      const sibling = createIssue(context, { title: "Keep next top-level number" });
+
+      expect(child.identifier).toBe("ENG-2");
+      expect(child.parentId).toBe(parent.id);
+      expect(sibling.identifier).toBe("ENG-3");
+
+      const parentView = getIssue(context, parent.identifier);
+      const childView = getIssue(context, child.identifier);
+
+      expect(parentView.parent).toBeNull();
+      expect(parentView.children).toEqual([
+        {
+          id: child.id,
+          identifier: "ENG-2",
+          teamId: child.teamId,
+          number: 2,
+          title: "Add child issue"
+        }
+      ]);
+      expect(childView.parent).toEqual({
+        id: parent.id,
+        identifier: "ENG-1",
+        teamId: parent.teamId,
+        number: 1,
+        title: "Build issue hierarchy"
+      });
+      expect(childView.children).toEqual([]);
+      expect(serializeIssue(childView)).toMatchObject({
+        parentId: parent.id,
+        parent: { identifier: "ENG-1" },
+        children: []
+      });
+    } finally {
+      close();
+    }
+  });
+
+  it("updates and clears parent links by identifier or raw id and records activity", () => {
+    const { context, db, close } = initializedContext();
+
+    try {
+      const firstParent = createIssue(context, { title: "First parent" });
+      const secondParent = createIssue(context, { title: "Second parent" });
+      createIssue(context, { title: "Retarget child" });
+
+      const assigned = updateIssue(context, "ENG-3", { parent: firstParent.identifier });
+      expect(assigned.parentId).toBe(firstParent.id);
+      expect(assigned.parent).toMatchObject({ identifier: "ENG-1" });
+
+      const retargeted = updateIssue(context, "ENG-3", { parentId: secondParent.id });
+      expect(retargeted.parentId).toBe(secondParent.id);
+      expect(retargeted.parent).toMatchObject({ identifier: "ENG-2" });
+
+      const cleared = updateIssue(context, "ENG-3", { parent: null });
+      expect(cleared.parentId).toBeNull();
+      expect(cleared.parent).toBeNull();
+
+      expect(readActivityEntries(db)).toMatchObject([
+        { action: "created" },
+        { action: "created" },
+        { action: "created" },
+        { action: "updated", data: { changed: { parentId: firstParent.id } } },
+        { action: "updated", data: { changed: { parentId: secondParent.id } } },
+        { action: "updated", data: { changed: { parentId: null } } }
+      ]);
+    } finally {
+      close();
+    }
+  });
+
+  it("rejects self-parenting and descendant-parent cycles", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      const parent = createIssue(context, { title: "Parent issue" });
+      const child = createIssue(context, { title: "Child issue", parent: parent.identifier });
+      const grandchild = createIssue(context, {
+        title: "Grandchild issue",
+        parent: child.identifier
+      });
+
+      expectIssueParentCycle(() =>
+        updateIssue(context, parent.identifier, { parent: parent.identifier })
+      );
+      expectIssueParentCycle(() =>
+        updateIssue(context, parent.identifier, { parent: grandchild.identifier })
+      );
+      expect(getIssue(context, parent.identifier).parentId).toBeNull();
+    } finally {
+      close();
+    }
+  });
+
   it("matches state names across teams when no team filter is supplied", () => {
     const { context, close } = initializedContext();
 
@@ -377,6 +480,8 @@ describe("core services", () => {
         "projectId",
         "cycleId",
         "parentId",
+        "parent",
+        "children",
         "estimate",
         "dueDate",
         "sortOrder",
@@ -395,6 +500,8 @@ describe("core services", () => {
         projectId: null,
         cycleId: null,
         parentId: null,
+        parent: null,
+        children: [],
         estimate: null,
         dueDate: null,
         startedAt: null,
@@ -446,4 +553,27 @@ function readActivityActions(db: Db): string[] {
     .all() as Array<{ action: string }>;
 
   return rows.map((entry) => entry.action);
+}
+
+function readActivityEntries(db: Db): Array<{ action: string; data: unknown }> {
+  const rows = db.$client
+    .prepare("select action, data from activity order by rowid")
+    .all() as Array<{ action: string; data: string | unknown }>;
+
+  return rows.map((entry) => ({
+    action: entry.action,
+    data: typeof entry.data === "string" ? JSON.parse(entry.data) : entry.data
+  }));
+}
+
+function expectIssueParentCycle(work: () => unknown): void {
+  let error: unknown;
+
+  try {
+    work();
+  } catch (caught) {
+    error = caught;
+  }
+
+  expect(error).toMatchObject({ code: AppErrorCode.ISSUE_PARENT_CYCLE });
 }

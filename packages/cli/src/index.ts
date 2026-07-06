@@ -343,6 +343,7 @@ export function createProgram(): Command {
     .option("--team <key>", "team key")
     .option("--project <project>", "project id or name")
     .option("--cycle <cycle>", "cycle number or id")
+    .option("--parent <issue>", "parent issue identifier or id")
     .option("--priority <number>", "priority", parseInteger)
     .option("--assignee <actor>", "assignee id or handle")
     .option("--state <state>", "workflow state")
@@ -400,6 +401,7 @@ export function createProgram(): Command {
     .option("--project <project>", "project id or name")
     .option("--no-project", "clear project")
     .option("--cycle <cycle>", "cycle number or id")
+    .option("--parent <issue>", "parent issue identifier or id; use 'none' to clear")
     .option("--label <label>", "add label by name or id", collectValues, [])
     .option("--remove-label <label>", "remove label by name or id", collectValues, [])
     .option("--estimate <number>", "estimate", parseInteger)
@@ -595,6 +597,7 @@ function issueCreateInput(
     assignee: nullableStringOption(options.assignee),
     project: nullableStringOption(options.project),
     cycle: cycleOption(options.cycle),
+    parent: nullableStringOption(options.parent),
     labels: stringArrayOption(options.label)
   });
 }
@@ -627,6 +630,7 @@ function issueUpdateInput(options: Record<string, unknown>): UpdateIssueInput {
     assignee,
     project,
     cycle: cycleOption(options.cycle),
+    parent: parentOption(options.parent),
     labels: stringArrayOption(options.label),
     removeLabels: stringArrayOption(options.removeLabel),
     estimate: numberOption(options.estimate),
@@ -673,6 +677,11 @@ function numberOption(value: unknown): number | undefined {
 
 function cycleOption(value: unknown): string | number | undefined {
   return typeof value === "string" || typeof value === "number" ? value : undefined;
+}
+
+function parentOption(value: unknown): string | null | undefined {
+  const parent = nullableStringOption(value);
+  return typeof parent === "string" && parent.toLowerCase() === "none" ? null : parent;
 }
 
 function booleanOption(value: unknown): boolean | undefined {

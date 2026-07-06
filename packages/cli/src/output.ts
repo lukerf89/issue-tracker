@@ -12,6 +12,7 @@ import {
   type Actor,
   type Cycle,
   type Issue,
+  type IssueReference,
   type Label,
   type Project,
   type ServiceContext,
@@ -135,6 +136,7 @@ export function printIssue(context: ServiceContext, issue: Issue, options: Outpu
 
   const row = issueRow(context, issue);
   printIssueTable([row]);
+  printIssueRelations(issue);
 }
 
 export function printIssues(
@@ -223,6 +225,34 @@ function pad(value: string, width: number): string {
 function issueLabels(issue: Issue): string[] {
   const maybeLabeled = issue as Issue & { labels?: Label[] };
   return (maybeLabeled.labels ?? []).map((label) => label.name);
+}
+
+function printIssueRelations(issue: Issue): void {
+  const detail = issue as Issue & {
+    parent?: IssueReference | null;
+    children?: IssueReference[];
+  };
+  const lines: string[] = [];
+
+  if (hasOwn(detail, "parent") && detail.parent) {
+    lines.push(`Parent    ${pc.bold(detail.parent.identifier)}  ${detail.parent.title}`);
+  }
+
+  if (hasOwn(detail, "children") && detail.children && detail.children.length > 0) {
+    lines.push("Children");
+
+    for (const child of detail.children) {
+      lines.push(`  ${pc.bold(child.identifier)}  ${child.title}`);
+    }
+  }
+
+  if (lines.length > 0) {
+    process.stdout.write(`${lines.join("\n")}\n`);
+  }
+}
+
+function hasOwn<T extends object>(object: T, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(object, key);
 }
 
 function isCommanderError(error: unknown): error is { code: string; message: string } {
