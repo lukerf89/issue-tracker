@@ -16,7 +16,8 @@ import {
   type ServiceContext
 } from "@issue-tracker/core";
 
-import { listIssuesData } from "../src/data/queries";
+import { createIssueFormAction } from "../src/data/actions";
+import { getIssueListPageData, listIssuesData } from "../src/data/queries";
 import { seedFilteredIssueListDb } from "./issue-list-fixture";
 
 const tempDirs: string[] = [];
@@ -135,6 +136,46 @@ describe("web data layer", () => {
       },
       ["ENG-1", "ENG-8"]
     );
+  });
+
+  it("creates an issue through the form action and exposes it in the list data", async () => {
+    const seeded = seedFilteredIssueListDb(tempDirs);
+    process.env.ISSUE_TRACKER_DB = seeded.dbPath;
+    const formData = new FormData();
+    formData.set("title", "Create issue from web form");
+    formData.set("description", "Created through the LF-85 create flow.");
+    formData.set("team", "ENG");
+    formData.set("project", seeded.projectId);
+    formData.set("priority", "3");
+    formData.set("assignee", "build-agent");
+    formData.append("labels", "Frontend");
+
+    const created = await createIssueFormAction(formData);
+    const issues = await listIssuesData();
+    const listed = issues.find((issue) => issue.identifier === created.identifier);
+
+    expect(created).toMatchObject({
+      title: "Create issue from web form",
+      description: "Created through the LF-85 create flow.",
+      priority: 3
+    });
+    expect(listed).toMatchObject({
+      identifier: created.identifier,
+      title: "Create issue from web form",
+      description: "Created through the LF-85 create flow.",
+      priority: 3,
+      projectId: seeded.projectId
+    });
+    expect(listed?.labels.map((label) => label.name)).toEqual(["Frontend"]);
+  });
+
+  it("uses the list page q parameter for core-backed issue search", async () => {
+    const seeded = seedFilteredIssueListDb(tempDirs);
+    process.env.ISSUE_TRACKER_DB = seeded.dbPath;
+
+    const data = await getIssueListPageData({ q: "Document" });
+
+    expect(data.issues.map((issue) => issue.identifier)).toEqual(["ENG-4"]);
   });
 });
 

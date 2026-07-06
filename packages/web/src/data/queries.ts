@@ -136,17 +136,22 @@ export async function listAttachmentsData(input: ListAttachmentsInput) {
   return withTrackerContext((context) => listAttachments(context, input).map(serializeAttachment));
 }
 
-export type IssueListPageFilters = ListIssueFilters;
+export type IssueListPageFilters = ListIssueFilters & {
+  q?: string;
+};
 
 export async function getIssueListPageData(filters: IssueListPageFilters = {}) {
   return withTrackerContext((context) => {
+    const { q, ...listFilters } = filters;
     const teams = listTeams(context).map(serializeTeam);
     const states = teams.flatMap((team) =>
       listStates(context, team.id).map(serializeWorkflowState)
     );
 
     return {
-      issues: listIssues(context, filters).map(serializeIssue),
+      issues: (q ? searchIssues(context, { query: q }) : listIssues(context, listFilters)).map(
+        serializeIssue
+      ),
       projects: listProjects(context).map(serializeProject),
       teams,
       states,

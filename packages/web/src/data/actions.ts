@@ -14,6 +14,7 @@ import {
   createActor,
   createCycle,
   createIssue,
+  createIssueInputSchema,
   createLabel,
   createProject,
   createTeam,
@@ -52,6 +53,23 @@ import { withTrackerContext } from "./context";
 
 export async function createIssueAction(input: CreateIssueInput) {
   return withTrackerContext((context) => serializeIssue(createIssue(context, input)));
+}
+
+export async function createIssueFormAction(formData: FormData) {
+  const labels = formStrings(formData.getAll("labels"));
+  const input = createIssueInputSchema.parse(
+    omitUndefined({
+      title: requiredFormString(formData, "title"),
+      description: nullableFormString(formData, "description"),
+      team: optionalFormString(formData, "team"),
+      priority: formInteger(formData, "priority"),
+      assignee: nullableFormString(formData, "assignee"),
+      project: nullableFormString(formData, "project"),
+      labels: labels.length > 0 ? labels : undefined
+    })
+  );
+
+  return createIssueAction(input);
 }
 
 export async function updateIssueAction(identifier: string, input: UpdateIssueInput) {
@@ -226,8 +244,26 @@ function nullableFormString(formData: FormData, key: string): string | null {
   return value.length > 0 ? value : null;
 }
 
+function optionalFormString(formData: FormData, key: string): string | undefined {
+  const value = formString(formData.get(key)).trim();
+  return value.length > 0 ? value : undefined;
+}
+
+function formStrings(values: FormDataEntryValue[]): string[] {
+  return values
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+}
+
 function formInteger(formData: FormData, key: string): number {
   return Number.parseInt(requiredFormString(formData, key), 10);
+}
+
+function omitUndefined<T extends Record<string, unknown>>(value: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, item]) => item !== undefined)
+  ) as Partial<T>;
 }
 
 function requireCurrentActorHandle(context: Parameters<typeof assignIssue>[0]): string {
