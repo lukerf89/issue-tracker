@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 
 import {
   ConfigKey,
+  addComment,
+  addCommentInputSchema,
   archiveLabel,
   archiveLabelInputSchema,
   createCycle,
@@ -37,6 +39,7 @@ import {
   updateProject,
   whoami,
   init as initWorkspace,
+  type AddCommentInput,
   type CreateIssueInput,
   type CreateCycleInput,
   type CreateLabelInput,
@@ -52,6 +55,7 @@ import { openCliContext, resolveDbPath, type CliGlobalOptions } from "./context.
 import {
   handleCliError,
   printActor,
+  printComment,
   printCycle,
   printCycles,
   printIssue,
@@ -432,6 +436,21 @@ export function createProgram(): Command {
         );
       })
     );
+  issue
+    .command("comment")
+    .argument("<identifier>")
+    .argument("<body>")
+    .option("--parent <comment>", "parent comment id")
+    .option("--json", "print JSON output")
+    .action((identifier, body, _options, command) =>
+      withContext(command, {}, (cli) => {
+        const options = optionsWithGlobals(command);
+        printComment(
+          addComment(cli.context, issueCommentInput(identifier, body, options)),
+          options
+        );
+      })
+    );
 
   program
     .command("mcp")
@@ -635,6 +654,18 @@ function issueUpdateInput(options: Record<string, unknown>): UpdateIssueInput {
     removeLabels: stringArrayOption(options.removeLabel),
     estimate: numberOption(options.estimate),
     dueDate: nullableStringOption(options.dueDate)
+  }));
+}
+
+function issueCommentInput(
+  identifier: string,
+  body: string,
+  options: Record<string, unknown>
+): AddCommentInput {
+  return addCommentInputSchema.parse(omitUndefined({
+    issue: identifier,
+    body,
+    parent: nullableStringOption(options.parent)
   }));
 }
 

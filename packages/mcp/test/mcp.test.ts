@@ -300,6 +300,69 @@ describe("MCP server", () => {
       await client.close();
     }
   });
+
+  it("adds comments and threaded replies through comment_on_issue", async () => {
+    const dbPath = initializedDbPath();
+    const client = await connectClient(dbPath, { handle: "comment-agent" });
+
+    try {
+      const created = await callJsonTool(client, "create_issue", {
+        title: "Review agent notes"
+      });
+      const root = await callJsonTool(client, "comment_on_issue", {
+        issue: created.identifier,
+        body: "Initial investigation complete."
+      });
+      expect(root).toMatchObject({
+        issueId: created.id,
+        body: "Initial investigation complete.",
+        parentId: null,
+        author: { handle: "comment-agent" }
+      });
+
+      const reply = await callJsonTool(client, "comment_on_issue", {
+        issue: created.id,
+        body: "Follow-up captured in the same thread.",
+        parent: root.id
+      });
+      expect(reply).toMatchObject({
+        issueId: created.id,
+        body: "Follow-up captured in the same thread.",
+        parentId: root.id,
+        author: { handle: "comment-agent" }
+      });
+
+      const fetched = await callJsonTool(client, "get_issue", {
+        identifier: created.identifier
+      });
+      expect(
+        (
+          fetched.comments as Array<{
+            body: string;
+            parentId: string | null;
+            author: { handle: string };
+          }>
+        ).map((comment) => ({
+          body: comment.body,
+          parentId: comment.parentId,
+          authorHandle: comment.author.handle
+        }))
+      ).toEqual([
+        {
+          body: "Initial investigation complete.",
+          parentId: null,
+          authorHandle: "comment-agent"
+        },
+        {
+          body: "Follow-up captured in the same thread.",
+          parentId: root.id,
+          authorHandle: "comment-agent"
+        }
+      ]);
+    } finally {
+      await client.close();
+    }
+  });
 });
 
 function createCycleFixtures(dbPath: string) {

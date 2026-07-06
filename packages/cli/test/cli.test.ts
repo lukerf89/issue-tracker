@@ -177,6 +177,76 @@ describe("tracker CLI", () => {
     });
   });
 
+  it("adds comments and threaded replies through the CLI and renders authors in issue view", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Review agent notes"])).status).toBe(
+      0
+    );
+
+    const rootResult = await tracker(dbPath, [
+      "issue",
+      "comment",
+      "ENG-1",
+      "Initial investigation complete.",
+      "--json"
+    ]);
+    expect(rootResult.status).toBe(0);
+    const root = JSON.parse(rootResult.stdout) as Record<string, unknown>;
+    expect(root).toMatchObject({
+      body: "Initial investigation complete.",
+      parentId: null,
+      author: { handle: "owner" }
+    });
+
+    const replyResult = await tracker(dbPath, [
+      "issue",
+      "comment",
+      "ENG-1",
+      "Follow-up captured in the same thread.",
+      "--parent",
+      String(root.id),
+      "--json"
+    ]);
+    expect(replyResult.status).toBe(0);
+    const reply = JSON.parse(replyResult.stdout) as Record<string, unknown>;
+    expect(reply).toMatchObject({
+      body: "Follow-up captured in the same thread.",
+      parentId: root.id,
+      author: { handle: "owner" }
+    });
+
+    const viewJson = await tracker(dbPath, ["issue", "view", "ENG-1", "--json"]);
+    expect(viewJson.status).toBe(0);
+    expect(
+      (JSON.parse(viewJson.stdout) as {
+        comments: Array<{ body: string; parentId: string | null; author: { handle: string } }>;
+      }).comments.map((comment) => ({
+        body: comment.body,
+        parentId: comment.parentId,
+        authorHandle: comment.author.handle
+      }))
+    ).toEqual([
+      {
+        body: "Initial investigation complete.",
+        parentId: null,
+        authorHandle: "owner"
+      },
+      {
+        body: "Follow-up captured in the same thread.",
+        parentId: root.id,
+        authorHandle: "owner"
+      }
+    ]);
+
+    const viewText = await tracker(dbPath, ["issue", "view", "ENG-1"]);
+    expect(viewText.status).toBe(0);
+    expect(stripAnsi(viewText.stdout)).toContain(
+      "Comments\n  @owner  Initial investigation complete.\n    @owner  Follow-up captured in the same thread."
+    );
+  });
+
   it("creates, lists, archives, and applies labels through JSON commands", async () => {
     const dbPath = tempDbPath();
 
@@ -420,6 +490,15 @@ function tempDbPath(): string {
   const tempDir = mkdtempSync(join(tmpdir(), "issue-tracker-cli-"));
   tempDirs.push(tempDir);
   return join(tempDir, "tracker.db");
+}
+
+function stripAnsi(value: string): string {
+  const escape = String.fromCharCode(27);
+
+  return value
+    .split(escape)
+    .map((part, index) => (index === 0 ? part : part.replace(/^\[[0-?]*[ -/]*[@-~]/, "")))
+    .join("");
 }
 
 async function tracker(dbPath: string, args: string[]) {

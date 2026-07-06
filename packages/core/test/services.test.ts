@@ -6,6 +6,8 @@ import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  addComment,
+  addCommentInputSchema,
   applyMigrations,
   archiveLabel,
   AppErrorCode,
@@ -19,6 +21,7 @@ import {
   detachLabel,
   getIssue,
   init,
+  listComments,
   listCycles,
   listLabels,
   listIssueFiltersSchema,
@@ -361,6 +364,112 @@ describe("core services", () => {
     }
   });
 
+  it("adds comments and threaded replies with authors and serializes them on issues", () => {
+    const { context, close } = initializedContext("2026-05-01T00:00:00.000Z");
+
+    try {
+      const issue = createIssue(context, { title: "Review agent notes" });
+
+      context.clock = fixedClock("2026-05-01T00:01:00.000Z");
+      const root = addComment(context, {
+        issue: issue.identifier,
+        body: "Initial investigation complete."
+      });
+
+      context.clock = fixedClock("2026-05-01T00:02:00.000Z");
+      const reply = addComment(context, {
+        issue: issue.id,
+        body: "Follow-up captured in the same thread.",
+        parent: root.id
+      });
+
+      expect(root).toMatchObject({
+        issueId: issue.id,
+        authorId: context.actor?.id,
+        body: "Initial investigation complete.",
+        parentId: null,
+        createdAt: "2026-05-01T00:01:00.000Z",
+        author: { handle: "owner" }
+      });
+      expect(reply).toMatchObject({
+        issueId: issue.id,
+        authorId: context.actor?.id,
+        body: "Follow-up captured in the same thread.",
+        parentId: root.id,
+        createdAt: "2026-05-01T00:02:00.000Z",
+        author: { handle: "owner" }
+      });
+      expect(
+        listComments(context, { issue: "ENG-1" }).map((comment) => ({
+          body: comment.body,
+          parentId: comment.parentId,
+          authorHandle: comment.author.handle
+        }))
+      ).toEqual([
+        {
+          body: "Initial investigation complete.",
+          parentId: null,
+          authorHandle: "owner"
+        },
+        {
+          body: "Follow-up captured in the same thread.",
+          parentId: root.id,
+          authorHandle: "owner"
+        }
+      ]);
+
+      const serialized = serializeIssue(getIssue(context, "ENG-1"));
+      expect(serialized.comments).toEqual([
+        expect.objectContaining({
+          id: root.id,
+          body: "Initial investigation complete.",
+          parentId: null,
+          author: expect.objectContaining({ handle: "owner" })
+        }),
+        expect.objectContaining({
+          id: reply.id,
+          body: "Follow-up captured in the same thread.",
+          parentId: root.id,
+          author: expect.objectContaining({ handle: "owner" })
+        })
+      ]);
+      expect(addCommentInputSchema.safeParse({ issue: "ENG-1", body: "" }).success).toBe(false);
+    } finally {
+      close();
+    }
+  });
+
+  it("rejects threaded replies whose parent comment is missing or belongs to another issue", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      const first = createIssue(context, { title: "First issue" });
+      const second = createIssue(context, { title: "Second issue" });
+      const root = addComment(context, {
+        issue: first.identifier,
+        body: "Root comment"
+      });
+
+      expect(() =>
+        addComment(context, {
+          issue: first.identifier,
+          body: "Missing parent",
+          parent: "comment-missing"
+        })
+      ).toThrow("Comment comment-missing was not found.");
+      expect(() =>
+        addComment(context, {
+          issue: second.identifier,
+          body: "Cross-issue reply",
+          parent: root.id
+        })
+      ).toThrow("does not belong to issue");
+      expect(listComments(context, { issue: second.identifier })).toEqual([]);
+    } finally {
+      close();
+    }
+  });
+
   it("applies lifecycle timestamps with an injected clock", () => {
     const { context, close } = initializedContext("2026-02-01T00:00:00.000Z");
 
@@ -459,6 +568,28 @@ describe("core services", () => {
     }
   });
 
+  it("writes exactly one commented activity row for each comment", () => {
+    const { context, db, close } = initializedContext();
+
+    try {
+      createIssue(context, { title: "Track comment activity" });
+      const root = addComment(context, { issue: "ENG-1", body: "Root comment" });
+      addComment(context, {
+        issue: "ENG-1",
+        body: "Threaded reply",
+        parent: root.id
+      });
+
+      expect(readActivityEntries(db)).toMatchObject([
+        { action: "created" },
+        { action: "commented", data: { commentId: root.id, parentId: null } },
+        { action: "commented", data: { parentId: root.id } }
+      ]);
+    } finally {
+      close();
+    }
+  });
+
   it("serializes issues with ISO timestamps, camelCase keys, and explicit nulls", () => {
     const { context, close } = initializedContext("2026-03-01T00:00:00.000Z");
 
@@ -482,6 +613,7 @@ describe("core services", () => {
         "parentId",
         "parent",
         "children",
+        "comments",
         "estimate",
         "dueDate",
         "sortOrder",
@@ -502,6 +634,7 @@ describe("core services", () => {
         parentId: null,
         parent: null,
         children: [],
+        comments: [],
         estimate: null,
         dueDate: null,
         startedAt: null,

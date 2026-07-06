@@ -1,4 +1,4 @@
-import type { Activity, Actor, Cycle, Issue, Label, Project, Team, WorkflowState } from "./db/schema.js";
+import type { Activity, Actor, Comment, Cycle, Issue, Label, Project, Team, WorkflowState } from "./db/schema.js";
 
 interface IssueReference {
   id: string;
@@ -78,6 +78,7 @@ export function serializeIssue(
     labels?: Label[];
     parent?: IssueReference | null;
     children?: IssueReference[];
+    comments?: Array<Comment & { author: Actor }>;
   }
 ) {
   const relationFields = {
@@ -86,6 +87,9 @@ export function serializeIssue(
       : {}),
     ...(hasOwn(issue, "children")
       ? { children: (issue.children ?? []).map(serializeIssueReference) }
+      : {}),
+    ...(hasOwn(issue, "comments")
+      ? { comments: (issue.comments ?? []).map(serializeComment) }
       : {})
   };
 
@@ -114,6 +118,18 @@ export function serializeIssue(
     canceledAt: toIsoOrNull(issue.canceledAt),
     archivedAt: toIsoOrNull(issue.archivedAt),
     labels: (issue.labels ?? []).map(serializeLabel)
+  };
+}
+
+export function serializeComment(comment: Comment & { author: Actor }) {
+  return {
+    id: comment.id,
+    issueId: comment.issueId,
+    authorId: comment.authorId,
+    author: serializeActor(comment.author),
+    body: comment.body,
+    parentId: comment.parentId ?? null,
+    createdAt: toIso(comment.createdAt)
   };
 }
 

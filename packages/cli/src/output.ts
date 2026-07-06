@@ -4,12 +4,14 @@ import {
   getActor,
   getState,
   serializeActor,
+  serializeComment,
   serializeCycle,
   serializeIssue,
   serializeLabel,
   serializeProject,
   serializeTeam,
   type Actor,
+  type CommentWithAuthor,
   type Cycle,
   type Issue,
   type IssueReference,
@@ -117,6 +119,15 @@ export function printLabel(label: Label, options: OutputOptions): void {
   }
 
   process.stdout.write(`${pc.bold(label.name)}  ${label.color}  ${label.group ?? ""}\n`);
+}
+
+export function printComment(comment: CommentWithAuthor, options: OutputOptions): void {
+  if (options.json) {
+    printJson(serializeComment(comment));
+    return;
+  }
+
+  process.stdout.write(`${formatCommentLines(comment, 0).join("\n")}\n`);
 }
 
 export function printProject(project: Project, options: OutputOptions): void {
@@ -231,6 +242,7 @@ function printIssueRelations(issue: Issue): void {
   const detail = issue as Issue & {
     parent?: IssueReference | null;
     children?: IssueReference[];
+    comments?: CommentWithAuthor[];
   };
   const lines: string[] = [];
 
@@ -246,9 +258,58 @@ function printIssueRelations(issue: Issue): void {
     }
   }
 
+  if (hasOwn(detail, "comments") && detail.comments && detail.comments.length > 0) {
+    lines.push("Comments");
+    lines.push(...commentThreadLines(detail.comments));
+  }
+
   if (lines.length > 0) {
     process.stdout.write(`${lines.join("\n")}\n`);
   }
+}
+
+function commentThreadLines(comments: CommentWithAuthor[]): string[] {
+  const knownIds = new Set(comments.map((comment) => comment.id));
+  const childrenByParent = new Map<string | null, CommentWithAuthor[]>();
+
+  for (const comment of comments) {
+    const parentKey = comment.parentId && knownIds.has(comment.parentId)
+      ? comment.parentId
+      : null;
+    childrenByParent.set(parentKey, [...(childrenByParent.get(parentKey) ?? []), comment]);
+  }
+
+  const lines: string[] = [];
+  const visited = new Set<string>();
+  const appendComment = (comment: CommentWithAuthor, depth: number): void => {
+    if (visited.has(comment.id)) return;
+    visited.add(comment.id);
+    lines.push(...formatCommentLines(comment, depth));
+
+    for (const child of childrenByParent.get(comment.id) ?? []) {
+      appendComment(child, depth + 1);
+    }
+  };
+
+  for (const comment of childrenByParent.get(null) ?? []) {
+    appendComment(comment, 0);
+  }
+
+  for (const comment of comments) {
+    appendComment(comment, 0);
+  }
+
+  return lines;
+}
+
+function formatCommentLines(comment: CommentWithAuthor, depth: number): string[] {
+  const indent = "  ".repeat(depth + 1);
+  const [firstLine = "", ...rest] = comment.body.split(/\r?\n/);
+
+  return [
+    `${indent}${pc.bold(`@${comment.author.handle}`)}  ${firstLine}`,
+    ...rest.map((line) => `${indent}  ${line}`)
+  ];
 }
 
 function hasOwn<T extends object>(object: T, key: PropertyKey): boolean {

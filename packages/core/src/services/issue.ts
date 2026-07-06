@@ -18,6 +18,7 @@ import {
   withIssueLabels,
   type IssueWithLabels
 } from "./label.js";
+import { listComments, type CommentWithAuthor } from "./comment.js";
 import { getState, resolveDefaultUnstartedState } from "./state.js";
 import { getTeam, getTeamByKey } from "./team.js";
 
@@ -85,6 +86,7 @@ export interface IssueReference {
 export type IssueWithDetails = IssueWithLabels & {
   parent: IssueReference | null;
   children: IssueReference[];
+  comments: CommentWithAuthor[];
 };
 
 export function createIssue(context: ServiceContext, input: CreateIssueInput) {
@@ -387,7 +389,8 @@ function withIssueDetails(context: ServiceContext, issue: Issue): IssueWithDetai
   return {
     ...withIssueLabels(context, issue),
     parent: issue.parentId ? issueReference(getIssueById(context, issue.parentId)) : null,
-    children: listChildIssueReferences(context, issue.id)
+    children: listChildIssueReferences(context, issue.id),
+    comments: listComments(context, { issue: issue.id })
   };
 }
 

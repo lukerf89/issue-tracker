@@ -18,6 +18,7 @@ export {
 export {
   serializeActivity,
   serializeActor,
+  serializeComment,
   serializeCycle,
   serializeIssue,
   serializeLabel,
@@ -33,6 +34,13 @@ export {
   type CreateActorInput
 } from "./services/actor.js";
 export { ConfigKey, getConfig, setConfig, whoami } from "./services/config.js";
+export {
+  addComment,
+  listComments,
+  type AddCommentInput,
+  type CommentWithAuthor,
+  type ListCommentsInput
+} from "./services/comment.js";
 export {
   createCycle,
   getCycle,
@@ -93,6 +101,7 @@ export {
   cycleRefSchema,
   listCyclesInputSchema
 } from "./schemas/cycle.js";
+export { addCommentInputSchema } from "./schemas/comment.js";
 export {
   createIssueInputSchema,
   getIssueInputSchema,

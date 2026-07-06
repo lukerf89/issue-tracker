@@ -1,4 +1,6 @@
 import {
+  addComment,
+  addCommentInputSchema,
   createIssue,
   createIssueInputSchema,
   getIssue,
@@ -7,6 +9,7 @@ import {
   listIssues,
   moveIssue,
   moveIssueInputSchema,
+  serializeComment,
   serializeIssue,
   updateIssue,
   updateIssueToolInputSchema
@@ -91,6 +94,21 @@ export function registerIssueTools(
       const parsed = moveIssueInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
         jsonResult(serializeIssue(moveIssue(context, parsed.identifier, parsed.state)))
+      );
+    })
+  );
+
+  server.registerTool(
+    "comment_on_issue",
+    {
+      title: "Comment on issue",
+      description: "Add a comment to an issue.",
+      inputSchema: addCommentInputSchema.shape
+    },
+    (input) => mcpToolResult(() => {
+      const parsed = addCommentInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
+        jsonResult(serializeComment(addComment(context, parsed)))
       );
     })
   );
