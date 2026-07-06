@@ -33,6 +33,8 @@ import {
   listIssues,
   moveIssue,
   openDb,
+  searchInputSchema,
+  searchIssues,
   serializeIssue,
   serializeCycle,
   updateIssue,
@@ -555,6 +557,71 @@ describe("core services", () => {
         action: "archived",
         data: { identifier: "ENG-1" }
       });
+    } finally {
+      close();
+    }
+  });
+
+  it("searches issue titles and descriptions case-insensitively and hides archived issues", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      createTeam(context, { key: "OPS", name: "Operations" });
+      createIssue(context, {
+        title: "Fix Login Redirect",
+        description: "OAuth callback fails",
+        team: "ENG"
+      });
+      createIssue(context, {
+        title: "Refresh setup guide",
+        description: "Mention login redirect setup",
+        team: "ENG"
+      });
+      createIssue(context, {
+        title: "Login operations runbook",
+        team: "OPS"
+      });
+      createIssue(context, {
+        title: "Archived login cleanup",
+        team: "ENG"
+      });
+      archiveIssue(context, "ENG-3");
+
+      expect(searchIssues(context, { query: "LOGIN" }).map((issue) => issue.identifier)).toEqual([
+        "ENG-1",
+        "ENG-2",
+        "OPS-1"
+      ]);
+      expect(
+        searchIssues(context, { query: "oauth", team: "ENG" }).map((issue) => issue.identifier)
+      ).toEqual(["ENG-1"]);
+      expect(searchIssues(context, { query: "login", limit: 2 }).map((issue) => issue.identifier)).toEqual([
+        "ENG-1",
+        "ENG-2"
+      ]);
+      expect(searchInputSchema.safeParse({ query: "login", team: "ENG", limit: 2 }).success).toBe(
+        true
+      );
+      expect(searchInputSchema.safeParse({ query: "" }).success).toBe(false);
+    } finally {
+      close();
+    }
+  });
+
+  it("treats SQL LIKE wildcard characters in search queries literally", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      createIssue(context, { title: "Use 100% capacity" });
+      createIssue(context, { title: "Read abc_def flag" });
+      createIssue(context, { title: "Plain matching issue" });
+
+      expect(searchIssues(context, { query: "%" }).map((issue) => issue.identifier)).toEqual([
+        "ENG-1"
+      ]);
+      expect(searchIssues(context, { query: "_" }).map((issue) => issue.identifier)).toEqual([
+        "ENG-2"
+      ]);
     } finally {
       close();
     }

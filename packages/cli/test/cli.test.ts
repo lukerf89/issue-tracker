@@ -203,6 +203,82 @@ describe("tracker CLI", () => {
     expect(records.map((record) => record.priority)).toEqual([1]);
   });
 
+  it("searches issues as JSON by title and description, hides archived issues, and supports team and limit filters", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["team", "create", "OPS", "Operations"])).status).toBe(0);
+    expect(
+      (
+        await tracker(dbPath, [
+          "issue",
+          "create",
+          "--title",
+          "Fix Login Redirect",
+          "--desc",
+          "OAuth callback fails"
+        ])
+      ).status
+    ).toBe(0);
+    expect(
+      (
+        await tracker(dbPath, [
+          "issue",
+          "create",
+          "--title",
+          "Refresh setup guide",
+          "--desc",
+          "Mention login redirect setup"
+        ])
+      ).status
+    ).toBe(0);
+    expect(
+      (
+        await tracker(dbPath, [
+          "issue",
+          "create",
+          "--team",
+          "OPS",
+          "--title",
+          "Login operations runbook"
+        ])
+      ).status
+    ).toBe(0);
+    expect(
+      (await tracker(dbPath, ["issue", "create", "--title", "Archived login cleanup"])).status
+    ).toBe(0);
+    expect((await tracker(dbPath, ["issue", "archive", "ENG-3"])).status).toBe(0);
+
+    const searched = await tracker(dbPath, ["issue", "search", "LOGIN", "--json"]);
+    expect(searched.status).toBe(0);
+    const records = JSON.parse(searched.stdout) as Array<Record<string, unknown>>;
+    expect(records.map((record) => record.identifier)).toEqual(["ENG-1", "ENG-2", "OPS-1"]);
+    expect(records.map((record) => record.archivedAt)).toEqual([null, null, null]);
+
+    const operations = await tracker(dbPath, [
+      "issue",
+      "search",
+      "login",
+      "--team",
+      "OPS",
+      "--json"
+    ]);
+    expect(operations.status).toBe(0);
+    expect(
+      (JSON.parse(operations.stdout) as Array<Record<string, unknown>>).map(
+        (record) => record.identifier
+      )
+    ).toEqual(["OPS-1"]);
+
+    const limited = await tracker(dbPath, ["issue", "search", "login", "--limit", "2", "--json"]);
+    expect(limited.status).toBe(0);
+    expect(
+      (JSON.parse(limited.stdout) as Array<Record<string, unknown>>).map(
+        (record) => record.identifier
+      )
+    ).toEqual(["ENG-1", "ENG-2"]);
+  });
+
   it("archives issues, hides them from list by default, includes them on request, and still views them", async () => {
     const dbPath = tempDbPath();
 

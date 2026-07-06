@@ -11,6 +11,8 @@ import {
   listIssues,
   moveIssue,
   moveIssueInputSchema,
+  searchInputSchema,
+  searchIssues,
   serializeComment,
   serializeIssue,
   updateIssue,
@@ -36,6 +38,21 @@ export function registerIssueTools(
       const parsed = listIssueFiltersSchema.parse(input);
       return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
         jsonResult(listIssues(context, parsed).map(serializeIssue))
+      );
+    })
+  );
+
+  server.registerTool(
+    "search",
+    {
+      title: "Search issues",
+      description: "Search issues by title or description text.",
+      inputSchema: searchInputSchema.shape
+    },
+    (input) => mcpToolResult(() => {
+      const parsed = searchInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
+        jsonResult(searchIssues(context, parsed).map(serializeIssue))
       );
     })
   );

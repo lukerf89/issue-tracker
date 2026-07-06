@@ -40,6 +40,8 @@ import {
   moveIssueInputSchema,
   projectStatusSchema,
   moveIssue,
+  searchInputSchema,
+  searchIssues,
   setConfig,
   updateIssueInputSchema,
   updateIssue,
@@ -55,6 +57,7 @@ import {
   type CreateLabelInput,
   type CreateProjectInput,
   type ListIssueFilters,
+  type SearchIssuesInput,
   type UpdateIssueInput,
   type UpdateProjectInput
 } from "@issue-tracker/core";
@@ -426,6 +429,22 @@ export function createProgram(): Command {
       })
     );
   issue
+    .command("search")
+    .argument("<query>")
+    .option("--team <key>", "team key")
+    .option("--limit <number>", "maximum number of issues", parseInteger)
+    .option("--json", "print JSON output")
+    .action((query, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        printIssues(
+          cli.context,
+          searchIssues(cli.context, issueSearchInput(query, options, cli.defaultTeam)),
+          options
+        );
+      })
+    );
+  issue
     .command("view")
     .argument("<identifier>")
     .option("--json", "print JSON output")
@@ -720,6 +739,18 @@ function issueListFilters(options: Record<string, unknown>, defaultTeam?: string
     priority: numberOption(options.priority),
     limit: numberOption(options.limit),
     includeArchived: booleanOption(options.includeArchived)
+  }));
+}
+
+function issueSearchInput(
+  query: string,
+  options: Record<string, unknown>,
+  defaultTeam?: string
+): SearchIssuesInput {
+  return searchInputSchema.parse(omitUndefined({
+    query,
+    team: stringOption(options.team) ?? defaultTeam,
+    limit: numberOption(options.limit)
   }));
 }
 

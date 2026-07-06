@@ -70,6 +70,7 @@ export {
   getIssue,
   listIssues,
   moveIssue,
+  searchIssues,
   updateIssue,
   type ArchiveIssueInput,
   type AssignIssueInput,
@@ -77,6 +78,7 @@ export {
   type IssueReference,
   type IssueWithDetails,
   type ListIssueFilters,
+  type SearchIssuesInput,
   type UpdateIssueInput
 } from "./services/issue.js";
 export {
@@ -119,6 +121,7 @@ export {
   getIssueInputSchema,
   listIssueFiltersSchema,
   moveIssueInputSchema,
+  searchInputSchema,
   updateIssueInputSchema,
   updateIssueToolInputSchema
 } from "./schemas/issue.js";

@@ -17,6 +17,7 @@ import {
   createIssue,
   createLabel,
   createProject,
+  createTeam,
   getActor,
   init,
   listActors,
@@ -128,6 +129,39 @@ describe("MCP server", () => {
         (listed as unknown as Array<Record<string, unknown>>).map((issue) => issue.identifier)
       ).toEqual(["ENG-1", "ENG-2"]);
       expect(`${JSON.stringify(listed)}\n`).toBe(cliOutput);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("returns byte-identical search JSON to CLI issue search --json", async () => {
+    const dbPath = initializedDbPath();
+    createSearchFixtures(dbPath);
+    const client = await connectClient(dbPath, { handle: "search-agent" });
+
+    try {
+      const filter = { query: "login", team: "ENG", limit: 2 };
+      const searched = (await callJsonTool(client, "search", filter)) as unknown as Array<
+        Record<string, unknown>
+      >;
+      const cliOutput = tracker(dbPath, [
+        "issue",
+        "search",
+        filter.query,
+        "--team",
+        filter.team,
+        "--limit",
+        String(filter.limit),
+        "--json"
+      ]);
+
+      expect(searched.map((issue) => issue.identifier)).toEqual(["ENG-1", "ENG-2"]);
+      expect(`${JSON.stringify(searched)}\n`).toBe(cliOutput);
+
+      const all = (await callJsonTool(client, "search", {
+        query: "LOGIN"
+      })) as unknown as Array<Record<string, unknown>>;
+      expect(all.map((issue) => issue.identifier)).toEqual(["ENG-1", "ENG-2", "OPS-1"]);
     } finally {
       await client.close();
     }
@@ -600,6 +634,33 @@ function createListFilterFixtures(dbPath: string): void {
     moveIssue(setup.context, "ENG-3", "In Progress");
     moveIssue(setup.context, "ENG-4", "In Progress");
     archiveIssue(setup.context, "ENG-2");
+  } finally {
+    setup.close();
+  }
+}
+
+function createSearchFixtures(dbPath: string): void {
+  const setup = openContext(dbPath);
+
+  try {
+    setup.context.actor = whoami(setup.context);
+    createTeam(setup.context, { key: "OPS", name: "Operations" });
+    createIssue(setup.context, {
+      title: "Fix Login Redirect",
+      description: "OAuth callback fails"
+    });
+    createIssue(setup.context, {
+      title: "Refresh setup guide",
+      description: "Mention login redirect setup"
+    });
+    createIssue(setup.context, {
+      title: "Login operations runbook",
+      team: "OPS"
+    });
+    createIssue(setup.context, {
+      title: "Archived login cleanup"
+    });
+    archiveIssue(setup.context, "ENG-3");
   } finally {
     setup.close();
   }

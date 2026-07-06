@@ -56,6 +56,12 @@ export interface ListIssueFilters {
   includeArchived?: boolean;
 }
 
+export interface SearchIssuesInput {
+  query: string;
+  team?: string;
+  limit?: number;
+}
+
 export interface UpdateIssueInput {
   title?: string;
   description?: string | null;
@@ -244,6 +250,27 @@ export function listIssues(context: ServiceContext, filters: ListIssueFilters = 
     .where(conditions.length ? and(...conditions) : undefined)
     .orderBy(asc(teams.key), asc(issues.number), asc(issues.id))
     .limit(filters.limit ?? -1)
+    .all()
+    .map(({ issue }) => withIssueDetails(context, issue));
+}
+
+export function searchIssues(context: ServiceContext, input: SearchIssuesInput) {
+  const conditions: SQL[] = [
+    isNull(issues.archivedAt),
+    textSearchCondition(input.query)
+  ];
+
+  if (input.team) {
+    conditions.push(eq(issues.teamId, resolveTeam(context, input.team).id));
+  }
+
+  return context.db
+    .select({ issue: issues })
+    .from(issues)
+    .innerJoin(teams, eq(teams.id, issues.teamId))
+    .where(and(...conditions))
+    .orderBy(asc(teams.key), asc(issues.number), asc(issues.id))
+    .limit(input.limit ?? -1)
     .all()
     .map(({ issue }) => withIssueDetails(context, issue));
 }
@@ -585,6 +612,19 @@ function issueIdsForLabelName(context: ServiceContext, labelName: string): strin
     .where(and(eq(labels.name, labelName), isNull(labels.archivedAt)))
     .all()
     .map((row) => row.issueId);
+}
+
+function textSearchCondition(query: string): SQL {
+  const pattern = `%${escapeLike(query.toLowerCase())}%`;
+
+  return sql`(
+    lower(${issues.title}) like ${pattern} escape '\\'
+    or lower(coalesce(${issues.description}, '')) like ${pattern} escape '\\'
+  )`;
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (character) => `\\${character}`);
 }
 
 function resolveTeam(context: ServiceContext, idOrKey?: string) {
