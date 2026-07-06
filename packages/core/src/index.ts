@@ -18,28 +18,80 @@ export {
 export {
   serializeActivity,
   serializeActor,
+  serializeComment,
+  serializeCycle,
   serializeIssue,
+  serializeLabel,
   serializeProject,
   serializeTeam,
   serializeWorkflowState
 } from "./serialize.js";
-export { appendActivity, type AppendActivityInput } from "./services/activity.js";
+export {
+  appendActivity,
+  listActivity,
+  type ActivityWithActor,
+  type AppendActivityInput,
+  type ListActivityInput
+} from "./services/activity.js";
 export {
   createActor,
   getActor,
   listActors,
-  type CreateActorInput
+  type CreateActorInput,
+  type ListActorsOptions
 } from "./services/actor.js";
 export { ConfigKey, getConfig, setConfig, whoami } from "./services/config.js";
+export {
+  addComment,
+  listComments,
+  type AddCommentInput,
+  type CommentWithAuthor,
+  type ListCommentsInput
+} from "./services/comment.js";
+export {
+  createCycle,
+  getCycle,
+  listCycles,
+  type CreateCycleInput,
+  type CycleRef,
+  type ListCyclesOptions
+} from "./services/cycle.js";
+export {
+  backupDatabase,
+  exportSnapshot,
+  resolveBackupPath,
+  type ExportSnapshot,
+  type ResolveBackupPathInput
+} from "./services/export.js";
 export { init, type InitInput } from "./services/init.js";
 export {
+  archiveLabel,
+  attachLabel,
+  createLabel,
+  detachLabel,
+  getLabel,
+  listIssueLabels,
+  listLabels,
+  type CreateLabelInput,
+  type IssueWithLabels,
+  type ListLabelsOptions
+} from "./services/label.js";
+export {
+  archiveIssue,
+  assignIssue,
   createIssue,
   getIssue,
   listIssues,
   moveIssue,
+  searchIssues,
   updateIssue,
+  type ArchiveIssueInput,
+  type AssignIssueInput,
   type CreateIssueInput,
+  type IssueReference,
+  type IssueWithDetails,
   type ListIssueFilters,
+  type SearchIssuesInput,
   type UpdateIssueInput
 } from "./services/issue.js";
 export {
@@ -65,13 +117,35 @@ export {
   type CreateTeamInput
 } from "./services/team.js";
 export {
+  listActivityInputSchema,
+} from "./schemas/activity.js";
+export {
+  actorTypeSchema,
+  createActorInputSchema,
+  listActorsInputSchema
+} from "./schemas/actor.js";
+export {
+  createCycleInputSchema,
+  cycleRefSchema,
+  listCyclesInputSchema
+} from "./schemas/cycle.js";
+export { addCommentInputSchema } from "./schemas/comment.js";
+export {
+  archiveIssueInputSchema,
+  assignIssueInputSchema,
   createIssueInputSchema,
   getIssueInputSchema,
   listIssueFiltersSchema,
   moveIssueInputSchema,
+  searchInputSchema,
   updateIssueInputSchema,
   updateIssueToolInputSchema
 } from "./schemas/issue.js";
+export {
+  archiveLabelInputSchema,
+  createLabelInputSchema,
+  listLabelsInputSchema
+} from "./schemas/label.js";
 export {
   createProjectInputSchema,
   getProjectInputSchema,

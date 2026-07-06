@@ -4,11 +4,20 @@ import {
   getActor,
   getState,
   serializeActor,
+  serializeActivity,
+  serializeComment,
+  serializeCycle,
   serializeIssue,
+  serializeLabel,
   serializeProject,
   serializeTeam,
   type Actor,
+  type ActivityWithActor,
+  type CommentWithAuthor,
+  type Cycle,
   type Issue,
+  type IssueReference,
+  type Label,
   type Project,
   type ServiceContext,
   type Team
@@ -23,6 +32,7 @@ export interface IssueListRow {
   issue: Issue;
   state: string;
   assignee: string | null;
+  labels: string;
 }
 
 export function printJson(value: unknown): void {
@@ -40,6 +50,17 @@ export function printActor(actor: Actor, options: OutputOptions): void {
   }
 
   process.stdout.write(`${actor.handle} (${actor.name})\n`);
+}
+
+export function printActors(actors: Actor[], options: OutputOptions): void {
+  if (options.json) {
+    printJson(actors.map(serializeActor));
+    return;
+  }
+
+  for (const actor of actors) {
+    process.stdout.write(`${pc.bold(actor.handle)}  ${actor.type}  ${actor.name}\n`);
+  }
 }
 
 export function printTeams(teams: Team[], options: OutputOptions): void {
@@ -73,6 +94,78 @@ export function printProjects(projects: Project[], options: OutputOptions): void
   }
 }
 
+export function printCycles(cycles: Cycle[], options: OutputOptions): void {
+  if (options.json) {
+    printJson(cycles.map(serializeCycle));
+    return;
+  }
+
+  for (const cycle of cycles) {
+    process.stdout.write(`${pc.bold(`#${cycle.number}`)}  ${cycle.name ?? ""}\n`);
+  }
+}
+
+export function printCycle(cycle: Cycle, options: OutputOptions): void {
+  if (options.json) {
+    printJson(serializeCycle(cycle));
+    return;
+  }
+
+  process.stdout.write(`${pc.bold(`#${cycle.number}`)}  ${cycle.name ?? ""}\n`);
+}
+
+export function printLabels(labels: Label[], options: OutputOptions): void {
+  if (options.json) {
+    printJson(labels.map(serializeLabel));
+    return;
+  }
+
+  for (const label of labels) {
+    process.stdout.write(`${pc.bold(label.name)}  ${label.color}  ${label.group ?? ""}\n`);
+  }
+}
+
+export function printLabel(label: Label, options: OutputOptions): void {
+  if (options.json) {
+    printJson(serializeLabel(label));
+    return;
+  }
+
+  process.stdout.write(`${pc.bold(label.name)}  ${label.color}  ${label.group ?? ""}\n`);
+}
+
+export function printComment(comment: CommentWithAuthor, options: OutputOptions): void {
+  if (options.json) {
+    printJson(serializeComment(comment));
+    return;
+  }
+
+  process.stdout.write(`${formatCommentLines(comment, 0).join("\n")}\n`);
+}
+
+export function printActivity(
+  entries: ActivityWithActor[],
+  options: OutputOptions
+): void {
+  const serialized = entries.map(serializeActivity);
+
+  if (options.json) {
+    printJson(serialized);
+    return;
+  }
+
+  for (const entry of serialized) {
+    process.stdout.write(
+      [
+        entry.createdAt,
+        pc.bold(`@${entry.actor.handle}`),
+        entry.action,
+        formatActivityData(entry.data)
+      ].filter(Boolean).join("  ") + "\n"
+    );
+  }
+}
+
 export function printProject(project: Project, options: OutputOptions): void {
   if (options.json) {
     printJson(serializeProject(project));
@@ -90,6 +183,7 @@ export function printIssue(context: ServiceContext, issue: Issue, options: Outpu
 
   const row = issueRow(context, issue);
   printIssueTable([row]);
+  printIssueRelations(issue);
 }
 
 export function printIssues(
@@ -133,7 +227,8 @@ function printIssueTable(rows: IssueListRow[]): void {
     assignee: Math.max(
       "Assignee".length,
       ...rows.map((row) => (row.assignee ?? "Unassigned").length)
-    )
+    ),
+    labels: Math.max("Labels".length, ...rows.map((row) => row.labels.length))
   };
 
   process.stdout.write(
@@ -143,7 +238,8 @@ function printIssueTable(rows: IssueListRow[]): void {
         pad("P", widths.priority),
         pad("State", widths.state),
         pad("Title", widths.title),
-        pad("Assignee", widths.assignee)
+        pad("Assignee", widths.assignee),
+        pad("Labels", widths.labels)
       ].join("  ")
     ) + "\n"
   );
@@ -155,7 +251,8 @@ function printIssueTable(rows: IssueListRow[]): void {
         pad(String(row.issue.priority), widths.priority),
         pad(row.state, widths.state),
         pad(row.issue.title, widths.title),
-        pad(row.assignee ?? "Unassigned", widths.assignee)
+        pad(row.assignee ?? "Unassigned", widths.assignee),
+        pad(row.labels, widths.labels)
       ].join("  ") + "\n"
     );
   }
@@ -164,11 +261,140 @@ function printIssueTable(rows: IssueListRow[]): void {
 function issueRow(context: ServiceContext, issue: Issue): IssueListRow {
   const state = getState(context, issue.stateId, issue.teamId).name;
   const assignee = issue.assigneeId ? getActor(context, issue.assigneeId).handle : null;
-  return { issue, state, assignee };
+  const labels = issueLabels(issue).join(", ");
+  return { issue, state, assignee, labels };
 }
 
 function pad(value: string, width: number): string {
   return value.padEnd(width, " ");
+}
+
+function issueLabels(issue: Issue): string[] {
+  const maybeLabeled = issue as Issue & { labels?: Label[] };
+  return (maybeLabeled.labels ?? []).map((label) => label.name);
+}
+
+function printIssueRelations(issue: Issue): void {
+  const detail = issue as Issue & {
+    parent?: IssueReference | null;
+    children?: IssueReference[];
+    comments?: CommentWithAuthor[];
+  };
+  const lines: string[] = [];
+
+  if (hasOwn(detail, "parent") && detail.parent) {
+    lines.push(`Parent    ${pc.bold(detail.parent.identifier)}  ${detail.parent.title}`);
+  }
+
+  if (hasOwn(detail, "children") && detail.children && detail.children.length > 0) {
+    lines.push("Children");
+
+    for (const child of detail.children) {
+      lines.push(`  ${pc.bold(child.identifier)}  ${child.title}`);
+    }
+  }
+
+  if (hasOwn(detail, "comments") && detail.comments && detail.comments.length > 0) {
+    lines.push("Comments");
+    lines.push(...commentThreadLines(detail.comments));
+  }
+
+  if (lines.length > 0) {
+    process.stdout.write(`${lines.join("\n")}\n`);
+  }
+}
+
+function commentThreadLines(comments: CommentWithAuthor[]): string[] {
+  const knownIds = new Set(comments.map((comment) => comment.id));
+  const childrenByParent = new Map<string | null, CommentWithAuthor[]>();
+
+  for (const comment of comments) {
+    const parentKey = comment.parentId && knownIds.has(comment.parentId)
+      ? comment.parentId
+      : null;
+    childrenByParent.set(parentKey, [...(childrenByParent.get(parentKey) ?? []), comment]);
+  }
+
+  const lines: string[] = [];
+  const visited = new Set<string>();
+  const appendComment = (comment: CommentWithAuthor, depth: number): void => {
+    if (visited.has(comment.id)) return;
+    visited.add(comment.id);
+    lines.push(...formatCommentLines(comment, depth));
+
+    for (const child of childrenByParent.get(comment.id) ?? []) {
+      appendComment(child, depth + 1);
+    }
+  };
+
+  for (const comment of childrenByParent.get(null) ?? []) {
+    appendComment(comment, 0);
+  }
+
+  for (const comment of comments) {
+    appendComment(comment, 0);
+  }
+
+  return lines;
+}
+
+function formatCommentLines(comment: CommentWithAuthor, depth: number): string[] {
+  const indent = "  ".repeat(depth + 1);
+  const [firstLine = "", ...rest] = comment.body.split(/\r?\n/);
+
+  return [
+    `${indent}${pc.bold(`@${comment.author.handle}`)}  ${firstLine}`,
+    ...rest.map((line) => `${indent}  ${line}`)
+  ];
+}
+
+function formatActivityData(data: Record<string, unknown>): string {
+  if (isRecord(data.changed)) {
+    return Object.entries(data.changed)
+      .map(([key, value]) => `${key}=${formatActivityValue(value)}`)
+      .join(", ");
+  }
+
+  if (typeof data.fromName === "string" || typeof data.toName === "string") {
+    return `${formatActivityValue(data.fromName ?? null)} -> ${formatActivityValue(data.toName ?? null)}`;
+  }
+
+  if (hasOwn(data, "fromHandle") || hasOwn(data, "toHandle")) {
+    return `${formatActivityValue(data.fromHandle ?? null)} -> ${formatActivityValue(data.toHandle ?? null)}`;
+  }
+
+  if (typeof data.labelName === "string") {
+    return data.labelName;
+  }
+
+  if (typeof data.identifier === "string") {
+    return data.identifier;
+  }
+
+  if (typeof data.commentId === "string") {
+    return [
+      `comment=${data.commentId}`,
+      hasOwn(data, "parentId") ? `parent=${formatActivityValue(data.parentId)}` : ""
+    ].filter(Boolean).join(", ");
+  }
+
+  return Object.entries(data)
+    .map(([key, value]) => `${key}=${formatActivityValue(value)}`)
+    .join(", ");
+}
+
+function formatActivityValue(value: unknown): string {
+  if (value === null || value === undefined) return "null";
+  if (typeof value === "string") return value;
+  return JSON.stringify(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOwn<T extends object>(object: T, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(object, key);
 }
 
 function isCommanderError(error: unknown): error is { code: string; message: string } {

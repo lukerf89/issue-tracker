@@ -1,16 +1,42 @@
 #!/usr/bin/env node
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
   ConfigKey,
+  addComment,
+  addCommentInputSchema,
+  archiveIssue,
+  archiveIssueInputSchema,
+  archiveLabel,
+  archiveLabelInputSchema,
+  assignIssue,
+  assignIssueInputSchema,
+  backupDatabase,
+  createActor,
+  createActorInputSchema,
+  createCycle,
+  createCycleInputSchema,
+  createLabel,
+  createLabelInputSchema,
   createIssueInputSchema,
   createIssue,
   createProjectInputSchema,
   createProject,
   createTeam,
+  exportSnapshot,
   getConfig,
   getIssue,
   getProject,
+  listActivity,
+  listActivityInputSchema,
+  listActors,
+  listActorsInputSchema,
+  listCycles,
+  listCyclesInputSchema,
+  listLabels,
+  listLabelsInputSchema,
   listIssueFiltersSchema,
   listIssues,
   listProjectsInputSchema,
@@ -20,6 +46,9 @@ import {
   moveIssueInputSchema,
   projectStatusSchema,
   moveIssue,
+  resolveBackupPath,
+  searchInputSchema,
+  searchIssues,
   setConfig,
   updateIssueInputSchema,
   updateIssue,
@@ -27,9 +56,15 @@ import {
   updateProject,
   whoami,
   init as initWorkspace,
+  type AddCommentInput,
+  type AssignIssueInput,
+  type CreateActorInput,
   type CreateIssueInput,
+  type CreateCycleInput,
+  type CreateLabelInput,
   type CreateProjectInput,
   type ListIssueFilters,
+  type SearchIssuesInput,
   type UpdateIssueInput,
   type UpdateProjectInput
 } from "@issue-tracker/core";
@@ -40,9 +75,16 @@ import { openCliContext, resolveDbPath, type CliGlobalOptions } from "./context.
 import {
   handleCliError,
   printActor,
+  printActors,
+  printActivity,
+  printComment,
+  printCycle,
+  printCycles,
   printIssue,
   printIssues,
   printJson,
+  printLabel,
+  printLabels,
   printProject,
   printProjects,
   printTeam,
@@ -58,6 +100,7 @@ type CommandOptions = CliGlobalOptions &
     actorName?: string;
     agent?: string;
     includeArchived?: boolean;
+    output?: string;
     teamKey?: string;
     teamName?: string;
     workspace?: string;
@@ -155,6 +198,36 @@ export function createProgram(): Command {
       })
     );
 
+  const actor = program.command("actor").description("manage actors");
+  actor
+    .command("create")
+    .argument("<handle>")
+    .argument("<name>")
+    .requiredOption("--type <type>", "actor type: human or agent")
+    .option("--json", "print JSON output")
+    .action((handle, name, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        printActor(createActor(cli.context, actorCreateInput(handle, name, options)), options);
+      })
+    );
+  actor
+    .command("list")
+    .option("--include-archived", "include archived actors")
+    .option("--json", "print JSON output")
+    .action((_options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        printActors(
+          listActors(
+            cli.context,
+            listActorsInputSchema.parse({ includeArchived: options.includeArchived })
+          ),
+          options
+        );
+      })
+    );
+
   const team = program.command("team").description("manage teams");
   team
     .command("create")
@@ -178,6 +251,76 @@ export function createProgram(): Command {
             cli.context,
             listTeamsInputSchema.parse({ includeArchived: options.includeArchived })
           ),
+          options
+        );
+      })
+    );
+
+  const label = program.command("label").description("manage labels");
+  label
+    .command("create")
+    .argument("<name>")
+    .option("--color <color>", "label color")
+    .option("--group <group>", "label group")
+    .option("--json", "print JSON output")
+    .action((name, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        printLabel(createLabel(cli.context, labelCreateInput(name, options)), options);
+      })
+    );
+  label
+    .command("list")
+    .option("--include-archived", "include archived labels")
+    .option("--json", "print JSON output")
+    .action((_options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        printLabels(
+          listLabels(
+            cli.context,
+            listLabelsInputSchema.parse({ includeArchived: options.includeArchived })
+          ),
+          options
+        );
+      })
+    );
+  label
+    .command("archive")
+    .argument("<label>")
+    .option("--json", "print JSON output")
+    .action((labelRef, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const input = archiveLabelInputSchema.parse({ label: labelRef });
+        printLabel(archiveLabel(cli.context, input.label), optionsWithGlobals(command));
+      })
+    );
+
+  const cycle = program.command("cycle").description("manage cycles");
+  cycle
+    .command("create")
+    .argument("[name]")
+    .option("--name <name>", "cycle name")
+    .option("--number <number>", "cycle number", parseInteger)
+    .option("--team <key>", "team key or id")
+    .option("--starts-at <timestamp>", "cycle start timestamp")
+    .option("--ends-at <timestamp>", "cycle end timestamp")
+    .option("--json", "print JSON output")
+    .action((name, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        printCycle(createCycle(cli.context, cycleCreateInput(name, options, cli.defaultTeam)), options);
+      })
+    );
+  cycle
+    .command("list")
+    .option("--team <key>", "team key or id")
+    .option("--json", "print JSON output")
+    .action((_options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        printCycles(
+          listCycles(cli.context, cycleListInput(options, cli.defaultTeam)),
           options
         );
       })
@@ -256,9 +399,12 @@ export function createProgram(): Command {
     .option("--description <description>", "issue description")
     .option("--team <key>", "team key")
     .option("--project <project>", "project id or name")
+    .option("--cycle <cycle>", "cycle number or id")
+    .option("--parent <issue>", "parent issue identifier or id")
     .option("--priority <number>", "priority", parseInteger)
     .option("--assignee <actor>", "assignee id or handle")
     .option("--state <state>", "workflow state")
+    .option("--label <label>", "label name or id", collectValues, [])
     .option("--json", "print JSON output")
     .action((title, _options, command) =>
       withContext(command, {}, (cli) => {
@@ -274,6 +420,8 @@ export function createProgram(): Command {
     .option("--unassigned", "only unassigned issues")
     .option("--project <project>", "project id or name")
     .option("--no-project", "only issues without a project")
+    .option("--cycle <cycle>", "cycle number or id")
+    .option("--label <label>", "label name")
     .option("--priority <number>", "priority", parseInteger)
     .option("--team <key>", "team key")
     .option("--limit <number>", "maximum number of issues", parseInteger)
@@ -290,12 +438,38 @@ export function createProgram(): Command {
       })
     );
   issue
+    .command("search")
+    .argument("<query>")
+    .option("--team <key>", "team key")
+    .option("--limit <number>", "maximum number of issues", parseInteger)
+    .option("--json", "print JSON output")
+    .action((query, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        printIssues(
+          cli.context,
+          searchIssues(cli.context, issueSearchInput(query, options, cli.defaultTeam)),
+          options
+        );
+      })
+    );
+  issue
     .command("view")
     .argument("<identifier>")
     .option("--json", "print JSON output")
     .action((identifier, _options, command) =>
       withContext(command, { requireActor: false }, (cli) => {
         printIssue(cli.context, getIssue(cli.context, identifier), optionsWithGlobals(command));
+      })
+    );
+  issue
+    .command("history")
+    .argument("<identifier>")
+    .option("--json", "print JSON output")
+    .action((identifier, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const input = listActivityInputSchema.parse({ issue: identifier });
+        printActivity(listActivity(cli.context, input), optionsWithGlobals(command));
       })
     );
   issue
@@ -309,6 +483,10 @@ export function createProgram(): Command {
     .option("--unassigned", "clear assignee")
     .option("--project <project>", "project id or name")
     .option("--no-project", "clear project")
+    .option("--cycle <cycle>", "cycle number or id")
+    .option("--parent <issue>", "parent issue identifier or id; use 'none' to clear")
+    .option("--label <label>", "add label by name or id", collectValues, [])
+    .option("--remove-label <label>", "remove label by name or id", collectValues, [])
     .option("--estimate <number>", "estimate", parseInteger)
     .option("--due-date <date>", "due date")
     .option("--json", "print JSON output")
@@ -335,6 +513,88 @@ export function createProgram(): Command {
           moveIssue(cli.context, input.identifier, input.state),
           optionsWithGlobals(command)
         );
+      })
+    );
+  issue
+    .command("assign")
+    .argument("<identifier>")
+    .argument("[actor]")
+    .option("--me", "assign to the default actor")
+    .option("--none", "clear assignee")
+    .option("--json", "print JSON output")
+    .action((identifier, actor, _options, command) =>
+      withContext(command, {}, (cli) => {
+        const options = optionsWithGlobals(command);
+        const input = issueAssignInput(identifier, actor, options, cli.context.actor?.id);
+        printIssue(
+          cli.context,
+          assignIssue(cli.context, input.identifier, input.actor),
+          options
+        );
+      })
+    );
+  issue
+    .command("comment")
+    .argument("<identifier>")
+    .argument("<body>")
+    .option("--parent <comment>", "parent comment id")
+    .option("--json", "print JSON output")
+    .action((identifier, body, _options, command) =>
+      withContext(command, {}, (cli) => {
+        const options = optionsWithGlobals(command);
+        printComment(
+          addComment(cli.context, issueCommentInput(identifier, body, options)),
+          options
+        );
+      })
+    );
+  issue
+    .command("archive")
+    .argument("<identifier>")
+    .option("--json", "print JSON output")
+    .action((identifier, _options, command) =>
+      withContext(command, {}, (cli) => {
+        const input = archiveIssueInputSchema.parse({ identifier });
+        printIssue(
+          cli.context,
+          archiveIssue(cli.context, input.identifier),
+          optionsWithGlobals(command)
+        );
+      })
+    );
+
+  program
+    .command("backup")
+    .description("write a safe SQLite database backup")
+    .option("--output <path>", "backup output path")
+    .action((_options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        const outputPath = resolveBackupPath({
+          dbPath: cli.dbPath,
+          output: stringOption(options.output),
+          clock: cli.context.clock
+        });
+        const writtenPath = backupDatabase(cli.db, outputPath);
+
+        process.stdout.write(`${writtenPath}\n`);
+      })
+    );
+
+  program
+    .command("export")
+    .description("export the workspace snapshot")
+    .option("--json", "emit JSON snapshot")
+    .option("--output <path>", "write JSON snapshot to a file")
+    .action((_options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+
+        if (!options.json) {
+          throw new InvalidArgumentError("export requires --json");
+        }
+
+        writeExportSnapshot(exportSnapshot(cli.context), stringOption(options.output));
       })
     );
 
@@ -446,6 +706,46 @@ function projectCreateInput(name: string | undefined, options: Record<string, un
   });
 }
 
+function labelCreateInput(name: string, options: Record<string, unknown>): CreateLabelInput {
+  return createLabelInputSchema.parse({
+    name,
+    color: stringOption(options.color),
+    group: nullableStringOption(options.group)
+  });
+}
+
+function actorCreateInput(
+  handle: string,
+  name: string,
+  options: Record<string, unknown>
+): CreateActorInput {
+  return createActorInputSchema.parse({
+    handle,
+    name,
+    type: stringOption(options.type)
+  });
+}
+
+function cycleCreateInput(
+  name: string | undefined,
+  options: Record<string, unknown>,
+  defaultTeam?: string
+): CreateCycleInput {
+  return createCycleInputSchema.parse(omitUndefined({
+    team: stringOption(options.team) ?? defaultTeam,
+    number: numberOption(options.number),
+    name: stringOption(options.name) ?? name,
+    startsAt: stringOption(options.startsAt),
+    endsAt: stringOption(options.endsAt)
+  }));
+}
+
+function cycleListInput(options: Record<string, unknown>, defaultTeam?: string) {
+  return listCyclesInputSchema.parse(omitUndefined({
+    team: stringOption(options.team) ?? defaultTeam
+  }));
+}
+
 function projectUpdateInput(options: Record<string, unknown>): UpdateProjectInput {
   return updateProjectInputSchema.parse(omitUndefined({
     name: stringOption(options.name),
@@ -472,7 +772,10 @@ function issueCreateInput(
     state: stringOption(options.state),
     priority: numberOption(options.priority),
     assignee: nullableStringOption(options.assignee),
-    project: nullableStringOption(options.project)
+    project: nullableStringOption(options.project),
+    cycle: cycleOption(options.cycle),
+    parent: nullableStringOption(options.parent),
+    labels: stringArrayOption(options.label)
   });
 }
 
@@ -485,9 +788,23 @@ function issueListFilters(options: Record<string, unknown>, defaultTeam?: string
     assignee,
     project,
     team: stringOption(options.team) ?? defaultTeam,
+    label: stringOption(options.label),
+    cycle: cycleOption(options.cycle),
     priority: numberOption(options.priority),
     limit: numberOption(options.limit),
     includeArchived: booleanOption(options.includeArchived)
+  }));
+}
+
+function issueSearchInput(
+  query: string,
+  options: Record<string, unknown>,
+  defaultTeam?: string
+): SearchIssuesInput {
+  return searchInputSchema.parse(omitUndefined({
+    query,
+    team: stringOption(options.team) ?? defaultTeam,
+    limit: numberOption(options.limit)
   }));
 }
 
@@ -501,9 +818,59 @@ function issueUpdateInput(options: Record<string, unknown>): UpdateIssueInput {
     priority: numberOption(options.priority),
     assignee,
     project,
+    cycle: cycleOption(options.cycle),
+    parent: parentOption(options.parent),
+    labels: stringArrayOption(options.label),
+    removeLabels: stringArrayOption(options.removeLabel),
     estimate: numberOption(options.estimate),
     dueDate: nullableStringOption(options.dueDate)
   }));
+}
+
+function issueAssignInput(
+  identifier: string,
+  actorArgument: string | undefined,
+  options: Record<string, unknown>,
+  defaultActorId: string | undefined
+): AssignIssueInput {
+  const hasActorArgument = actorArgument !== undefined;
+  const useDefaultActor = options.me === true;
+  const clearAssignee = options.none === true;
+  const targetCount = [hasActorArgument, useDefaultActor, clearAssignee].filter(Boolean).length;
+
+  if (targetCount !== 1) {
+    throw new InvalidArgumentError("provide exactly one of <actor>, --me, or --none");
+  }
+
+  return assignIssueInputSchema.parse({
+    identifier,
+    actor: clearAssignee ? null : useDefaultActor ? defaultActorId : actorArgument
+  });
+}
+
+function issueCommentInput(
+  identifier: string,
+  body: string,
+  options: Record<string, unknown>
+): AddCommentInput {
+  return addCommentInputSchema.parse(omitUndefined({
+    issue: identifier,
+    body,
+    parent: nullableStringOption(options.parent)
+  }));
+}
+
+function writeExportSnapshot(snapshot: unknown, outputPath: string | undefined): void {
+  const serialized = `${JSON.stringify(snapshot)}\n`;
+
+  if (!outputPath) {
+    process.stdout.write(serialized);
+    return;
+  }
+
+  const destination = resolve(outputPath);
+  mkdirSync(dirname(destination), { recursive: true });
+  writeFileSync(destination, serialized, "utf8");
 }
 
 function parseInteger(value: string): number {
@@ -543,8 +910,30 @@ function numberOption(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
 }
 
+function cycleOption(value: unknown): string | number | undefined {
+  return typeof value === "string" || typeof value === "number" ? value : undefined;
+}
+
+function parentOption(value: unknown): string | null | undefined {
+  const parent = nullableStringOption(value);
+  return typeof parent === "string" && parent.toLowerCase() === "none" ? null : parent;
+}
+
 function booleanOption(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
+}
+
+function stringArrayOption(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) {
+    return undefined;
+  }
+
+  const strings = value.filter((entry): entry is string => typeof entry === "string");
+  return strings.length > 0 ? strings : undefined;
+}
+
+function collectValues(value: string, previous: string[]): string[] {
+  return [...previous, value];
 }
 
 function omitUndefined<T extends Record<string, unknown>>(object: T): T {

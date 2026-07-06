@@ -1,12 +1,24 @@
 import {
+  addComment,
+  addCommentInputSchema,
+  archiveIssue,
+  archiveIssueInputSchema,
+  assignIssue,
+  assignIssueInputSchema,
   createIssue,
   createIssueInputSchema,
   getIssue,
   getIssueInputSchema,
+  listActivity,
+  listActivityInputSchema,
   listIssueFiltersSchema,
   listIssues,
   moveIssue,
   moveIssueInputSchema,
+  searchInputSchema,
+  searchIssues,
+  serializeActivity,
+  serializeComment,
   serializeIssue,
   updateIssue,
   updateIssueToolInputSchema
@@ -36,6 +48,21 @@ export function registerIssueTools(
   );
 
   server.registerTool(
+    "search",
+    {
+      title: "Search issues",
+      description: "Search issues by title or description text.",
+      inputSchema: searchInputSchema.shape
+    },
+    (input) => mcpToolResult(() => {
+      const parsed = searchInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
+        jsonResult(searchIssues(context, parsed).map(serializeIssue))
+      );
+    })
+  );
+
+  server.registerTool(
     "get_issue",
     {
       title: "Get issue",
@@ -46,6 +73,21 @@ export function registerIssueTools(
       const parsed = getIssueInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
         jsonResult(serializeIssue(getIssue(context, parsed.identifier)))
+      );
+    })
+  );
+
+  server.registerTool(
+    "list_activity",
+    {
+      title: "List issue activity",
+      description: "Read the ordered activity trail for an issue.",
+      inputSchema: listActivityInputSchema.shape
+    },
+    (input) => mcpToolResult(() => {
+      const parsed = listActivityInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
+        jsonResult(listActivity(context, parsed).map(serializeActivity))
       );
     })
   );
@@ -91,6 +133,51 @@ export function registerIssueTools(
       const parsed = moveIssueInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
         jsonResult(serializeIssue(moveIssue(context, parsed.identifier, parsed.state)))
+      );
+    })
+  );
+
+  server.registerTool(
+    "assign_issue",
+    {
+      title: "Assign issue",
+      description: "Assign or clear an issue assignee.",
+      inputSchema: assignIssueInputSchema.shape
+    },
+    (input) => mcpToolResult(() => {
+      const parsed = assignIssueInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
+        jsonResult(serializeIssue(assignIssue(context, parsed.identifier, parsed.actor)))
+      );
+    })
+  );
+
+  server.registerTool(
+    "archive_issue",
+    {
+      title: "Archive issue",
+      description: "Archive an issue without deleting it.",
+      inputSchema: archiveIssueInputSchema.shape
+    },
+    (input) => mcpToolResult(() => {
+      const parsed = archiveIssueInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
+        jsonResult(serializeIssue(archiveIssue(context, parsed.identifier)))
+      );
+    })
+  );
+
+  server.registerTool(
+    "comment_on_issue",
+    {
+      title: "Comment on issue",
+      description: "Add a comment to an issue.",
+      inputSchema: addCommentInputSchema.shape
+    },
+    (input) => mcpToolResult(() => {
+      const parsed = addCommentInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
+        jsonResult(serializeComment(addComment(context, parsed)))
       );
     })
   );

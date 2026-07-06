@@ -1,11 +1,24 @@
 import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 
 import { inTransaction, type ServiceContext } from "../context.js";
-import { actors, issues, projects, teams, workflowStates, type Issue } from "../db/schema.js";
+import { actors, issueLabels, issues, labels, projects, teams, workflowStates, type Actor, type Issue } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { identifier, uuid } from "../ids.js";
 import { appendActivity } from "./activity.js";
 import { ConfigKey, getConfig } from "./config.js";
+import {
+  cycleIdsForIssueFilter,
+  resolveOptionalCycleId,
+  type CycleRef
+} from "./cycle.js";
+import {
+  attachLabelInTransaction,
+  detachLabelInTransaction,
+  resolveIssueLabels,
+  withIssueLabels,
+  type IssueWithLabels
+} from "./label.js";
+import { listComments, type CommentWithAuthor } from "./comment.js";
 import { getState, resolveDefaultUnstartedState } from "./state.js";
 import { getTeam, getTeamByKey } from "./team.js";
 
@@ -21,11 +34,14 @@ export interface CreateIssueInput {
   assigneeId?: string | null;
   project?: string | null;
   projectId?: string | null;
+  cycle?: CycleRef | null;
   cycleId?: string | null;
+  parent?: string | null;
   parentId?: string | null;
   estimate?: number | null;
   dueDate?: string | null;
   sortOrder?: number;
+  labels?: string[];
 }
 
 export interface ListIssueFilters {
@@ -34,8 +50,16 @@ export interface ListIssueFilters {
   project?: string | null;
   team?: string;
   priority?: number;
+  label?: string;
+  cycle?: CycleRef;
   limit?: number;
   includeArchived?: boolean;
+}
+
+export interface SearchIssuesInput {
+  query: string;
+  team?: string;
+  limit?: number;
 }
 
 export interface UpdateIssueInput {
@@ -46,12 +70,39 @@ export interface UpdateIssueInput {
   assigneeId?: string | null;
   project?: string | null;
   projectId?: string | null;
+  cycle?: CycleRef | null;
   cycleId?: string | null;
+  parent?: string | null;
   parentId?: string | null;
   estimate?: number | null;
   dueDate?: string | null;
   sortOrder?: number;
+  labels?: string[];
+  removeLabels?: string[];
 }
+
+export interface AssignIssueInput {
+  identifier: string;
+  actor: string | null;
+}
+
+export interface ArchiveIssueInput {
+  identifier: string;
+}
+
+export interface IssueReference {
+  id: string;
+  identifier: string;
+  teamId: string;
+  number: number;
+  title: string;
+}
+
+export type IssueWithDetails = IssueWithLabels & {
+  parent: IssueReference | null;
+  children: IssueReference[];
+  comments: CommentWithAuthor[];
+};
 
 export function createIssue(context: ServiceContext, input: CreateIssueInput) {
   requireActor(context);
@@ -63,6 +114,13 @@ export function createIssue(context: ServiceContext, input: CreateIssueInput) {
       : resolveDefaultUnstartedState(txContext, team.id);
     const assigneeId = resolveOptionalActorId(txContext, input.assigneeId ?? input.assignee);
     const projectId = resolveOptionalProjectId(txContext, input.projectId ?? input.project);
+    const cycleId = resolveOptionalCycleId(
+      txContext,
+      input.cycleId ?? input.cycle,
+      team.id
+    );
+    const parentId = resolveOptionalParentId(txContext, parentInput(input));
+    const labelRows = resolveIssueLabels(txContext, input.labels);
 
     txContext.db
       .update(teams)
@@ -85,8 +143,8 @@ export function createIssue(context: ServiceContext, input: CreateIssueInput) {
       assigneeId,
       creatorId: requireActor(txContext).id,
       projectId,
-      cycleId: input.cycleId ?? null,
-      parentId: input.parentId ?? null,
+      cycleId,
+      parentId,
       estimate: input.estimate ?? null,
       dueDate: input.dueDate ?? null,
       sortOrder: input.sortOrder ?? 0,
@@ -106,7 +164,11 @@ export function createIssue(context: ServiceContext, input: CreateIssueInput) {
       data: { identifier: row.identifier }
     });
 
-    return row;
+    for (const label of labelRows) {
+      attachLabelInTransaction(txContext, row.id, label.id);
+    }
+
+    return getIssue(txContext, row.identifier);
   });
 }
 
@@ -123,7 +185,7 @@ export function getIssue(context: ServiceContext, issueIdentifier: string) {
     );
   }
 
-  return issue;
+  return withIssueDetails(context, issue);
 }
 
 export function listIssues(context: ServiceContext, filters: ListIssueFilters = {}) {
@@ -161,11 +223,56 @@ export function listIssues(context: ServiceContext, filters: ListIssueFilters = 
     conditions.push(eq(issues.priority, filters.priority));
   }
 
-  return context.db.query.issues.findMany({
-    where: conditions.length ? and(...conditions) : undefined,
-    orderBy: [asc(issues.teamId), asc(issues.number)],
-    limit: filters.limit
-  }).sync();
+  if (filters.label) {
+    const issueIds = issueIdsForLabelName(context, filters.label);
+
+    if (issueIds.length === 0) {
+      return [];
+    }
+
+    conditions.push(inArray(issues.id, issueIds));
+  }
+
+  if (filters.cycle !== undefined) {
+    const cycleIds = cycleIdsForIssueFilter(context, filters.cycle, filters.team);
+
+    if (cycleIds.length === 0) {
+      return [];
+    }
+
+    conditions.push(inArray(issues.cycleId, cycleIds));
+  }
+
+  return context.db
+    .select({ issue: issues })
+    .from(issues)
+    .innerJoin(teams, eq(teams.id, issues.teamId))
+    .where(conditions.length ? and(...conditions) : undefined)
+    .orderBy(asc(teams.key), asc(issues.number), asc(issues.id))
+    .limit(filters.limit ?? -1)
+    .all()
+    .map(({ issue }) => withIssueDetails(context, issue));
+}
+
+export function searchIssues(context: ServiceContext, input: SearchIssuesInput) {
+  const conditions: SQL[] = [
+    isNull(issues.archivedAt),
+    textSearchCondition(input.query)
+  ];
+
+  if (input.team) {
+    conditions.push(eq(issues.teamId, resolveTeam(context, input.team).id));
+  }
+
+  return context.db
+    .select({ issue: issues })
+    .from(issues)
+    .innerJoin(teams, eq(teams.id, issues.teamId))
+    .where(and(...conditions))
+    .orderBy(asc(teams.key), asc(issues.number), asc(issues.id))
+    .limit(input.limit ?? -1)
+    .all()
+    .map(({ issue }) => withIssueDetails(context, issue));
 }
 
 export function updateIssue(context: ServiceContext, issueIdentifier: string, input: UpdateIssueInput) {
@@ -176,6 +283,9 @@ export function updateIssue(context: ServiceContext, issueIdentifier: string, in
     const now = txContext.clock.now().toISOString();
     const changes: Partial<typeof issues.$inferInsert> = { updatedAt: now };
     const changedFields: Record<string, unknown> = {};
+    const addLabels = resolveIssueLabels(txContext, input.labels);
+    const removeLabels = resolveIssueLabels(txContext, input.removeLabels);
+    assertNoLabelOverlap(addLabels, removeLabels);
 
     if (has(input, "title")) addChange(changes, changedFields, "title", input.title!);
     if (has(input, "description")) {
@@ -198,21 +308,123 @@ export function updateIssue(context: ServiceContext, issueIdentifier: string, in
         resolveOptionalProjectId(txContext, input.projectId ?? input.project)
       );
     }
-    if (has(input, "cycleId")) addChange(changes, changedFields, "cycleId", input.cycleId ?? null);
-    if (has(input, "parentId")) addChange(changes, changedFields, "parentId", input.parentId ?? null);
+    if (has(input, "cycle") || has(input, "cycleId")) {
+      addChange(
+        changes,
+        changedFields,
+        "cycleId",
+        resolveOptionalCycleId(
+          txContext,
+          has(input, "cycleId") ? input.cycleId : input.cycle,
+          issue.teamId
+        )
+      );
+    }
+    if (has(input, "parent") || has(input, "parentId")) {
+      const parentId = resolveOptionalParentId(
+        txContext,
+        has(input, "parentId") ? input.parentId : input.parent
+      );
+      assertValidParent(txContext, issue, parentId);
+      addChange(changes, changedFields, "parentId", parentId);
+    }
     if (has(input, "estimate")) addChange(changes, changedFields, "estimate", input.estimate ?? null);
     if (has(input, "dueDate")) addChange(changes, changedFields, "dueDate", input.dueDate ?? null);
     if (has(input, "sortOrder")) addChange(changes, changedFields, "sortOrder", input.sortOrder!);
 
-    txContext.db.update(issues).set(changes).where(eq(issues.id, issue.id)).run();
+    if (Object.keys(changedFields).length > 0) {
+      txContext.db.update(issues).set(changes).where(eq(issues.id, issue.id)).run();
+      appendActivity(txContext, {
+        issueId: issue.id,
+        actorId: requireActor(txContext).id,
+        action: "updated",
+        data: { changed: changedFields }
+      });
+    }
+
+    for (const label of removeLabels) {
+      detachLabelInTransaction(txContext, issue.id, label.id);
+    }
+
+    for (const label of addLabels) {
+      attachLabelInTransaction(txContext, issue.id, label.id);
+    }
+
+    return getIssue(txContext, issueIdentifier);
+  });
+}
+
+export function assignIssue(
+  context: ServiceContext,
+  issueIdentifier: string,
+  actorRef: string | null
+) {
+  requireActor(context);
+
+  return inTransaction(context, (txContext) => {
+    const issue = getIssueByIdOrIdentifier(txContext, issueIdentifier);
+    const assignee = resolveOptionalActor(txContext, actorRef);
+    const previousAssignee = issue.assigneeId ? getActorById(txContext, issue.assigneeId) : null;
+    const assigneeId = assignee?.id ?? null;
+
+    if (issue.assigneeId !== assigneeId) {
+      const now = txContext.clock.now().toISOString();
+
+      txContext.db
+        .update(issues)
+        .set({
+          assigneeId,
+          updatedAt: now
+        })
+        .where(eq(issues.id, issue.id))
+        .run();
+
+      appendActivity(txContext, {
+        issueId: issue.id,
+        actorId: requireActor(txContext).id,
+        action: "assigned",
+        data: {
+          from: previousAssignee?.id ?? null,
+          to: assignee?.id ?? null,
+          fromHandle: previousAssignee?.handle ?? null,
+          toHandle: assignee?.handle ?? null
+        }
+      });
+    }
+
+    return getIssue(txContext, issue.identifier);
+  });
+}
+
+export function archiveIssue(context: ServiceContext, issueIdentifier: string) {
+  requireActor(context);
+
+  return inTransaction(context, (txContext) => {
+    const issue = getIssueByIdOrIdentifier(txContext, issueIdentifier);
+
+    if (issue.archivedAt !== null) {
+      return getIssue(txContext, issue.identifier);
+    }
+
+    const now = txContext.clock.now().toISOString();
+
+    txContext.db
+      .update(issues)
+      .set({
+        archivedAt: now,
+        updatedAt: now
+      })
+      .where(eq(issues.id, issue.id))
+      .run();
+
     appendActivity(txContext, {
       issueId: issue.id,
       actorId: requireActor(txContext).id,
-      action: "updated",
-      data: { changed: changedFields }
+      action: "archived",
+      data: { identifier: issue.identifier }
     });
 
-    return getIssue(txContext, issueIdentifier);
+    return getIssue(txContext, issue.identifier);
   });
 }
 
@@ -287,6 +499,134 @@ function lifecycleTimestampChanges(
   return { updatedAt: now, startedAt, completedAt, canceledAt };
 }
 
+function withIssueDetails(context: ServiceContext, issue: Issue): IssueWithDetails {
+  return {
+    ...withIssueLabels(context, issue),
+    parent: issue.parentId ? issueReference(getIssueById(context, issue.parentId)) : null,
+    children: listChildIssueReferences(context, issue.id),
+    comments: listComments(context, { issue: issue.id })
+  };
+}
+
+function listChildIssueReferences(context: ServiceContext, parentId: string): IssueReference[] {
+  return context.db.query.issues.findMany({
+    where: eq(issues.parentId, parentId),
+    orderBy: [asc(issues.teamId), asc(issues.number), asc(issues.id)]
+  }).sync().map(issueReference);
+}
+
+function resolveOptionalParentId(
+  context: ServiceContext,
+  parentRef: string | null | undefined
+): string | null {
+  return parentRef == null ? null : getIssueByIdOrIdentifier(context, parentRef).id;
+}
+
+function assertValidParent(
+  context: ServiceContext,
+  issue: Issue,
+  parentId: string | null
+): void {
+  if (parentId === null) return;
+
+  let current = getIssueById(context, parentId);
+  const seen = new Set<string>();
+
+  while (true) {
+    if (current.id === issue.id) {
+      throw new AppError(
+        AppErrorCode.ISSUE_PARENT_CYCLE,
+        `Parent ${parentId} would create a cycle for issue ${issue.identifier}.`,
+        {
+          issueId: issue.id,
+          issueIdentifier: issue.identifier,
+          parentId
+        }
+      );
+    }
+
+    if (current.parentId === null) {
+      return;
+    }
+
+    if (seen.has(current.id)) {
+      throw new AppError(
+        AppErrorCode.ISSUE_PARENT_CYCLE,
+        `Existing parent chain for issue ${current.identifier} contains a cycle.`,
+        {
+          issueId: issue.id,
+          issueIdentifier: issue.identifier,
+          parentId
+        }
+      );
+    }
+
+    seen.add(current.id);
+    current = getIssueById(context, current.parentId);
+  }
+}
+
+function getIssueByIdOrIdentifier(context: ServiceContext, idOrIdentifier: string): Issue {
+  return findIssueByIdOrIdentifier(context, idOrIdentifier) ?? notFound(idOrIdentifier);
+}
+
+function getIssueById(context: ServiceContext, id: string): Issue {
+  const issue = context.db.query.issues.findFirst({
+    where: eq(issues.id, id)
+  }).sync();
+
+  return issue ?? notFound(id);
+}
+
+function findIssueByIdOrIdentifier(context: ServiceContext, idOrIdentifier: string): Issue | null {
+  return (
+    context.db.query.issues.findFirst({ where: eq(issues.id, idOrIdentifier) }).sync() ??
+    context.db.query.issues.findFirst({ where: eq(issues.identifier, idOrIdentifier) }).sync() ??
+    null
+  );
+}
+
+function notFound(identifier: string): never {
+  throw new AppError(
+    AppErrorCode.ISSUE_NOT_FOUND,
+    `Issue ${identifier} was not found.`,
+    { identifier }
+  );
+}
+
+function issueReference(issue: Issue): IssueReference {
+  return {
+    id: issue.id,
+    identifier: issue.identifier,
+    teamId: issue.teamId,
+    number: issue.number,
+    title: issue.title
+  };
+}
+
+function issueIdsForLabelName(context: ServiceContext, labelName: string): string[] {
+  return context.db
+    .select({ issueId: issueLabels.issueId })
+    .from(issueLabels)
+    .innerJoin(labels, eq(labels.id, issueLabels.labelId))
+    .where(and(eq(labels.name, labelName), isNull(labels.archivedAt)))
+    .all()
+    .map((row) => row.issueId);
+}
+
+function textSearchCondition(query: string): SQL {
+  const pattern = `%${escapeLike(query.toLowerCase())}%`;
+
+  return sql`(
+    lower(${issues.title}) like ${pattern} escape '\\'
+    or lower(coalesce(${issues.description}, '')) like ${pattern} escape '\\'
+  )`;
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
+
 function resolveTeam(context: ServiceContext, idOrKey?: string) {
   const teamRef = idOrKey ?? getConfig(context, ConfigKey.DEFAULT_TEAM);
 
@@ -352,6 +692,17 @@ function resolveOptionalActorId(context: ServiceContext, actorRef: string | null
 }
 
 function resolveActorId(context: ServiceContext, actorRef: string) {
+  return resolveActor(context, actorRef).id;
+}
+
+function resolveOptionalActor(
+  context: ServiceContext,
+  actorRef: string | null | undefined
+): Actor | null {
+  return actorRef == null ? null : resolveActor(context, actorRef);
+}
+
+function resolveActor(context: ServiceContext, actorRef: string): Actor {
   const actor =
     context.db.query.actors.findFirst({ where: eq(actors.id, actorRef) }).sync() ??
     context.db.query.actors.findFirst({ where: eq(actors.handle, actorRef) }).sync();
@@ -362,7 +713,21 @@ function resolveActorId(context: ServiceContext, actorRef: string) {
     });
   }
 
-  return actor.id;
+  return actor;
+}
+
+function getActorById(context: ServiceContext, id: string): Actor {
+  const actor = context.db.query.actors.findFirst({
+    where: eq(actors.id, id)
+  }).sync();
+
+  if (!actor) {
+    throw new AppError(AppErrorCode.ACTOR_NOT_FOUND, `Actor ${id} was not found.`, {
+      actor: id
+    });
+  }
+
+  return actor;
 }
 
 function resolveOptionalProjectId(context: ServiceContext, projectRef: string | null | undefined) {
@@ -385,6 +750,10 @@ function resolveProjectId(context: ServiceContext, projectRef: string) {
   return project.id;
 }
 
+function parentInput(input: CreateIssueInput): string | null | undefined {
+  return has(input, "parentId") ? input.parentId : input.parent;
+}
+
 function requireActor(context: ServiceContext) {
   if (!context.actor) {
     throw new AppError(
@@ -404,6 +773,19 @@ function addChange<T extends keyof typeof issues.$inferInsert>(
 ): void {
   changes[key] = value;
   changedFields[key] = value ?? null;
+}
+
+function assertNoLabelOverlap(addLabels: Array<{ id: string }>, removeLabels: Array<{ id: string }>) {
+  const addedIds = new Set(addLabels.map((label) => label.id));
+  const overlap = removeLabels.find((label) => addedIds.has(label.id));
+
+  if (overlap) {
+    throw new AppError(
+      AppErrorCode.CONSTRAINT_VIOLATION,
+      "A label cannot be added and removed in the same update.",
+      { labelId: overlap.id }
+    );
+  }
 }
 
 function has<T extends object>(object: T, key: keyof T): boolean {

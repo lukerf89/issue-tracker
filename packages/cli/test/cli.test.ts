@@ -1,8 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { openDb } from "@issue-tracker/core";
 
 import { createProgram, run } from "../src/index.js";
 
@@ -63,6 +65,225 @@ describe("tracker CLI", () => {
     expect(records[0]?.projectId).toEqual(expect.any(String));
   });
 
+  it("backs up a live database with a restorable copy", async () => {
+    const dbPath = tempDbPath();
+    const backupPath = join(dirname(dbPath), "tracker-backup-test.db");
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Back up live data"])).status).toBe(
+      0
+    );
+
+    const liveDb = openDb(dbPath);
+
+    try {
+      expect(
+        liveDb.$client
+          .prepare("select title from issues where identifier = ?")
+          .get("ENG-1")
+      ).toEqual({ title: "Back up live data" });
+
+      const result = await tracker(dbPath, ["backup", "--output", backupPath]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe(`${backupPath}\n`);
+      expect(existsSync(backupPath)).toBe(true);
+
+      const backupDb = openDb(backupPath);
+
+      try {
+        expect(
+          backupDb.$client
+            .prepare("select title from issues where identifier = ?")
+            .get("ENG-1")
+        ).toEqual({ title: "Back up live data" });
+      } finally {
+        backupDb.$client.close();
+      }
+    } finally {
+      liveDb.$client.close();
+    }
+  });
+
+  it("exports the workspace snapshot JSON to stdout or an output file", async () => {
+    const dbPath = tempDbPath();
+    const outputPath = join(dirname(dbPath), "snapshot.json");
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["label", "create", "Docs", "--color", "#22C55E"])).status).toBe(
+      0
+    );
+    expect(
+      (
+        await tracker(dbPath, [
+          "issue",
+          "create",
+          "--title",
+          "Export workspace data",
+          "--label",
+          "Docs"
+        ])
+      ).status
+    ).toBe(0);
+    expect(
+      (await tracker(dbPath, ["issue", "comment", "ENG-1", "Snapshot is readable."])).status
+    ).toBe(0);
+
+    const exported = await tracker(dbPath, ["export", "--json"]);
+    expect(exported.status).toBe(0);
+
+    const snapshot = JSON.parse(exported.stdout) as {
+      workspace: { name: string };
+      config: Array<{ key: string }>;
+      teams: Array<{ key: string }>;
+      workflowStates: Array<{ name: string }>;
+      projects: unknown[];
+      milestones: unknown[];
+      cycles: unknown[];
+      issues: Array<{ identifier: string; title: string }>;
+      labels: Array<{ name: string; group: string | null }>;
+      issueLabels: Array<{ issueId: string; labelId: string }>;
+      comments: Array<{ body: string; parentId: string | null }>;
+      actors: Array<{ handle: string }>;
+      attachments: unknown[];
+      activity: Array<{ action: string; data: Record<string, unknown> }>;
+    };
+
+    expect(Object.keys(snapshot)).toEqual([
+      "workspace",
+      "config",
+      "teams",
+      "workflowStates",
+      "projects",
+      "milestones",
+      "cycles",
+      "issues",
+      "labels",
+      "issueLabels",
+      "comments",
+      "actors",
+      "attachments",
+      "activity"
+    ]);
+    expect(snapshot.workspace.name).toBe("Local Workspace");
+    expect(snapshot.config.map((entry) => entry.key)).toEqual([
+      "default_actor",
+      "default_team"
+    ]);
+    expect(snapshot.teams.map((team) => team.key)).toEqual(["ENG"]);
+    expect(snapshot.workflowStates.map((state) => state.name)).toContain("Todo");
+    expect(snapshot.projects).toEqual([]);
+    expect(snapshot.milestones).toEqual([]);
+    expect(snapshot.cycles).toEqual([]);
+    expect(snapshot.issues.map((issue) => [issue.identifier, issue.title])).toEqual([
+      ["ENG-1", "Export workspace data"]
+    ]);
+    expect(snapshot.labels).toMatchObject([{ name: "Docs", group: null }]);
+    expect(snapshot.issueLabels).toHaveLength(1);
+    expect(snapshot.comments).toMatchObject([
+      { body: "Snapshot is readable.", parentId: null }
+    ]);
+    expect(snapshot.actors.map((actor) => actor.handle)).toEqual(["owner"]);
+    expect(snapshot.attachments).toEqual([]);
+    expect(snapshot.activity.map((entry) => entry.action)).toEqual([
+      "created",
+      "label_added",
+      "commented"
+    ]);
+    expect(snapshot.activity[0]?.data).toMatchObject({ identifier: "ENG-1" });
+    expect(exported.stdout).not.toContain("undefined");
+
+    const written = await tracker(dbPath, ["export", "--json", "--output", outputPath]);
+    expect(written.status).toBe(0);
+    expect(written.stdout).toBe("");
+    expect(JSON.parse(readFileSync(outputPath, "utf8"))).toMatchObject({
+      issues: [{ identifier: "ENG-1", title: "Export workspace data" }],
+      labels: [{ name: "Docs" }],
+      comments: [{ body: "Snapshot is readable." }]
+    });
+  });
+
+  it("creates and lists actors, assigns by handle, clears with --none, and assigns --me", async () => {
+    const dbPath = tempDbPath();
+
+    const initialized = await tracker(dbPath, ["init", "--json"]);
+    expect(initialized.status).toBe(0);
+    const defaultActor = (JSON.parse(initialized.stdout) as { actor: { id: string } }).actor;
+
+    const actorResult = await tracker(dbPath, [
+      "actor",
+      "create",
+      "build-agent",
+      "Build Agent",
+      "--type",
+      "agent",
+      "--json"
+    ]);
+    expect(actorResult.status).toBe(0);
+    const agent = JSON.parse(actorResult.stdout) as { id: string; handle: string; type: string };
+    expect(agent).toMatchObject({
+      handle: "build-agent",
+      type: "agent",
+      archivedAt: null
+    });
+
+    const actors = await tracker(dbPath, ["actor", "list", "--json"]);
+    expect(actors.status).toBe(0);
+    expect(
+      (JSON.parse(actors.stdout) as Array<{ handle: string; type: string }>).map((actor) => [
+        actor.handle,
+        actor.type
+      ])
+    ).toEqual([
+      ["build-agent", "agent"],
+      ["owner", "human"]
+    ]);
+
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Route CLI work"])).status).toBe(
+      0
+    );
+
+    const assigned = await tracker(dbPath, [
+      "issue",
+      "assign",
+      "ENG-1",
+      "build-agent",
+      "--json"
+    ]);
+    expect(assigned.status).toBe(0);
+    expect(JSON.parse(assigned.stdout)).toMatchObject({
+      identifier: "ENG-1",
+      assigneeId: agent.id
+    });
+
+    const filtered = await tracker(dbPath, [
+      "issue",
+      "list",
+      "--assignee",
+      "build-agent",
+      "--json"
+    ]);
+    expect(filtered.status).toBe(0);
+    expect(
+      (JSON.parse(filtered.stdout) as Array<Record<string, unknown>>).map(
+        (issue) => issue.identifier
+      )
+    ).toEqual(["ENG-1"]);
+
+    const cleared = await tracker(dbPath, ["issue", "assign", "ENG-1", "--none", "--json"]);
+    expect(cleared.status).toBe(0);
+    expect(JSON.parse(cleared.stdout)).toMatchObject({
+      identifier: "ENG-1",
+      assigneeId: null
+    });
+
+    const assignedToMe = await tracker(dbPath, ["issue", "assign", "ENG-1", "--me", "--json"]);
+    expect(assignedToMe.status).toBe(0);
+    expect(JSON.parse(assignedToMe.stdout)).toMatchObject({
+      identifier: "ENG-1",
+      assigneeId: defaultActor.id
+    });
+  });
+
   it("moves an issue to a new workflow state", async () => {
     const dbPath = tempDbPath();
 
@@ -121,6 +342,491 @@ describe("tracker CLI", () => {
     expect(records.map((record) => record.priority)).toEqual([1]);
   });
 
+  it("searches issues as JSON by title and description, hides archived issues, and supports team and limit filters", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["team", "create", "OPS", "Operations"])).status).toBe(0);
+    expect(
+      (
+        await tracker(dbPath, [
+          "issue",
+          "create",
+          "--title",
+          "Fix Login Redirect",
+          "--desc",
+          "OAuth callback fails"
+        ])
+      ).status
+    ).toBe(0);
+    expect(
+      (
+        await tracker(dbPath, [
+          "issue",
+          "create",
+          "--title",
+          "Refresh setup guide",
+          "--desc",
+          "Mention login redirect setup"
+        ])
+      ).status
+    ).toBe(0);
+    expect(
+      (
+        await tracker(dbPath, [
+          "issue",
+          "create",
+          "--team",
+          "OPS",
+          "--title",
+          "Login operations runbook"
+        ])
+      ).status
+    ).toBe(0);
+    expect(
+      (await tracker(dbPath, ["issue", "create", "--title", "Archived login cleanup"])).status
+    ).toBe(0);
+    expect((await tracker(dbPath, ["issue", "archive", "ENG-3"])).status).toBe(0);
+
+    const searched = await tracker(dbPath, ["issue", "search", "LOGIN", "--json"]);
+    expect(searched.status).toBe(0);
+    const records = JSON.parse(searched.stdout) as Array<Record<string, unknown>>;
+    expect(records.map((record) => record.identifier)).toEqual(["ENG-1", "ENG-2", "OPS-1"]);
+    expect(records.map((record) => record.archivedAt)).toEqual([null, null, null]);
+
+    const operations = await tracker(dbPath, [
+      "issue",
+      "search",
+      "login",
+      "--team",
+      "OPS",
+      "--json"
+    ]);
+    expect(operations.status).toBe(0);
+    expect(
+      (JSON.parse(operations.stdout) as Array<Record<string, unknown>>).map(
+        (record) => record.identifier
+      )
+    ).toEqual(["OPS-1"]);
+
+    const limited = await tracker(dbPath, ["issue", "search", "login", "--limit", "2", "--json"]);
+    expect(limited.status).toBe(0);
+    expect(
+      (JSON.parse(limited.stdout) as Array<Record<string, unknown>>).map(
+        (record) => record.identifier
+      )
+    ).toEqual(["ENG-1", "ENG-2"]);
+  });
+
+  it("archives issues, hides them from list by default, includes them on request, and still views them", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Archive completed work"])).status).toBe(
+      0
+    );
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Keep active work"])).status).toBe(
+      0
+    );
+
+    const archived = await tracker(dbPath, ["issue", "archive", "ENG-1", "--json"]);
+    expect(archived.status).toBe(0);
+    expect(JSON.parse(archived.stdout)).toMatchObject({
+      identifier: "ENG-1",
+      archivedAt: expect.any(String)
+    });
+
+    const visible = await tracker(dbPath, ["issue", "list", "--json"]);
+    expect(visible.status).toBe(0);
+    expect(
+      (JSON.parse(visible.stdout) as Array<Record<string, unknown>>).map(
+        (issue) => issue.identifier
+      )
+    ).toEqual(["ENG-2"]);
+
+    const all = await tracker(dbPath, ["issue", "list", "--include-archived", "--json"]);
+    expect(all.status).toBe(0);
+    expect(
+      (JSON.parse(all.stdout) as Array<Record<string, unknown>>).map(
+        (issue) => issue.identifier
+      )
+    ).toEqual(["ENG-1", "ENG-2"]);
+
+    const viewed = await tracker(dbPath, ["issue", "view", "ENG-1", "--json"]);
+    expect(viewed.status).toBe(0);
+    expect(JSON.parse(viewed.stdout)).toMatchObject({
+      identifier: "ENG-1",
+      archivedAt: expect.any(String)
+    });
+  });
+
+  it("creates and clears sub-issues through parent flags and shows relationships in view JSON", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+
+    const parentResult = await tracker(dbPath, [
+      "issue",
+      "create",
+      "--title",
+      "Build issue hierarchy",
+      "--json"
+    ]);
+    expect(parentResult.status).toBe(0);
+    const parent = JSON.parse(parentResult.stdout) as Record<string, unknown>;
+
+    const childResult = await tracker(dbPath, [
+      "issue",
+      "create",
+      "--title",
+      "Add child issue",
+      "--parent",
+      "ENG-1",
+      "--json"
+    ]);
+    expect(childResult.status).toBe(0);
+    const child = JSON.parse(childResult.stdout) as Record<string, unknown>;
+    expect(child).toMatchObject({
+      identifier: "ENG-2",
+      parentId: parent.id,
+      parent: { identifier: "ENG-1" }
+    });
+
+    const parentView = await tracker(dbPath, ["issue", "view", "ENG-1", "--json"]);
+    expect(parentView.status).toBe(0);
+    expect(JSON.parse(parentView.stdout)).toMatchObject({
+      identifier: "ENG-1",
+      parent: null,
+      children: [{ identifier: "ENG-2", title: "Add child issue" }]
+    });
+
+    const cleared = await tracker(dbPath, [
+      "issue",
+      "update",
+      "ENG-2",
+      "--parent",
+      "none",
+      "--json"
+    ]);
+    expect(cleared.status).toBe(0);
+    expect(JSON.parse(cleared.stdout)).toMatchObject({
+      identifier: "ENG-2",
+      parentId: null,
+      parent: null
+    });
+  });
+
+  it("adds comments and threaded replies through the CLI and renders authors in issue view", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Review agent notes"])).status).toBe(
+      0
+    );
+
+    const rootResult = await tracker(dbPath, [
+      "issue",
+      "comment",
+      "ENG-1",
+      "Initial investigation complete.",
+      "--json"
+    ]);
+    expect(rootResult.status).toBe(0);
+    const root = JSON.parse(rootResult.stdout) as Record<string, unknown>;
+    expect(root).toMatchObject({
+      body: "Initial investigation complete.",
+      parentId: null,
+      author: { handle: "owner" }
+    });
+
+    const replyResult = await tracker(dbPath, [
+      "issue",
+      "comment",
+      "ENG-1",
+      "Follow-up captured in the same thread.",
+      "--parent",
+      String(root.id),
+      "--json"
+    ]);
+    expect(replyResult.status).toBe(0);
+    const reply = JSON.parse(replyResult.stdout) as Record<string, unknown>;
+    expect(reply).toMatchObject({
+      body: "Follow-up captured in the same thread.",
+      parentId: root.id,
+      author: { handle: "owner" }
+    });
+
+    const viewJson = await tracker(dbPath, ["issue", "view", "ENG-1", "--json"]);
+    expect(viewJson.status).toBe(0);
+    expect(
+      (JSON.parse(viewJson.stdout) as {
+        comments: Array<{ body: string; parentId: string | null; author: { handle: string } }>;
+      }).comments.map((comment) => ({
+        body: comment.body,
+        parentId: comment.parentId,
+        authorHandle: comment.author.handle
+      }))
+    ).toEqual([
+      {
+        body: "Initial investigation complete.",
+        parentId: null,
+        authorHandle: "owner"
+      },
+      {
+        body: "Follow-up captured in the same thread.",
+        parentId: root.id,
+        authorHandle: "owner"
+      }
+    ]);
+
+    const viewText = await tracker(dbPath, ["issue", "view", "ENG-1"]);
+    expect(viewText.status).toBe(0);
+    expect(stripAnsi(viewText.stdout)).toContain(
+      "Comments\n  @owner  Initial investigation complete.\n    @owner  Follow-up captured in the same thread."
+    );
+  });
+
+  it("prints ordered issue history as JSON and text", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Track history"])).status).toBe(
+      0
+    );
+    expect((await tracker(dbPath, ["issue", "move", "ENG-1", "In Progress"])).status).toBe(0);
+    expect(
+      (await tracker(dbPath, ["issue", "comment", "ENG-1", "History covered."])).status
+    ).toBe(0);
+
+    const historyJson = await tracker(dbPath, ["issue", "history", "ENG-1", "--json"]);
+    expect(historyJson.status).toBe(0);
+
+    const history = JSON.parse(historyJson.stdout) as Array<{
+      action: string;
+      actor: { handle: string };
+      createdAt: string;
+      data: Record<string, unknown>;
+    }>;
+    expect(history.map((entry) => entry.action)).toEqual([
+      "created",
+      "state_changed",
+      "commented"
+    ]);
+    expect(history).toMatchObject([
+      {
+        actor: { handle: "owner" },
+        createdAt: expect.any(String),
+        data: { identifier: "ENG-1" }
+      },
+      { actor: { handle: "owner" }, data: { fromName: "Todo", toName: "In Progress" } },
+      { actor: { handle: "owner" }, data: { parentId: null } }
+    ]);
+
+    const historyText = await tracker(dbPath, ["issue", "history", "ENG-1"]);
+    expect(historyText.status).toBe(0);
+    const stripped = stripAnsi(historyText.stdout);
+    expect(stripped).toContain("@owner  created  ENG-1");
+    expect(stripped).toContain("@owner  state_changed  Todo -> In Progress");
+    expect(stripped).toContain("@owner  commented  comment=");
+  });
+
+  it("creates, lists, archives, and applies labels through JSON commands", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+
+    const createdLabel = await tracker(dbPath, [
+      "label",
+      "create",
+      "Bug",
+      "--color",
+      "#EF4444",
+      "--json"
+    ]);
+    expect(createdLabel.status).toBe(0);
+    expect(JSON.parse(createdLabel.stdout)).toMatchObject({
+      name: "Bug",
+      color: "#EF4444",
+      group: null,
+      archivedAt: null
+    });
+
+    expect((await tracker(dbPath, ["label", "create", "Docs", "--color", "#22C55E"])).status).toBe(
+      0
+    );
+    expect(
+      (
+        await tracker(dbPath, [
+          "issue",
+          "create",
+          "--title",
+          "Fix login redirect",
+          "--label",
+          "Bug"
+        ])
+      ).status
+    ).toBe(0);
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Refresh setup guide"])).status).toBe(
+      0
+    );
+
+    const filtered = await tracker(dbPath, ["issue", "list", "--label", "Bug", "--json"]);
+    expect(filtered.status).toBe(0);
+    expect((JSON.parse(filtered.stdout) as Array<Record<string, unknown>>).map((issue) => issue.identifier)).toEqual([
+      "ENG-1"
+    ]);
+
+    const updated = await tracker(dbPath, [
+      "issue",
+      "update",
+      "ENG-1",
+      "--label",
+      "Docs",
+      "--remove-label",
+      "Bug",
+      "--json"
+    ]);
+    expect(updated.status).toBe(0);
+    expect((JSON.parse(updated.stdout) as { labels: Array<{ name: string }> }).labels.map((label) => label.name)).toEqual([
+      "Docs"
+    ]);
+
+    const view = await tracker(dbPath, ["issue", "view", "ENG-1", "--json"]);
+    expect(view.status).toBe(0);
+    expect((JSON.parse(view.stdout) as { labels: Array<{ name: string }> }).labels.map((label) => label.name)).toEqual([
+      "Docs"
+    ]);
+
+    const archived = await tracker(dbPath, ["label", "archive", "Bug", "--json"]);
+    expect(archived.status).toBe(0);
+    expect((JSON.parse(archived.stdout) as Record<string, unknown>).archivedAt).toEqual(
+      expect.any(String)
+    );
+
+    const visibleLabels = await tracker(dbPath, ["label", "list", "--json"]);
+    expect(visibleLabels.status).toBe(0);
+    expect(
+      (JSON.parse(visibleLabels.stdout) as Array<Record<string, unknown>>).map((label) => label.name)
+    ).toEqual(["Docs"]);
+
+    const allLabels = await tracker(dbPath, ["label", "list", "--include-archived", "--json"]);
+    expect(allLabels.status).toBe(0);
+    expect(
+      (JSON.parse(allLabels.stdout) as Array<Record<string, unknown>>).map((label) => label.name)
+    ).toEqual(["Bug", "Docs"]);
+  });
+
+  it("creates cycles, assigns issues to them, filters by cycle, and rejects duplicates", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+
+    const firstCycle = await tracker(dbPath, [
+      "cycle",
+      "create",
+      "Cycle 1",
+      "--starts-at",
+      "2026-04-01T00:00:00.000Z",
+      "--ends-at",
+      "2026-04-15T00:00:00.000Z",
+      "--json"
+    ]);
+    expect(firstCycle.status).toBe(0);
+    const first = JSON.parse(firstCycle.stdout) as Record<string, unknown>;
+    expect(first).toMatchObject({
+      number: 1,
+      name: "Cycle 1",
+      startsAt: "2026-04-01T00:00:00.000Z",
+      endsAt: "2026-04-15T00:00:00.000Z"
+    });
+
+    const secondCycle = await tracker(dbPath, [
+      "cycle",
+      "create",
+      "--number",
+      "2",
+      "--name",
+      "Cycle 2",
+      "--json"
+    ]);
+    expect(secondCycle.status).toBe(0);
+    const second = JSON.parse(secondCycle.stdout) as Record<string, unknown>;
+    expect(second).toMatchObject({ number: 2, name: "Cycle 2" });
+
+    const duplicate = await tracker(dbPath, [
+      "cycle",
+      "create",
+      "Duplicate Cycle",
+      "--number",
+      "1",
+      "--json"
+    ]);
+    expect(duplicate.status).not.toBe(0);
+    expect(JSON.parse(duplicate.stderr)).toMatchObject({
+      error: { code: "CONSTRAINT_VIOLATION" }
+    });
+
+    const created = await tracker(dbPath, [
+      "issue",
+      "create",
+      "--title",
+      "Fix cycle assignment",
+      "--cycle",
+      "1",
+      "--json"
+    ]);
+    expect(created.status).toBe(0);
+    expect(JSON.parse(created.stdout)).toMatchObject({
+      identifier: "ENG-1",
+      cycleId: first.id
+    });
+
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Plan next cycle"])).status).toBe(0);
+
+    const updated = await tracker(dbPath, [
+      "issue",
+      "update",
+      "ENG-2",
+      "--cycle",
+      String(second.id),
+      "--json"
+    ]);
+    expect(updated.status).toBe(0);
+    expect(JSON.parse(updated.stdout)).toMatchObject({
+      identifier: "ENG-2",
+      cycleId: second.id
+    });
+
+    const filteredByNumber = await tracker(dbPath, ["issue", "list", "--cycle", "1", "--json"]);
+    expect(filteredByNumber.status).toBe(0);
+    expect(
+      (JSON.parse(filteredByNumber.stdout) as Array<Record<string, unknown>>).map(
+        (issue) => issue.identifier
+      )
+    ).toEqual(["ENG-1"]);
+
+    const filteredById = await tracker(dbPath, [
+      "issue",
+      "list",
+      "--cycle",
+      String(second.id),
+      "--json"
+    ]);
+    expect(filteredById.status).toBe(0);
+    expect(
+      (JSON.parse(filteredById.stdout) as Array<Record<string, unknown>>).map(
+        (issue) => issue.identifier
+      )
+    ).toEqual(["ENG-2"]);
+
+    const cycles = await tracker(dbPath, ["cycle", "list", "--json"]);
+    expect(cycles.status).toBe(0);
+    expect((JSON.parse(cycles.stdout) as Array<{ number: number }>).map((cycle) => cycle.number)).toEqual([
+      1,
+      2
+    ]);
+  });
+
   it("rejects out-of-range priority values", async () => {
     const dbPath = tempDbPath();
 
@@ -167,6 +873,15 @@ function tempDbPath(): string {
   const tempDir = mkdtempSync(join(tmpdir(), "issue-tracker-cli-"));
   tempDirs.push(tempDir);
   return join(tempDir, "tracker.db");
+}
+
+function stripAnsi(value: string): string {
+  const escape = String.fromCharCode(27);
+
+  return value
+    .split(escape)
+    .map((part, index) => (index === 0 ? part : part.replace(/^\[[0-?]*[ -/]*[@-~]/, "")))
+    .join("");
 }
 
 async function tracker(dbPath: string, args: string[]) {

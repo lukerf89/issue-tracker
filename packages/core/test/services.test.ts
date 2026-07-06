@@ -6,18 +6,39 @@ import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  addComment,
+  addCommentInputSchema,
   applyMigrations,
+  archiveIssue,
+  archiveLabel,
+  assignIssue,
+  assignIssueInputSchema,
+  AppErrorCode,
+  attachLabel,
+  createActor,
+  createCycle,
   createIssue,
   createIssueInputSchema,
+  createLabel,
   createProject,
   createTeam,
+  detachLabel,
   getIssue,
   init,
+  listActivity,
+  listActors,
+  listComments,
+  listCycles,
+  listLabels,
   listIssueFiltersSchema,
   listIssues,
   moveIssue,
   openDb,
+  searchInputSchema,
+  searchIssues,
   serializeIssue,
+  serializeActivity,
+  serializeCycle,
   updateIssue,
   updateIssueInputSchema,
   whoami,
@@ -67,6 +88,321 @@ describe("core services", () => {
     }
   });
 
+  it("creates actors, assigns and clears issues, filters by assignee, and records assigned activity", () => {
+    const { context, db, close } = initializedContext();
+
+    try {
+      const agent = createActor(context, {
+        type: "agent",
+        name: "Build Agent",
+        handle: "build-agent"
+      });
+      const issue = createIssue(context, { title: "Route agent work" });
+
+      expect(listActors(context).map((actor) => [actor.handle, actor.type])).toEqual([
+        ["build-agent", "agent"],
+        ["owner", "human"]
+      ]);
+      expect(() =>
+        createActor(context, {
+          type: "agent",
+          name: "Duplicate Agent",
+          handle: "build-agent"
+        })
+      ).toThrow("already taken");
+
+      context.clock = fixedClock("2026-01-01T00:05:00.000Z");
+      const assigned = assignIssue(context, issue.identifier, "build-agent");
+      expect(assigned.assigneeId).toBe(agent.id);
+      expect(assigned.updatedAt).toBe("2026-01-01T00:05:00.000Z");
+      expect(listIssues(context, { assignee: "build-agent" }).map((item) => item.identifier)).toEqual([
+        "ENG-1"
+      ]);
+      expect(listIssues(context, { assignee: agent.id }).map((item) => item.identifier)).toEqual([
+        "ENG-1"
+      ]);
+      expect(listIssues(context, { assignee: null })).toEqual([]);
+
+      context.clock = fixedClock("2026-01-01T00:06:00.000Z");
+      const cleared = assignIssue(context, issue.id, null);
+      expect(cleared.assigneeId).toBeNull();
+      expect(cleared.updatedAt).toBe("2026-01-01T00:06:00.000Z");
+      expect(listIssues(context, { assignee: null }).map((item) => item.identifier)).toEqual([
+        "ENG-1"
+      ]);
+
+      expect(readActivityEntries(db)).toMatchObject([
+        { action: "created" },
+        {
+          action: "assigned",
+          data: {
+            from: null,
+            to: agent.id,
+            fromHandle: null,
+            toHandle: "build-agent"
+          }
+        },
+        {
+          action: "assigned",
+          data: {
+            from: agent.id,
+            to: null,
+            fromHandle: "build-agent",
+            toHandle: null
+          }
+        }
+      ]);
+      expect(assignIssueInputSchema.safeParse({ identifier: "ENG-1", actor: null }).success).toBe(
+        true
+      );
+      expect(assignIssueInputSchema.safeParse({ identifier: "ENG-1", actor: "" }).success).toBe(
+        false
+      );
+    } finally {
+      close();
+    }
+  });
+
+  it("creates, lists, archives, and enforces grouped label uniqueness", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      const bug = createLabel(context, { name: "Bug", color: "#EF4444" });
+      const groupedBug = createLabel(context, {
+        name: "Bug",
+        color: "#F97316",
+        group: "Type"
+      });
+
+      expect(listLabels(context).map((label) => [label.name, label.group])).toEqual([
+        ["Bug", null],
+        ["Bug", "Type"]
+      ]);
+      expect(() => createLabel(context, { name: "Bug", color: "#DC2626" })).toThrow(
+        "already exists"
+      );
+      expect(() =>
+        createLabel(context, { name: "Bug", color: "#EA580C", group: "Type" })
+      ).toThrow("already exists");
+
+      const archived = archiveLabel(context, bug.id);
+
+      expect(archived.archivedAt).toEqual(expect.any(String));
+      expect(listLabels(context).map((label) => label.id)).toEqual([groupedBug.id]);
+      expect(listLabels(context, { includeArchived: true }).map((label) => label.id)).toEqual([
+        bug.id,
+        groupedBug.id
+      ]);
+    } finally {
+      close();
+    }
+  });
+
+  it("tags issues on create and update, filters by label name, and serializes labels", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      createLabel(context, { name: "Bug", color: "#EF4444" });
+      createLabel(context, { name: "Docs", color: "#22C55E" });
+
+      const created = createIssue(context, {
+        title: "Fix login redirect",
+        labels: ["Bug"]
+      });
+      createIssue(context, { title: "Refresh setup guide" });
+
+      expect(created.labels.map((label) => label.name)).toEqual(["Bug"]);
+      expect(serializeIssue(created).labels).toEqual([
+        expect.objectContaining({ name: "Bug", group: null })
+      ]);
+      expect(listIssues(context, { label: "Bug" }).map((issue) => issue.identifier)).toEqual([
+        "ENG-1"
+      ]);
+
+      const updated = updateIssue(context, "ENG-1", { labels: ["Docs"] });
+      expect(updated.labels.map((label) => label.name)).toEqual(["Bug", "Docs"]);
+
+      const removed = updateIssue(context, "ENG-1", { removeLabels: ["Bug"] });
+      expect(removed.labels.map((label) => label.name)).toEqual(["Docs"]);
+      expect(listIssues(context, { label: "Bug" })).toHaveLength(0);
+      expect(listIssues(context, { label: "Docs" }).map((issue) => issue.identifier)).toEqual([
+        "ENG-1"
+      ]);
+    } finally {
+      close();
+    }
+  });
+
+  it("creates, lists, serializes, and enforces per-team cycle numbers", () => {
+    const { context, close } = initializedContext("2026-04-01T00:00:00.000Z");
+
+    try {
+      createTeam(context, { key: "OPS", name: "Operations" });
+
+      const first = createCycle(context, {
+        team: "ENG",
+        name: "Cycle 1",
+        startsAt: "2026-04-01T00:00:00.000Z",
+        endsAt: "2026-04-15T00:00:00.000Z"
+      });
+      const second = createCycle(context, { team: "ENG", name: "Cycle 2" });
+      const opsFirst = createCycle(context, { team: "OPS", number: 1 });
+
+      expect(first.number).toBe(1);
+      expect(second.number).toBe(2);
+      expect(opsFirst.number).toBe(1);
+      expect(listCycles(context, { team: "ENG" }).map((cycle) => cycle.number)).toEqual([1, 2]);
+      expect(serializeCycle(first)).toMatchObject({
+        number: 1,
+        name: "Cycle 1",
+        startsAt: "2026-04-01T00:00:00.000Z",
+        endsAt: "2026-04-15T00:00:00.000Z"
+      });
+      expect(serializeCycle(second)).toMatchObject({
+        name: "Cycle 2",
+        startsAt: "2026-04-01T00:00:00.000Z",
+        endsAt: "2026-04-01T00:00:00.000Z"
+      });
+      expect(() => createCycle(context, { team: "ENG", number: 1 })).toThrow(
+        "already exists"
+      );
+    } finally {
+      close();
+    }
+  });
+
+  it("assigns issues to cycles on create and update, then filters by cycle", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      const first = createCycle(context, { team: "ENG", name: "Cycle 1" });
+      const second = createCycle(context, { team: "ENG", name: "Cycle 2" });
+
+      const created = createIssue(context, {
+        title: "Fix cycle assignment",
+        cycle: 1
+      });
+      createIssue(context, { title: "Schedule next work" });
+
+      expect(created.cycleId).toBe(first.id);
+      expect(listIssues(context, { cycle: 1 }).map((issue) => issue.identifier)).toEqual([
+        "ENG-1"
+      ]);
+
+      const updated = updateIssue(context, "ENG-2", { cycle: second.id });
+      expect(updated.cycleId).toBe(second.id);
+      expect(listIssues(context, { cycle: second.id }).map((issue) => issue.identifier)).toEqual([
+        "ENG-2"
+      ]);
+      expect(serializeIssue(updated).cycleId).toBe(second.id);
+      expect(() => updateIssue(context, "ENG-2", { cycle: 999 })).toThrow("was not found");
+    } finally {
+      close();
+    }
+  });
+
+  it("links sub-issues by parent reference without changing top-level numbering", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      const parent = createIssue(context, { title: "Build issue hierarchy" });
+      const child = createIssue(context, {
+        title: "Add child issue",
+        parent: parent.identifier
+      });
+      const sibling = createIssue(context, { title: "Keep next top-level number" });
+
+      expect(child.identifier).toBe("ENG-2");
+      expect(child.parentId).toBe(parent.id);
+      expect(sibling.identifier).toBe("ENG-3");
+
+      const parentView = getIssue(context, parent.identifier);
+      const childView = getIssue(context, child.identifier);
+
+      expect(parentView.parent).toBeNull();
+      expect(parentView.children).toEqual([
+        {
+          id: child.id,
+          identifier: "ENG-2",
+          teamId: child.teamId,
+          number: 2,
+          title: "Add child issue"
+        }
+      ]);
+      expect(childView.parent).toEqual({
+        id: parent.id,
+        identifier: "ENG-1",
+        teamId: parent.teamId,
+        number: 1,
+        title: "Build issue hierarchy"
+      });
+      expect(childView.children).toEqual([]);
+      expect(serializeIssue(childView)).toMatchObject({
+        parentId: parent.id,
+        parent: { identifier: "ENG-1" },
+        children: []
+      });
+    } finally {
+      close();
+    }
+  });
+
+  it("updates and clears parent links by identifier or raw id and records activity", () => {
+    const { context, db, close } = initializedContext();
+
+    try {
+      const firstParent = createIssue(context, { title: "First parent" });
+      const secondParent = createIssue(context, { title: "Second parent" });
+      createIssue(context, { title: "Retarget child" });
+
+      const assigned = updateIssue(context, "ENG-3", { parent: firstParent.identifier });
+      expect(assigned.parentId).toBe(firstParent.id);
+      expect(assigned.parent).toMatchObject({ identifier: "ENG-1" });
+
+      const retargeted = updateIssue(context, "ENG-3", { parentId: secondParent.id });
+      expect(retargeted.parentId).toBe(secondParent.id);
+      expect(retargeted.parent).toMatchObject({ identifier: "ENG-2" });
+
+      const cleared = updateIssue(context, "ENG-3", { parent: null });
+      expect(cleared.parentId).toBeNull();
+      expect(cleared.parent).toBeNull();
+
+      expect(readActivityEntries(db)).toMatchObject([
+        { action: "created" },
+        { action: "created" },
+        { action: "created" },
+        { action: "updated", data: { changed: { parentId: firstParent.id } } },
+        { action: "updated", data: { changed: { parentId: secondParent.id } } },
+        { action: "updated", data: { changed: { parentId: null } } }
+      ]);
+    } finally {
+      close();
+    }
+  });
+
+  it("rejects self-parenting and descendant-parent cycles", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      const parent = createIssue(context, { title: "Parent issue" });
+      const child = createIssue(context, { title: "Child issue", parent: parent.identifier });
+      const grandchild = createIssue(context, {
+        title: "Grandchild issue",
+        parent: child.identifier
+      });
+
+      expectIssueParentCycle(() =>
+        updateIssue(context, parent.identifier, { parent: parent.identifier })
+      );
+      expectIssueParentCycle(() =>
+        updateIssue(context, parent.identifier, { parent: grandchild.identifier })
+      );
+      expect(getIssue(context, parent.identifier).parentId).toBeNull();
+    } finally {
+      close();
+    }
+  });
+
   it("matches state names across teams when no team filter is supplied", () => {
     const { context, close } = initializedContext();
 
@@ -102,6 +438,197 @@ describe("core services", () => {
     }
   });
 
+  it("composes issue list filters, orders by team key and number, and hides archived issues by default", () => {
+    const { context, db, close } = initializedContext();
+
+    try {
+      createTeam(context, { key: "OPS", name: "Operations" });
+      createActor(context, {
+        type: "agent",
+        name: "Build Agent",
+        handle: "build-agent"
+      });
+      const project = createProject(context, {
+        name: "Platform Foundations",
+        status: "planned"
+      });
+      createLabel(context, { name: "Bug", color: "#EF4444" });
+      createLabel(context, { name: "Docs", color: "#22C55E" });
+      createCycle(context, { team: "ENG", name: "Cycle 1" });
+      createCycle(context, { team: "OPS", name: "Cycle 1" });
+
+      createIssue(context, {
+        title: "Matching engineering issue",
+        team: "ENG",
+        assignee: "build-agent",
+        project: project.id,
+        cycle: 1,
+        priority: 1,
+        labels: ["Bug"]
+      });
+      createIssue(context, {
+        title: "Wrong state",
+        team: "ENG",
+        assignee: "build-agent",
+        project: project.id,
+        cycle: 1,
+        priority: 1,
+        labels: ["Bug"]
+      });
+      createIssue(context, {
+        title: "Wrong priority",
+        team: "ENG",
+        assignee: "build-agent",
+        project: project.id,
+        cycle: 1,
+        priority: 2,
+        labels: ["Bug"]
+      });
+      createIssue(context, {
+        title: "Wrong label",
+        team: "ENG",
+        assignee: "build-agent",
+        project: project.id,
+        cycle: 1,
+        priority: 1,
+        labels: ["Docs"]
+      });
+      createIssue(context, {
+        title: "Matching operations issue",
+        team: "OPS",
+        assignee: "build-agent",
+        project: project.id,
+        cycle: 1,
+        priority: 1,
+        labels: ["Bug"]
+      });
+
+      moveIssue(context, "ENG-1", "In Progress");
+      moveIssue(context, "ENG-3", "In Progress");
+      moveIssue(context, "ENG-4", "In Progress");
+      moveIssue(context, "OPS-1", "In Progress");
+
+      expect(listIssues(context, { team: "OPS" }).map((issue) => issue.identifier)).toEqual([
+        "OPS-1"
+      ]);
+      expect(listIssues(context, { limit: 2 }).map((issue) => issue.identifier)).toEqual([
+        "ENG-1",
+        "ENG-2"
+      ]);
+      expect(
+        listIssues(context, {
+          state: "In Progress",
+          assignee: "build-agent",
+          project: project.id,
+          cycle: 1,
+          label: "Bug",
+          priority: 1,
+          team: "ENG"
+        }).map((issue) => issue.identifier)
+      ).toEqual(["ENG-1"]);
+
+      context.clock = fixedClock("2026-01-01T00:30:00.000Z");
+      const archived = archiveIssue(context, "ENG-1");
+
+      expect(archived.archivedAt).toBe("2026-01-01T00:30:00.000Z");
+      expect(getIssue(context, "ENG-1").archivedAt).toBe("2026-01-01T00:30:00.000Z");
+      expect(
+        listIssues(context, {
+          state: "In Progress",
+          assignee: "build-agent",
+          project: project.id,
+          cycle: 1,
+          label: "Bug",
+          priority: 1,
+          team: "ENG"
+        })
+      ).toEqual([]);
+      expect(
+        listIssues(context, {
+          state: "In Progress",
+          assignee: "build-agent",
+          project: project.id,
+          cycle: 1,
+          label: "Bug",
+          priority: 1,
+          team: "ENG",
+          includeArchived: true
+        }).map((issue) => issue.identifier)
+      ).toEqual(["ENG-1"]);
+      expect(readActivityEntries(db).at(-1)).toMatchObject({
+        action: "archived",
+        data: { identifier: "ENG-1" }
+      });
+    } finally {
+      close();
+    }
+  });
+
+  it("searches issue titles and descriptions case-insensitively and hides archived issues", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      createTeam(context, { key: "OPS", name: "Operations" });
+      createIssue(context, {
+        title: "Fix Login Redirect",
+        description: "OAuth callback fails",
+        team: "ENG"
+      });
+      createIssue(context, {
+        title: "Refresh setup guide",
+        description: "Mention login redirect setup",
+        team: "ENG"
+      });
+      createIssue(context, {
+        title: "Login operations runbook",
+        team: "OPS"
+      });
+      createIssue(context, {
+        title: "Archived login cleanup",
+        team: "ENG"
+      });
+      archiveIssue(context, "ENG-3");
+
+      expect(searchIssues(context, { query: "LOGIN" }).map((issue) => issue.identifier)).toEqual([
+        "ENG-1",
+        "ENG-2",
+        "OPS-1"
+      ]);
+      expect(
+        searchIssues(context, { query: "oauth", team: "ENG" }).map((issue) => issue.identifier)
+      ).toEqual(["ENG-1"]);
+      expect(searchIssues(context, { query: "login", limit: 2 }).map((issue) => issue.identifier)).toEqual([
+        "ENG-1",
+        "ENG-2"
+      ]);
+      expect(searchInputSchema.safeParse({ query: "login", team: "ENG", limit: 2 }).success).toBe(
+        true
+      );
+      expect(searchInputSchema.safeParse({ query: "" }).success).toBe(false);
+    } finally {
+      close();
+    }
+  });
+
+  it("treats SQL LIKE wildcard characters in search queries literally", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      createIssue(context, { title: "Use 100% capacity" });
+      createIssue(context, { title: "Read abc_def flag" });
+      createIssue(context, { title: "Plain matching issue" });
+
+      expect(searchIssues(context, { query: "%" }).map((issue) => issue.identifier)).toEqual([
+        "ENG-1"
+      ]);
+      expect(searchIssues(context, { query: "_" }).map((issue) => issue.identifier)).toEqual([
+        "ENG-2"
+      ]);
+    } finally {
+      close();
+    }
+  });
+
   it("rejects out-of-range priorities at the validation boundary", () => {
     for (const priority of [-1, 99]) {
       expect(
@@ -109,6 +636,112 @@ describe("core services", () => {
       ).toBe(false);
       expect(updateIssueInputSchema.safeParse({ priority }).success).toBe(false);
       expect(listIssueFiltersSchema.safeParse({ priority }).success).toBe(false);
+    }
+  });
+
+  it("adds comments and threaded replies with authors and serializes them on issues", () => {
+    const { context, close } = initializedContext("2026-05-01T00:00:00.000Z");
+
+    try {
+      const issue = createIssue(context, { title: "Review agent notes" });
+
+      context.clock = fixedClock("2026-05-01T00:01:00.000Z");
+      const root = addComment(context, {
+        issue: issue.identifier,
+        body: "Initial investigation complete."
+      });
+
+      context.clock = fixedClock("2026-05-01T00:02:00.000Z");
+      const reply = addComment(context, {
+        issue: issue.id,
+        body: "Follow-up captured in the same thread.",
+        parent: root.id
+      });
+
+      expect(root).toMatchObject({
+        issueId: issue.id,
+        authorId: context.actor?.id,
+        body: "Initial investigation complete.",
+        parentId: null,
+        createdAt: "2026-05-01T00:01:00.000Z",
+        author: { handle: "owner" }
+      });
+      expect(reply).toMatchObject({
+        issueId: issue.id,
+        authorId: context.actor?.id,
+        body: "Follow-up captured in the same thread.",
+        parentId: root.id,
+        createdAt: "2026-05-01T00:02:00.000Z",
+        author: { handle: "owner" }
+      });
+      expect(
+        listComments(context, { issue: "ENG-1" }).map((comment) => ({
+          body: comment.body,
+          parentId: comment.parentId,
+          authorHandle: comment.author.handle
+        }))
+      ).toEqual([
+        {
+          body: "Initial investigation complete.",
+          parentId: null,
+          authorHandle: "owner"
+        },
+        {
+          body: "Follow-up captured in the same thread.",
+          parentId: root.id,
+          authorHandle: "owner"
+        }
+      ]);
+
+      const serialized = serializeIssue(getIssue(context, "ENG-1"));
+      expect(serialized.comments).toEqual([
+        expect.objectContaining({
+          id: root.id,
+          body: "Initial investigation complete.",
+          parentId: null,
+          author: expect.objectContaining({ handle: "owner" })
+        }),
+        expect.objectContaining({
+          id: reply.id,
+          body: "Follow-up captured in the same thread.",
+          parentId: root.id,
+          author: expect.objectContaining({ handle: "owner" })
+        })
+      ]);
+      expect(addCommentInputSchema.safeParse({ issue: "ENG-1", body: "" }).success).toBe(false);
+    } finally {
+      close();
+    }
+  });
+
+  it("rejects threaded replies whose parent comment is missing or belongs to another issue", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      const first = createIssue(context, { title: "First issue" });
+      const second = createIssue(context, { title: "Second issue" });
+      const root = addComment(context, {
+        issue: first.identifier,
+        body: "Root comment"
+      });
+
+      expect(() =>
+        addComment(context, {
+          issue: first.identifier,
+          body: "Missing parent",
+          parent: "comment-missing"
+        })
+      ).toThrow("Comment comment-missing was not found.");
+      expect(() =>
+        addComment(context, {
+          issue: second.identifier,
+          body: "Cross-issue reply",
+          parent: root.id
+        })
+      ).toThrow("does not belong to issue");
+      expect(listComments(context, { issue: second.identifier })).toEqual([]);
+    } finally {
+      close();
     }
   });
 
@@ -193,6 +826,162 @@ describe("core services", () => {
     }
   });
 
+  it("lists and serializes one ordered activity row for every issue mutation type", () => {
+    const { context, close } = initializedContext("2026-06-01T00:00:00.000Z");
+
+    try {
+      const assignee = createActor(context, {
+        type: "agent",
+        name: "Build Agent",
+        handle: "build-agent"
+      });
+      const label = createLabel(context, { name: "Bug", color: "#EF4444" });
+      const cycle = createCycle(context, { team: "ENG", name: "Cycle 1" });
+      const parent = createIssue(context, { title: "Parent issue" });
+
+      context.clock = fixedClock("2026-06-01T00:01:00.000Z");
+      const issue = createIssue(context, { title: "Track activity trail" });
+
+      context.clock = fixedClock("2026-06-01T00:02:00.000Z");
+      moveIssue(context, issue.identifier, "In Progress");
+
+      context.clock = fixedClock("2026-06-01T00:03:00.000Z");
+      updateIssue(context, issue.identifier, { title: "Track all activity writes" });
+
+      context.clock = fixedClock("2026-06-01T00:04:00.000Z");
+      assignIssue(context, issue.identifier, assignee.handle);
+
+      context.clock = fixedClock("2026-06-01T00:05:00.000Z");
+      const comment = addComment(context, {
+        issue: issue.identifier,
+        body: "Activity write covered."
+      });
+
+      context.clock = fixedClock("2026-06-01T00:06:00.000Z");
+      attachLabel(context, issue.id, label.id);
+
+      context.clock = fixedClock("2026-06-01T00:07:00.000Z");
+      detachLabel(context, issue.id, label.id);
+
+      context.clock = fixedClock("2026-06-01T00:08:00.000Z");
+      updateIssue(context, issue.identifier, { parent: parent.identifier });
+
+      context.clock = fixedClock("2026-06-01T00:09:00.000Z");
+      updateIssue(context, issue.identifier, { parent: null });
+
+      context.clock = fixedClock("2026-06-01T00:10:00.000Z");
+      updateIssue(context, issue.identifier, { cycle: cycle.number });
+
+      context.clock = fixedClock("2026-06-01T00:11:00.000Z");
+      archiveIssue(context, issue.identifier);
+
+      const entries = listActivity(context, { issue: issue.identifier });
+      const serialized = entries.map(serializeActivity);
+
+      expect(entries).toHaveLength(11);
+      expect(listActivity(context, { issue: issue.id }).map((entry) => entry.id)).toEqual(
+        entries.map((entry) => entry.id)
+      );
+      expect(serialized.map((entry) => entry.action)).toEqual([
+        "created",
+        "state_changed",
+        "updated",
+        "assigned",
+        "commented",
+        "label_added",
+        "label_removed",
+        "updated",
+        "updated",
+        "updated",
+        "archived"
+      ]);
+      expect(serialized.map((entry) => entry.createdAt)).toEqual([
+        "2026-06-01T00:01:00.000Z",
+        "2026-06-01T00:02:00.000Z",
+        "2026-06-01T00:03:00.000Z",
+        "2026-06-01T00:04:00.000Z",
+        "2026-06-01T00:05:00.000Z",
+        "2026-06-01T00:06:00.000Z",
+        "2026-06-01T00:07:00.000Z",
+        "2026-06-01T00:08:00.000Z",
+        "2026-06-01T00:09:00.000Z",
+        "2026-06-01T00:10:00.000Z",
+        "2026-06-01T00:11:00.000Z"
+      ]);
+      expect(serialized).toMatchObject([
+        { issueId: issue.id, actor: { handle: "owner" }, data: { identifier: issue.identifier } },
+        { data: { fromName: "Todo", toName: "In Progress" } },
+        { data: { changed: { title: "Track all activity writes" } } },
+        {
+          data: {
+            from: null,
+            to: assignee.id,
+            fromHandle: null,
+            toHandle: "build-agent"
+          }
+        },
+        { data: { commentId: comment.id, parentId: null } },
+        { data: { labelId: label.id, labelName: "Bug" } },
+        { data: { labelId: label.id, labelName: "Bug" } },
+        { data: { changed: { parentId: parent.id } } },
+        { data: { changed: { parentId: null } } },
+        { data: { changed: { cycleId: cycle.id } } },
+        { data: { identifier: issue.identifier } }
+      ]);
+      expect(Object.keys(serialized[0] ?? {})).toEqual([
+        "id",
+        "issueId",
+        "actorId",
+        "actor",
+        "action",
+        "data",
+        "createdAt"
+      ]);
+      expect(JSON.stringify(serialized)).not.toContain("undefined");
+    } finally {
+      close();
+    }
+  });
+
+  it("writes exactly one activity row when attaching or detaching a label", () => {
+    const { context, db, close } = initializedContext();
+
+    try {
+      const issue = createIssue(context, { title: "Track label activity" });
+      const label = createLabel(context, { name: "Bug", color: "#EF4444" });
+
+      attachLabel(context, issue.id, label.id);
+      expect(readActivityActions(db)).toEqual(["created", "label_added"]);
+
+      detachLabel(context, issue.id, label.id);
+      expect(readActivityActions(db)).toEqual(["created", "label_added", "label_removed"]);
+    } finally {
+      close();
+    }
+  });
+
+  it("writes exactly one commented activity row for each comment", () => {
+    const { context, db, close } = initializedContext();
+
+    try {
+      createIssue(context, { title: "Track comment activity" });
+      const root = addComment(context, { issue: "ENG-1", body: "Root comment" });
+      addComment(context, {
+        issue: "ENG-1",
+        body: "Threaded reply",
+        parent: root.id
+      });
+
+      expect(readActivityEntries(db)).toMatchObject([
+        { action: "created" },
+        { action: "commented", data: { commentId: root.id, parentId: null } },
+        { action: "commented", data: { parentId: root.id } }
+      ]);
+    } finally {
+      close();
+    }
+  });
+
   it("serializes issues with ISO timestamps, camelCase keys, and explicit nulls", () => {
     const { context, close } = initializedContext("2026-03-01T00:00:00.000Z");
 
@@ -214,6 +1003,9 @@ describe("core services", () => {
         "projectId",
         "cycleId",
         "parentId",
+        "parent",
+        "children",
+        "comments",
         "estimate",
         "dueDate",
         "sortOrder",
@@ -222,7 +1014,8 @@ describe("core services", () => {
         "startedAt",
         "completedAt",
         "canceledAt",
-        "archivedAt"
+        "archivedAt",
+        "labels"
       ]);
       expect(serialized).toMatchObject({
         identifier: "ENG-1",
@@ -231,12 +1024,16 @@ describe("core services", () => {
         projectId: null,
         cycleId: null,
         parentId: null,
+        parent: null,
+        children: [],
+        comments: [],
         estimate: null,
         dueDate: null,
         startedAt: null,
         completedAt: null,
         canceledAt: null,
         archivedAt: null,
+        labels: [],
         createdAt: "2026-03-01T00:00:00.000Z",
         updatedAt: "2026-03-01T00:00:00.000Z"
       });
@@ -281,4 +1078,27 @@ function readActivityActions(db: Db): string[] {
     .all() as Array<{ action: string }>;
 
   return rows.map((entry) => entry.action);
+}
+
+function readActivityEntries(db: Db): Array<{ action: string; data: unknown }> {
+  const rows = db.$client
+    .prepare("select action, data from activity order by rowid")
+    .all() as Array<{ action: string; data: string | unknown }>;
+
+  return rows.map((entry) => ({
+    action: entry.action,
+    data: typeof entry.data === "string" ? JSON.parse(entry.data) : entry.data
+  }));
+}
+
+function expectIssueParentCycle(work: () => unknown): void {
+  let error: unknown;
+
+  try {
+    work();
+  } catch (caught) {
+    error = caught;
+  }
+
+  expect(error).toMatchObject({ code: AppErrorCode.ISSUE_PARENT_CYCLE });
 }
