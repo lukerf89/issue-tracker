@@ -80,6 +80,7 @@ export {
   getLabel,
   listIssueLabels,
   listLabels,
+  unarchiveLabel,
   type CreateLabelInput,
   type IssueWithLabels,
   type ListLabelsOptions
@@ -92,6 +93,7 @@ export {
   listIssues,
   moveIssue,
   searchIssues,
+  unarchiveIssue,
   updateIssue,
   type ArchiveIssueInput,
   type AssignIssueInput,
@@ -100,13 +102,17 @@ export {
   type IssueWithDetails,
   type ListIssueFilters,
   type SearchIssuesInput,
+  type UnarchiveIssueInput,
   type UpdateIssueInput
 } from "./services/issue.js";
 export {
+  archiveProject,
   createProject,
   getProject,
   listProjects,
+  unarchiveProject,
   updateProject,
+  type ArchiveProjectInput,
   type CreateProjectInput,
   type UpdateProjectInput
 } from "./services/project.js";
@@ -118,10 +124,13 @@ export {
   seedDefaultWorkflowStates
 } from "./services/state.js";
 export {
+  archiveTeam,
   createTeam,
   getTeam,
   getTeamByKey,
   listTeams,
+  unarchiveTeam,
+  type ArchiveTeamInput,
   type CreateTeamInput
 } from "./services/team.js";
 export {
@@ -152,23 +161,32 @@ export {
   listIssueFiltersSchema,
   moveIssueInputSchema,
   searchInputSchema,
+  unarchiveIssueInputSchema,
   updateIssueInputSchema,
   updateIssueToolInputSchema
 } from "./schemas/issue.js";
 export {
   archiveLabelInputSchema,
   createLabelInputSchema,
-  listLabelsInputSchema
+  listLabelsInputSchema,
+  unarchiveLabelInputSchema
 } from "./schemas/label.js";
 export {
+  archiveProjectInputSchema,
   createProjectInputSchema,
   getProjectInputSchema,
   listProjectsInputSchema,
   projectStatusSchema,
+  unarchiveProjectInputSchema,
   updateProjectInputSchema,
   updateProjectToolInputSchema
 } from "./schemas/project.js";
-export { createTeamInputSchema, listTeamsInputSchema } from "./schemas/team.js";
+export {
+  archiveTeamInputSchema,
+  createTeamInputSchema,
+  listTeamsInputSchema,
+  unarchiveTeamInputSchema
+} from "./schemas/team.js";
 
 export type {
   Activity,

@@ -458,6 +458,144 @@ describe("tracker CLI", () => {
       identifier: "ENG-1",
       archivedAt: expect.any(String)
     });
+
+    const restored = await tracker(dbPath, ["issue", "unarchive", "ENG-1", "--json"]);
+    expect(restored.status).toBe(0);
+    expect(JSON.parse(restored.stdout)).toMatchObject({
+      identifier: "ENG-1",
+      archivedAt: null
+    });
+
+    const visibleAgain = await tracker(dbPath, ["issue", "list", "--json"]);
+    expect(visibleAgain.status).toBe(0);
+    expect(
+      (JSON.parse(visibleAgain.stdout) as Array<Record<string, unknown>>).map(
+        (issue) => issue.identifier
+      )
+    ).toEqual(["ENG-1", "ENG-2"]);
+  });
+
+  it("archives and unarchives teams and projects through CLI list flows", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["team", "create", "OPS", "Operations"])).status).toBe(0);
+
+    const createdProject = await tracker(dbPath, [
+      "project",
+      "create",
+      "Platform Foundations",
+      "--status",
+      "planned",
+      "--json"
+    ]);
+    expect(createdProject.status).toBe(0);
+    const project = JSON.parse(createdProject.stdout) as { id: string; name: string };
+
+    expect(
+      (
+        await tracker(dbPath, [
+          "issue",
+          "create",
+          "--team",
+          "OPS",
+          "--title",
+          "Keep related issue addressable",
+          "--project",
+          project.name
+        ])
+      ).status
+    ).toBe(0);
+
+    const archivedTeam = await tracker(dbPath, ["team", "archive", "OPS", "--json"]);
+    expect(archivedTeam.status).toBe(0);
+    expect(JSON.parse(archivedTeam.stdout)).toMatchObject({
+      key: "OPS",
+      archivedAt: expect.any(String)
+    });
+
+    const archivedProject = await tracker(dbPath, [
+      "project",
+      "archive",
+      project.name,
+      "--json"
+    ]);
+    expect(archivedProject.status).toBe(0);
+    expect(JSON.parse(archivedProject.stdout)).toMatchObject({
+      id: project.id,
+      archivedAt: expect.any(String)
+    });
+
+    const visibleTeams = await tracker(dbPath, ["team", "list", "--json"]);
+    expect(visibleTeams.status).toBe(0);
+    expect(
+      (JSON.parse(visibleTeams.stdout) as Array<Record<string, unknown>>).map((team) => team.key)
+    ).toEqual(["ENG"]);
+
+    const allTeams = await tracker(dbPath, ["team", "list", "--include-archived", "--json"]);
+    expect(allTeams.status).toBe(0);
+    expect(
+      (JSON.parse(allTeams.stdout) as Array<Record<string, unknown>>).map((team) => team.key)
+    ).toEqual(["ENG", "OPS"]);
+
+    const visibleProjects = await tracker(dbPath, ["project", "list", "--json"]);
+    expect(visibleProjects.status).toBe(0);
+    expect(JSON.parse(visibleProjects.stdout)).toEqual([]);
+
+    const allProjects = await tracker(dbPath, [
+      "project",
+      "list",
+      "--include-archived",
+      "--json"
+    ]);
+    expect(allProjects.status).toBe(0);
+    expect(
+      (JSON.parse(allProjects.stdout) as Array<Record<string, unknown>>).map(
+        (item) => item.id
+      )
+    ).toEqual([project.id]);
+
+    const issueView = await tracker(dbPath, ["issue", "view", "OPS-1", "--json"]);
+    expect(issueView.status).toBe(0);
+    expect(JSON.parse(issueView.stdout)).toMatchObject({
+      identifier: "OPS-1",
+      projectId: project.id
+    });
+
+    const restoredTeam = await tracker(dbPath, ["team", "unarchive", "OPS", "--json"]);
+    expect(restoredTeam.status).toBe(0);
+    expect(JSON.parse(restoredTeam.stdout)).toMatchObject({
+      key: "OPS",
+      archivedAt: null
+    });
+
+    const restoredProject = await tracker(dbPath, [
+      "project",
+      "unarchive",
+      project.id,
+      "--json"
+    ]);
+    expect(restoredProject.status).toBe(0);
+    expect(JSON.parse(restoredProject.stdout)).toMatchObject({
+      id: project.id,
+      archivedAt: null
+    });
+
+    const teamsAfterRestore = await tracker(dbPath, ["team", "list", "--json"]);
+    expect(teamsAfterRestore.status).toBe(0);
+    expect(
+      (JSON.parse(teamsAfterRestore.stdout) as Array<Record<string, unknown>>).map(
+        (team) => team.key
+      )
+    ).toEqual(["ENG", "OPS"]);
+
+    const projectsAfterRestore = await tracker(dbPath, ["project", "list", "--json"]);
+    expect(projectsAfterRestore.status).toBe(0);
+    expect(
+      (JSON.parse(projectsAfterRestore.stdout) as Array<Record<string, unknown>>).map(
+        (item) => item.id
+      )
+    ).toEqual([project.id]);
   });
 
   it("creates and clears sub-issues through parent flags and shows relationships in view JSON", async () => {
@@ -844,6 +982,21 @@ describe("tracker CLI", () => {
     expect(allLabels.status).toBe(0);
     expect(
       (JSON.parse(allLabels.stdout) as Array<Record<string, unknown>>).map((label) => label.name)
+    ).toEqual(["Bug", "Docs"]);
+
+    const restored = await tracker(dbPath, ["label", "unarchive", "Bug", "--json"]);
+    expect(restored.status).toBe(0);
+    expect(JSON.parse(restored.stdout)).toMatchObject({
+      name: "Bug",
+      archivedAt: null
+    });
+
+    const restoredLabels = await tracker(dbPath, ["label", "list", "--json"]);
+    expect(restoredLabels.status).toBe(0);
+    expect(
+      (JSON.parse(restoredLabels.stdout) as Array<Record<string, unknown>>).map(
+        (label) => label.name
+      )
     ).toEqual(["Bug", "Docs"]);
   });
 

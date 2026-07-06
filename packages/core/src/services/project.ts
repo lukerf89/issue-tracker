@@ -16,6 +16,10 @@ export interface CreateProjectInput {
 
 export type UpdateProjectInput = Partial<CreateProjectInput>;
 
+export interface ArchiveProjectInput {
+  project: string;
+}
+
 export function createProject(context: ServiceContext, input: CreateProjectInput) {
   return inTransaction(context, (txContext) => {
     const row = {
@@ -56,6 +60,50 @@ export function getProject(context: ServiceContext, idOrName: string) {
   }
 
   return project;
+}
+
+export function archiveProject(context: ServiceContext, idOrName: string) {
+  return inTransaction(context, (txContext) => {
+    const project = getProject(txContext, idOrName);
+
+    if (project.archivedAt !== null) {
+      throw new AppError(
+        AppErrorCode.CONSTRAINT_VIOLATION,
+        `Project ${project.name} is already archived.`,
+        { project: idOrName, id: project.id }
+      );
+    }
+
+    txContext.db
+      .update(projects)
+      .set({ archivedAt: txContext.clock.now().toISOString() })
+      .where(eq(projects.id, project.id))
+      .run();
+
+    return getProject(txContext, project.id);
+  });
+}
+
+export function unarchiveProject(context: ServiceContext, idOrName: string) {
+  return inTransaction(context, (txContext) => {
+    const project = getProject(txContext, idOrName);
+
+    if (project.archivedAt === null) {
+      throw new AppError(
+        AppErrorCode.CONSTRAINT_VIOLATION,
+        `Project ${project.name} is not archived.`,
+        { project: idOrName, id: project.id }
+      );
+    }
+
+    txContext.db
+      .update(projects)
+      .set({ archivedAt: null })
+      .where(eq(projects.id, project.id))
+      .run();
+
+    return getProject(txContext, project.id);
+  });
 }
 
 export function updateProject(context: ServiceContext, idOrName: string, input: UpdateProjectInput) {

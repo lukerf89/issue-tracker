@@ -13,6 +13,8 @@ import {
   applyMigrations,
   archiveIssue,
   archiveLabel,
+  archiveProject,
+  archiveTeam,
   assignIssue,
   assignIssueInputSchema,
   AppErrorCode,
@@ -26,6 +28,9 @@ import {
   createTeam,
   detachLabel,
   getIssue,
+  getProject,
+  getTeam,
+  getTeamByKey,
   init,
   listActivity,
   linkIssueInputSchema,
@@ -36,6 +41,8 @@ import {
   listLabels,
   listIssueFiltersSchema,
   listIssues,
+  listProjects,
+  listTeams,
   moveIssue,
   openDb,
   searchInputSchema,
@@ -46,6 +53,10 @@ import {
   serializeActivity,
   serializeCycle,
   setConfig,
+  unarchiveIssue,
+  unarchiveLabel,
+  unarchiveProject,
+  unarchiveTeam,
   updateIssue,
   updateIssueInputSchema,
   whoami,
@@ -200,6 +211,119 @@ describe("core services", () => {
         bug.id,
         groupedBug.id
       ]);
+    } finally {
+      close();
+    }
+  });
+
+  it("unarchives issues and labels, rejects active unarchive, and retains label links", () => {
+    const { context, db, close } = initializedContext();
+
+    try {
+      createLabel(context, { name: "Bug", color: "#EF4444" });
+      const issue = createIssue(context, {
+        title: "Restore archived work",
+        labels: ["Bug"]
+      });
+
+      context.clock = fixedClock("2026-01-01T00:10:00.000Z");
+      const archivedIssue = archiveIssue(context, issue.identifier);
+      const archivedLabel = archiveLabel(context, "Bug");
+
+      expect(archivedIssue.archivedAt).toBe("2026-01-01T00:10:00.000Z");
+      expect(archivedLabel.archivedAt).toBe("2026-01-01T00:10:00.000Z");
+      expect(listIssues(context)).toEqual([]);
+      expect(listLabels(context)).toEqual([]);
+      expect(getIssue(context, issue.identifier).labels).toEqual([]);
+
+      context.clock = fixedClock("2026-01-01T00:20:00.000Z");
+      const restoredIssue = unarchiveIssue(context, issue.id);
+      const restoredLabel = unarchiveLabel(context, archivedLabel.id);
+
+      expect(restoredIssue.archivedAt).toBeNull();
+      expect(restoredIssue.updatedAt).toBe("2026-01-01T00:20:00.000Z");
+      expect(restoredLabel.archivedAt).toBeNull();
+      expect(listIssues(context).map((listed) => listed.identifier)).toEqual([
+        issue.identifier
+      ]);
+      expect(listLabels(context).map((label) => label.name)).toEqual(["Bug"]);
+      expect(getIssue(context, issue.identifier).labels.map((label) => label.name)).toEqual([
+        "Bug"
+      ]);
+      expect(() => unarchiveIssue(context, issue.identifier)).toThrow("not archived");
+      expect(() => unarchiveLabel(context, "Bug")).toThrow("not archived");
+      expect(readActivityEntries(db).map((entry) => entry.action)).toEqual([
+        "created",
+        "label_added",
+        "archived",
+        "unarchived"
+      ]);
+    } finally {
+      close();
+    }
+  });
+
+  it("archives and unarchives teams and projects while retaining related issues", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      const operations = createTeam(context, { key: "OPS", name: "Operations" });
+      const project = createProject(context, {
+        name: "Platform Foundations",
+        status: "planned"
+      });
+      const issue = createIssue(context, {
+        title: "Keep related issue addressable",
+        team: "OPS",
+        project: project.name
+      });
+
+      context.clock = fixedClock("2026-01-01T00:30:00.000Z");
+      const archivedTeam = archiveTeam(context, "ops");
+      const archivedProject = archiveProject(context, project.name);
+
+      expect(archivedTeam).toMatchObject({
+        id: operations.id,
+        key: "OPS",
+        archivedAt: "2026-01-01T00:30:00.000Z"
+      });
+      expect(archivedProject).toMatchObject({
+        id: project.id,
+        archivedAt: "2026-01-01T00:30:00.000Z"
+      });
+      expect(listTeams(context).map((team) => team.key)).toEqual(["ENG"]);
+      expect(listTeams(context, { includeArchived: true }).map((team) => team.key)).toEqual([
+        "ENG",
+        "OPS"
+      ]);
+      expect(listProjects(context)).toEqual([]);
+      expect(listProjects(context, { includeArchived: true }).map((item) => item.id)).toEqual([
+        project.id
+      ]);
+      expect(getTeam(context, operations.id).archivedAt).toBe("2026-01-01T00:30:00.000Z");
+      expect(getTeamByKey(context, "OPS").archivedAt).toBe("2026-01-01T00:30:00.000Z");
+      expect(getProject(context, project.id).archivedAt).toBe("2026-01-01T00:30:00.000Z");
+      expect(getProject(context, project.name).archivedAt).toBe("2026-01-01T00:30:00.000Z");
+      expect(getIssue(context, issue.identifier)).toMatchObject({
+        identifier: "OPS-1",
+        teamId: operations.id,
+        projectId: project.id
+      });
+      expect(listIssues(context, { team: "OPS" }).map((listed) => listed.identifier)).toEqual([
+        "OPS-1"
+      ]);
+      expect(() => archiveTeam(context, operations.id)).toThrow("already archived");
+      expect(() => archiveProject(context, project.id)).toThrow("already archived");
+
+      const restoredTeam = unarchiveTeam(context, operations.id);
+      const restoredProject = unarchiveProject(context, project.id);
+
+      expect(restoredTeam.archivedAt).toBeNull();
+      expect(restoredProject.archivedAt).toBeNull();
+      expect(listTeams(context).map((team) => team.key)).toEqual(["ENG", "OPS"]);
+      expect(listProjects(context).map((item) => item.id)).toEqual([project.id]);
+      expect(() => unarchiveTeam(context, "OPS")).toThrow("not archived");
+      expect(() => unarchiveProject(context, project.name)).toThrow("not archived");
     } finally {
       close();
     }

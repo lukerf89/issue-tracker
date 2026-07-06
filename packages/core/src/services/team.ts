@@ -11,6 +11,10 @@ export interface CreateTeamInput {
   name: string;
 }
 
+export interface ArchiveTeamInput {
+  team: string;
+}
+
 export function createTeam(context: ServiceContext, input: CreateTeamInput) {
   return inTransaction(context, (txContext) =>
     createTeamInTransaction(txContext, input)
@@ -54,6 +58,50 @@ export function listTeams(context: ServiceContext, options: { includeArchived?: 
   }).sync();
 }
 
+export function archiveTeam(context: ServiceContext, idOrKey: string) {
+  return inTransaction(context, (txContext) => {
+    const team = getTeamForArchive(txContext, idOrKey);
+
+    if (team.archivedAt !== null) {
+      throw new AppError(
+        AppErrorCode.CONSTRAINT_VIOLATION,
+        `Team ${team.key} is already archived.`,
+        { team: idOrKey, id: team.id, key: team.key }
+      );
+    }
+
+    txContext.db
+      .update(teams)
+      .set({ archivedAt: txContext.clock.now().toISOString() })
+      .where(eq(teams.id, team.id))
+      .run();
+
+    return getTeam(txContext, team.id);
+  });
+}
+
+export function unarchiveTeam(context: ServiceContext, idOrKey: string) {
+  return inTransaction(context, (txContext) => {
+    const team = getTeamForArchive(txContext, idOrKey);
+
+    if (team.archivedAt === null) {
+      throw new AppError(
+        AppErrorCode.CONSTRAINT_VIOLATION,
+        `Team ${team.key} is not archived.`,
+        { team: idOrKey, id: team.id, key: team.key }
+      );
+    }
+
+    txContext.db
+      .update(teams)
+      .set({ archivedAt: null })
+      .where(eq(teams.id, team.id))
+      .run();
+
+    return getTeam(txContext, team.id);
+  });
+}
+
 export function getTeamByKey(context: ServiceContext, key: string) {
   const normalizedKey = normalizeTeamKey(key);
   const team = context.db.query.teams.findFirst({
@@ -83,6 +131,33 @@ export function getTeam(context: ServiceContext, id: string) {
   }
 
   return team;
+}
+
+function getTeamForArchive(context: ServiceContext, idOrKey: string) {
+  const team = findTeamByIdOrKey(context, idOrKey);
+
+  if (!team) {
+    const normalizedKey = normalizeTeamKey(idOrKey);
+    throw new AppError(
+      AppErrorCode.TEAM_NOT_FOUND,
+      `Team ${normalizedKey} was not found.`,
+      { team: idOrKey, key: normalizedKey }
+    );
+  }
+
+  return team;
+}
+
+function findTeamByIdOrKey(context: ServiceContext, idOrKey: string) {
+  return (
+    context.db.query.teams.findFirst({
+      where: eq(teams.id, idOrKey)
+    }).sync() ??
+    context.db.query.teams.findFirst({
+      where: eq(teams.key, normalizeTeamKey(idOrKey))
+    }).sync() ??
+    null
+  );
 }
 
 function normalizeTeamKey(key: string): string {

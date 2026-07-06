@@ -12,6 +12,10 @@ import {
   archiveIssueInputSchema,
   archiveLabel,
   archiveLabelInputSchema,
+  archiveProject,
+  archiveProjectInputSchema,
+  archiveTeam,
+  archiveTeamInputSchema,
   assignIssue,
   assignIssueInputSchema,
   backupDatabase,
@@ -52,6 +56,14 @@ import {
   searchInputSchema,
   searchIssues,
   setConfig,
+  unarchiveIssue,
+  unarchiveIssueInputSchema,
+  unarchiveLabel,
+  unarchiveLabelInputSchema,
+  unarchiveProject,
+  unarchiveProjectInputSchema,
+  unarchiveTeam,
+  unarchiveTeamInputSchema,
   updateIssueInputSchema,
   updateIssue,
   updateProjectInputSchema,
@@ -259,6 +271,26 @@ export function createProgram(): Command {
         );
       })
     );
+  team
+    .command("archive")
+    .argument("<team>")
+    .option("--json", "print JSON output")
+    .action((teamRef, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const input = archiveTeamInputSchema.parse({ team: teamRef });
+        printTeam(archiveTeam(cli.context, input.team), optionsWithGlobals(command));
+      })
+    );
+  team
+    .command("unarchive")
+    .argument("<team>")
+    .option("--json", "print JSON output")
+    .action((teamRef, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const input = unarchiveTeamInputSchema.parse({ team: teamRef });
+        printTeam(unarchiveTeam(cli.context, input.team), optionsWithGlobals(command));
+      })
+    );
 
   const label = program.command("label").description("manage labels");
   label
@@ -297,6 +329,16 @@ export function createProgram(): Command {
       withContext(command, { requireActor: false }, (cli) => {
         const input = archiveLabelInputSchema.parse({ label: labelRef });
         printLabel(archiveLabel(cli.context, input.label), optionsWithGlobals(command));
+      })
+    );
+  label
+    .command("unarchive")
+    .argument("<label>")
+    .option("--json", "print JSON output")
+    .action((labelRef, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const input = unarchiveLabelInputSchema.parse({ label: labelRef });
+        printLabel(unarchiveLabel(cli.context, input.label), optionsWithGlobals(command));
       })
     );
 
@@ -391,6 +433,26 @@ export function createProgram(): Command {
           updateProject(cli.context, idOrName, projectUpdateInput(options)),
           options
         );
+      })
+    );
+  project
+    .command("archive")
+    .argument("<project>")
+    .option("--json", "print JSON output")
+    .action((projectRef, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const input = archiveProjectInputSchema.parse({ project: projectRef });
+        printProject(archiveProject(cli.context, input.project), optionsWithGlobals(command));
+      })
+    );
+  project
+    .command("unarchive")
+    .argument("<project>")
+    .option("--json", "print JSON output")
+    .action((projectRef, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const input = unarchiveProjectInputSchema.parse({ project: projectRef });
+        printProject(unarchiveProject(cli.context, input.project), optionsWithGlobals(command));
       })
     );
 
@@ -583,6 +645,20 @@ export function createProgram(): Command {
         printIssue(
           cli.context,
           archiveIssue(cli.context, input.identifier),
+          optionsWithGlobals(command)
+        );
+      })
+    );
+  issue
+    .command("unarchive")
+    .argument("<identifier>")
+    .option("--json", "print JSON output")
+    .action((identifier, _options, command) =>
+      withContext(command, {}, (cli) => {
+        const input = unarchiveIssueInputSchema.parse({ identifier });
+        printIssue(
+          cli.context,
+          unarchiveIssue(cli.context, input.identifier),
           optionsWithGlobals(command)
         );
       })

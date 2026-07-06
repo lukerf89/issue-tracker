@@ -91,6 +91,10 @@ export interface ArchiveIssueInput {
   identifier: string;
 }
 
+export interface UnarchiveIssueInput {
+  identifier: string;
+}
+
 export interface IssueReference {
   id: string;
   identifier: string;
@@ -423,6 +427,42 @@ export function archiveIssue(context: ServiceContext, issueIdentifier: string) {
       issueId: issue.id,
       actorId: requireActor(txContext).id,
       action: "archived",
+      data: { identifier: issue.identifier }
+    });
+
+    return getIssue(txContext, issue.identifier);
+  });
+}
+
+export function unarchiveIssue(context: ServiceContext, issueIdentifier: string) {
+  requireActor(context);
+
+  return inTransaction(context, (txContext) => {
+    const issue = getIssueByIdOrIdentifier(txContext, issueIdentifier);
+
+    if (issue.archivedAt === null) {
+      throw new AppError(
+        AppErrorCode.CONSTRAINT_VIOLATION,
+        `Issue ${issue.identifier} is not archived.`,
+        { identifier: issue.identifier }
+      );
+    }
+
+    const now = txContext.clock.now().toISOString();
+
+    txContext.db
+      .update(issues)
+      .set({
+        archivedAt: null,
+        updatedAt: now
+      })
+      .where(eq(issues.id, issue.id))
+      .run();
+
+    appendActivityInTransaction(txContext, {
+      issueId: issue.id,
+      actorId: requireActor(txContext).id,
+      action: "unarchived",
       data: { identifier: issue.identifier }
     });
 

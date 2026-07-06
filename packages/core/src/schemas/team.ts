@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { CreateTeamInput } from "../services/team.js";
+import type { ArchiveTeamInput, CreateTeamInput } from "../services/team.js";
 import { includeArchivedSchema, nonEmptyStringSchema } from "./common.js";
 
 export const createTeamInputSchema = z.object({
@@ -9,3 +9,9 @@ export const createTeamInputSchema = z.object({
 }) satisfies z.ZodType<CreateTeamInput>;
 
 export const listTeamsInputSchema = includeArchivedSchema;
+
+export const archiveTeamInputSchema = z.object({
+  team: nonEmptyStringSchema
+}) satisfies z.ZodType<ArchiveTeamInput>;
+
+export const unarchiveTeamInputSchema = archiveTeamInputSchema;
