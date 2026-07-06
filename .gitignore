@@ -11,7 +11,7 @@ tools/codex/
 *.sqlite
 *.sqlite3
 .tracker/
-data/
+/data/
 *.local
 
 # === Dependencies ===
@@ -23,6 +23,7 @@ node_modules/
 dist/
 build/
 out/
+.next/
 *.tsbuildinfo
 
 # === Env / secrets ===

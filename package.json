@@ -10,9 +10,9 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -b",
-    "test": "vitest run",
-    "typecheck": "tsc -b --pretty false",
+    "build": "tsc -b && npm run build -w @issue-tracker/web",
+    "test": "vitest run --config vitest.workspace.ts",
+    "typecheck": "tsc -b --pretty false && npm run typecheck -w @issue-tracker/web",
     "lint": "eslint .",
     "dev": "tsx packages/cli/src/index.ts"
   },

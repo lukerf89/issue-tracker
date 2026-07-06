@@ -57,10 +57,8 @@ export interface ListIssueFilters {
   includeArchived?: boolean;
 }
 
-export interface SearchIssuesInput {
+export interface SearchIssuesInput extends ListIssueFilters {
   query: string;
-  team?: string;
-  limit?: number;
 }
 
 export interface UpdateIssueInput {
@@ -195,6 +193,47 @@ export function getIssue(context: ServiceContext, issueIdentifier: string) {
 }
 
 export function listIssues(context: ServiceContext, filters: ListIssueFilters = {}) {
+  const conditions = issueFilterConditions(context, filters);
+
+  if (conditions === null) {
+    return [];
+  }
+
+  return context.db
+    .select({ issue: issues })
+    .from(issues)
+    .innerJoin(teams, eq(teams.id, issues.teamId))
+    .where(conditions.length ? and(...conditions) : undefined)
+    .orderBy(asc(teams.key), asc(issues.number), asc(issues.id))
+    .limit(filters.limit ?? -1)
+    .all()
+    .map(({ issue }) => withIssueDetails(context, issue));
+}
+
+export function searchIssues(context: ServiceContext, input: SearchIssuesInput) {
+  const filterConditions = issueFilterConditions(context, input);
+
+  if (filterConditions === null) {
+    return [];
+  }
+
+  const conditions: SQL[] = [...filterConditions, textSearchCondition(input.query)];
+
+  return context.db
+    .select({ issue: issues })
+    .from(issues)
+    .innerJoin(teams, eq(teams.id, issues.teamId))
+    .where(and(...conditions))
+    .orderBy(asc(teams.key), asc(issues.number), asc(issues.id))
+    .limit(input.limit ?? -1)
+    .all()
+    .map(({ issue }) => withIssueDetails(context, issue));
+}
+
+function issueFilterConditions(
+  context: ServiceContext,
+  filters: ListIssueFilters
+): SQL[] | null {
   const conditions: SQL[] = [];
 
   if (!filters.includeArchived) {
@@ -233,7 +272,7 @@ export function listIssues(context: ServiceContext, filters: ListIssueFilters = 
     const issueIds = issueIdsForLabelName(context, filters.label);
 
     if (issueIds.length === 0) {
-      return [];
+      return null;
     }
 
     conditions.push(inArray(issues.id, issueIds));
@@ -243,42 +282,13 @@ export function listIssues(context: ServiceContext, filters: ListIssueFilters = 
     const cycleIds = cycleIdsForIssueFilter(context, filters.cycle, filters.team);
 
     if (cycleIds.length === 0) {
-      return [];
+      return null;
     }
 
     conditions.push(inArray(issues.cycleId, cycleIds));
   }
 
-  return context.db
-    .select({ issue: issues })
-    .from(issues)
-    .innerJoin(teams, eq(teams.id, issues.teamId))
-    .where(conditions.length ? and(...conditions) : undefined)
-    .orderBy(asc(teams.key), asc(issues.number), asc(issues.id))
-    .limit(filters.limit ?? -1)
-    .all()
-    .map(({ issue }) => withIssueDetails(context, issue));
-}
-
-export function searchIssues(context: ServiceContext, input: SearchIssuesInput) {
-  const conditions: SQL[] = [
-    isNull(issues.archivedAt),
-    textSearchCondition(input.query)
-  ];
-
-  if (input.team) {
-    conditions.push(eq(issues.teamId, resolveTeam(context, input.team).id));
-  }
-
-  return context.db
-    .select({ issue: issues })
-    .from(issues)
-    .innerJoin(teams, eq(teams.id, issues.teamId))
-    .where(and(...conditions))
-    .orderBy(asc(teams.key), asc(issues.number), asc(issues.id))
-    .limit(input.limit ?? -1)
-    .all()
-    .map(({ issue }) => withIssueDetails(context, issue));
+  return conditions;
 }
 
 export function updateIssue(context: ServiceContext, issueIdentifier: string, input: UpdateIssueInput) {
