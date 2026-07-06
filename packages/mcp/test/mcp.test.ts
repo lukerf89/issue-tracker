@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -238,6 +239,66 @@ describe("MCP server", () => {
         (listed as unknown as Array<Record<string, unknown>>).map((issue) => issue.identifier)
       ).toEqual(["ENG-1", "ENG-2"]);
       expect(`${JSON.stringify(listed)}\n`).toBe(cliOutput);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("reads issue and backlog resources with byte-identical JSON to matching tools", async () => {
+    const dbPath = initializedDbPath();
+    const setup = openContext(dbPath);
+
+    try {
+      setup.context.actor = whoami(setup.context);
+      createIssue(setup.context, {
+        title: "Expose issue resource",
+        priority: 1
+      });
+      createIssue(setup.context, {
+        title: "Archived backlog item"
+      });
+      archiveIssue(setup.context, "ENG-2");
+      createTeam(setup.context, { key: "OPS", name: "Operations" });
+      createIssue(setup.context, {
+        team: "OPS",
+        title: "Separate operations issue"
+      });
+    } finally {
+      setup.close();
+    }
+
+    const client = await connectClient(dbPath);
+
+    try {
+      const templates = await client.listResourceTemplates();
+      expect(templates.resourceTemplates.map((template) => template.uriTemplate)).toEqual(
+        expect.arrayContaining(["issue://{identifier}", "backlog://{team}"])
+      );
+
+      const issueToolJson = await callJsonTool(client, "get_issue", { identifier: "ENG-1" });
+      const issueResource = await client.readResource({ uri: "issue://ENG-1" });
+      expect(jsonTextFromResource(issueResource, "issue://ENG-1")).toBe(
+        JSON.stringify(issueToolJson)
+      );
+
+      const backlogToolJson = await callJsonTool(client, "list_issues", { team: "ENG" });
+      const backlogResource = await client.readResource({ uri: "backlog://ENG" });
+      const backlogJson = jsonTextFromResource(backlogResource, "backlog://ENG");
+      expect(backlogJson).toBe(JSON.stringify(backlogToolJson));
+      expect(
+        (JSON.parse(backlogJson) as Array<{ identifier: string }>).map((issue) => issue.identifier)
+      ).toEqual(["ENG-1"]);
+
+      await expect(client.readResource({ uri: "issue://ENG-404" })).rejects.toMatchObject({
+        code: ErrorCode.InvalidParams,
+        data: {
+          error: {
+            code: "ISSUE_NOT_FOUND",
+            message: "Issue ENG-404 was not found.",
+            details: { identifier: "ENG-404" }
+          }
+        }
+      });
     } finally {
       await client.close();
     }
@@ -1008,6 +1069,23 @@ function jsonFromToolResult(result: {
   }
 
   return JSON.parse(content.text) as Record<string, unknown>;
+}
+
+function jsonTextFromResource(
+  result: { contents: ReadonlyArray<{ uri: string; mimeType?: string; text?: string }> },
+  uri: string
+): string {
+  const [content] = result.contents;
+
+  if (!content || content.uri !== uri || content.mimeType !== "application/json") {
+    throw new Error(`Resource ${uri} did not return application/json content.`);
+  }
+
+  if (typeof content.text !== "string") {
+    throw new Error(`Resource ${uri} did not return JSON text content.`);
+  }
+
+  return content.text;
 }
 
 function initializedDbPath(): string {
