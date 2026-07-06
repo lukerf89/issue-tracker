@@ -29,7 +29,11 @@ import {
   createIssue,
   createProjectInputSchema,
   createProject,
+  createSavedView,
+  createSavedViewInputSchema,
   createTeam,
+  deleteSavedView,
+  deleteSavedViewInputSchema,
   exportSnapshot,
   getConfig,
   getIssue,
@@ -46,9 +50,12 @@ import {
   listLabels,
   listLabelsInputSchema,
   listIssueFiltersSchema,
-  listIssues,
+  listIssuesWithView,
+  listIssuesWithViewInputSchema,
   listProjectsInputSchema,
   listProjects,
+  listSavedViews,
+  listSavedViewsInputSchema,
   listTeamsInputSchema,
   listTeams,
   moveIssueInputSchema,
@@ -81,7 +88,9 @@ import {
   type CreateCycleInput,
   type CreateLabelInput,
   type CreateProjectInput,
+  type CreateSavedViewInput,
   type ListActivitySinceInput,
+  type ListIssuesWithViewInput,
   type ListIssueFilters,
   type SearchIssuesInput,
   type UpdateIssueInput,
@@ -108,6 +117,8 @@ import {
   printLabels,
   printProject,
   printProjects,
+  printSavedView,
+  printSavedViews,
   printTeam,
   printTeams,
   printValue,
@@ -486,6 +497,7 @@ export function createProgram(): Command {
     );
   issue
     .command("list")
+    .option("--view <name>", "saved view name")
     .option("--state <state>", "workflow state")
     .option("--assignee <actor>", "assignee id or handle")
     .option("--unassigned", "only unassigned issues")
@@ -503,7 +515,7 @@ export function createProgram(): Command {
         const options = optionsWithGlobals(command);
         printIssues(
           cli.context,
-          listIssues(cli.context, issueListFilters(options, cli.defaultTeam)),
+          listIssuesWithView(cli.context, issueListInput(options, cli.defaultTeam)),
           options
         );
       })
@@ -666,6 +678,52 @@ export function createProgram(): Command {
           unarchiveIssue(cli.context, input.identifier),
           optionsWithGlobals(command)
         );
+      })
+    );
+
+  const view = program.command("view").description("manage saved issue views");
+  view
+    .command("save")
+    .argument("<name>")
+    .option("--state <state>", "workflow state")
+    .option("--assignee <actor>", "assignee id or handle")
+    .option("--unassigned", "only unassigned issues")
+    .option("--project <project>", "project id or name")
+    .option("--no-project", "only issues without a project")
+    .option("--cycle <cycle>", "cycle number or id")
+    .option("--label <label>", "label name")
+    .option("--priority <number>", "priority", parseInteger)
+    .option("--team <key>", "team key")
+    .option("--include-archived", "include archived issues")
+    .option("--desc <description>", "view description")
+    .option("--description <description>", "view description")
+    .option("--json", "print JSON output")
+    .action((name, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        printSavedView(
+          createSavedView(cli.context, savedViewCreateInput(name, options, cli.defaultTeam)),
+          options
+        );
+      })
+    );
+  view
+    .command("list")
+    .option("--json", "print JSON output")
+    .action((_options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        listSavedViewsInputSchema.parse({});
+        printSavedViews(listSavedViews(cli.context), optionsWithGlobals(command));
+      })
+    );
+  view
+    .command("delete")
+    .argument("<name>")
+    .option("--json", "print JSON output")
+    .action((name, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const input = deleteSavedViewInputSchema.parse({ idOrName: name });
+        printSavedView(deleteSavedView(cli.context, input.idOrName), optionsWithGlobals(command));
       })
     );
 
@@ -935,6 +993,28 @@ function issueListFilters(options: Record<string, unknown>, defaultTeam?: string
     limit: numberOption(options.limit),
     includeArchived: booleanOption(options.includeArchived)
   }));
+}
+
+function issueListInput(
+  options: Record<string, unknown>,
+  defaultTeam?: string
+): ListIssuesWithViewInput {
+  return listIssuesWithViewInputSchema.parse(omitUndefined({
+    view: stringOption(options.view),
+    filters: issueListFilters(options, defaultTeam)
+  }));
+}
+
+function savedViewCreateInput(
+  name: string,
+  options: Record<string, unknown>,
+  defaultTeam?: string
+): CreateSavedViewInput {
+  return createSavedViewInputSchema.parse({
+    name,
+    filters: issueListFilters(options, defaultTeam),
+    description: stringOption(options.description) ?? stringOption(options.desc) ?? null
+  });
 }
 
 function issueSearchInput(

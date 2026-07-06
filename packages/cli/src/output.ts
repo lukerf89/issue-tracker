@@ -12,6 +12,7 @@ import {
   serializeIssue,
   serializeLabel,
   serializeProject,
+  serializeSavedView,
   serializeTeam,
   type Actor,
   type ActivityFeedEvent,
@@ -23,6 +24,7 @@ import {
   type IssueReference,
   type Label,
   type Project,
+  type SavedViewWithFilters,
   type ServiceContext,
   type Team
 } from "@issue-tracker/core";
@@ -192,6 +194,44 @@ export function printProject(project: Project, options: OutputOptions): void {
   }
 
   process.stdout.write(`${pc.bold(project.name)}  ${project.status}\n`);
+}
+
+export function printSavedViews(
+  views: SavedViewWithFilters[],
+  options: OutputOptions
+): void {
+  if (options.json) {
+    printJson(views.map(serializeSavedView));
+    return;
+  }
+
+  for (const view of views) {
+    process.stdout.write(
+      [
+        pc.bold(view.name),
+        formatSavedViewFilters(view.filters),
+        view.description ?? ""
+      ].filter(Boolean).join("  ") + "\n"
+    );
+  }
+}
+
+export function printSavedView(
+  view: SavedViewWithFilters,
+  options: OutputOptions
+): void {
+  if (options.json) {
+    printJson(serializeSavedView(view));
+    return;
+  }
+
+  process.stdout.write(
+    [
+      pc.bold(view.name),
+      formatSavedViewFilters(view.filters),
+      view.description ?? ""
+    ].filter(Boolean).join("  ") + "\n"
+  );
 }
 
 export function printIssue(context: ServiceContext, issue: Issue, options: OutputOptions): void {
@@ -431,6 +471,10 @@ function formatActivityValue(value: unknown): string {
   if (value === null || value === undefined) return "null";
   if (typeof value === "string") return value;
   return JSON.stringify(value);
+}
+
+function formatSavedViewFilters(filters: SavedViewWithFilters["filters"]): string {
+  return JSON.stringify(filters);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

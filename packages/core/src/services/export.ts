@@ -18,6 +18,7 @@ import {
   labels,
   milestones,
   projects,
+  savedViews,
   teams,
   workflowStates,
   workspace,
@@ -28,6 +29,7 @@ import {
   type Issue,
   type IssueLabel,
   type Milestone,
+  type SavedView,
   type Workspace
 } from "../db/schema.js";
 import {
@@ -35,9 +37,12 @@ import {
   serializeCycle,
   serializeLabel,
   serializeProject,
+  serializeSavedView,
   serializeTeam,
   serializeWorkflowState
 } from "../serialize.js";
+import { listIssueFiltersSchema } from "../schemas/issue.js";
+import type { ListIssueFilters } from "./issue.js";
 
 export interface ExportSnapshot {
   workspace: SerializedWorkspace | null;
@@ -54,6 +59,7 @@ export interface ExportSnapshot {
   actors: ReturnType<typeof serializeActor>[];
   attachments: SerializedAttachment[];
   activity: SerializedActivity[];
+  savedViews: ReturnType<typeof serializeSavedView>[];
 }
 
 export interface ResolveBackupPathInput {
@@ -198,7 +204,13 @@ export function exportSnapshot(context: ServiceContext): ExportSnapshot {
     }).sync().map(serializeAttachment),
     activity: context.db.query.activity.findMany({
       orderBy: [asc(activity.issueId), asc(activity.createdAt), sql`${activity}.rowid`]
-    }).sync().map(serializeActivityRow)
+    }).sync().map(serializeActivityRow),
+    savedViews: context.db.query.savedViews.findMany({
+      orderBy: [asc(savedViews.name), asc(savedViews.id)]
+    }).sync().map((view) => serializeSavedView({
+      ...view,
+      filters: parseSavedViewFilters(view)
+    }))
   };
 }
 
@@ -334,6 +346,11 @@ function formatBackupTimestamp(date: Date): string {
 function parseActivityData(data: unknown): Record<string, unknown> {
   const parsed = typeof data === "string" ? JSON.parse(data) as unknown : data;
   return isRecord(parsed) ? parsed : {};
+}
+
+function parseSavedViewFilters(view: SavedView): ListIssueFilters {
+  const parsed = typeof view.filters === "string" ? JSON.parse(view.filters) as unknown : view.filters;
+  return listIssueFiltersSchema.parse(parsed);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

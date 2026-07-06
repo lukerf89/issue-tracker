@@ -18,6 +18,7 @@ import {
   createIssue,
   createLabel,
   createProject,
+  createSavedView,
   createTeam,
   getActor,
   init,
@@ -308,6 +309,42 @@ describe("MCP server", () => {
         (listed as unknown as Array<Record<string, unknown>>).map((issue) => issue.identifier)
       ).toEqual(["ENG-1", "ENG-2"]);
       expect(`${JSON.stringify(listed)}\n`).toBe(cliOutput);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("returns byte-identical list_saved_views JSON to CLI view list --json", async () => {
+    const dbPath = initializedDbPath();
+    const setup = openContext(dbPath);
+
+    try {
+      createSavedView(setup.context, {
+        name: "Build bugs",
+        filters: { label: "Bug", priority: 1 },
+        description: null
+      });
+    } finally {
+      setup.close();
+    }
+
+    const client = await connectClient(dbPath, { handle: "view-agent" });
+
+    try {
+      const views = (await callJsonTool(client, "list_saved_views", {})) as unknown as Array<{
+        name: string;
+        filters: Record<string, unknown>;
+      }>;
+      const cliOutput = tracker(dbPath, ["view", "list", "--json"]);
+
+      expect(views).toMatchObject([
+        {
+          name: "Build bugs",
+          filters: { label: "Bug", priority: 1 },
+          description: null
+        }
+      ]);
+      expect(`${JSON.stringify(views)}\n`).toBe(cliOutput);
     } finally {
       await client.close();
     }

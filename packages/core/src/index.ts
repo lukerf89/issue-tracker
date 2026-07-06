@@ -25,6 +25,7 @@ export {
   serializeIssue,
   serializeLabel,
   serializeProject,
+  serializeSavedView,
   serializeTeam,
   serializeWorkflowState
 } from "./serialize.js";
@@ -78,6 +79,19 @@ export {
   type ResolveBackupPathInput
 } from "./services/export.js";
 export { init, type InitInput } from "./services/init.js";
+export {
+  createSavedView,
+  deleteSavedView,
+  listIssuesWithView,
+  listSavedViews,
+  resolveIssueListFilters,
+  resolveSavedView,
+  type CreateSavedViewInput,
+  type DeleteSavedViewInput,
+  type ListIssuesWithViewInput,
+  type ResolveSavedViewInput,
+  type SavedViewWithFilters
+} from "./services/savedView.js";
 export {
   archiveLabel,
   attachLabel,
@@ -173,6 +187,13 @@ export {
   updateIssueToolInputSchema
 } from "./schemas/issue.js";
 export {
+  createSavedViewInputSchema,
+  deleteSavedViewInputSchema,
+  listIssuesWithViewInputSchema,
+  listSavedViewsInputSchema,
+  resolveSavedViewInputSchema
+} from "./schemas/savedView.js";
+export {
   archiveLabelInputSchema,
   createLabelInputSchema,
   listLabelsInputSchema,
@@ -217,10 +238,12 @@ export type {
   NewLabel,
   NewMilestone,
   NewProject,
+  NewSavedView,
   NewTeam,
   NewWorkflowState,
   NewWorkspace,
   Project,
+  SavedView,
   Team,
   WorkflowState,
   Workspace

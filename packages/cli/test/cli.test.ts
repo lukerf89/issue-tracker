@@ -146,6 +146,7 @@ describe("tracker CLI", () => {
       actors: Array<{ handle: string }>;
       attachments: unknown[];
       activity: Array<{ action: string; data: Record<string, unknown> }>;
+      savedViews: unknown[];
     };
 
     expect(Object.keys(snapshot)).toEqual([
@@ -162,7 +163,8 @@ describe("tracker CLI", () => {
       "comments",
       "actors",
       "attachments",
-      "activity"
+      "activity",
+      "savedViews"
     ]);
     expect(snapshot.workspace.name).toBe("Local Workspace");
     expect(snapshot.config.map((entry) => entry.key)).toEqual([
@@ -189,6 +191,7 @@ describe("tracker CLI", () => {
       "label_added",
       "commented"
     ]);
+    expect(snapshot.savedViews).toEqual([]);
     expect(snapshot.activity[0]?.data).toMatchObject({ identifier: "ENG-1" });
     expect(exported.stdout).not.toContain("undefined");
 
@@ -340,6 +343,139 @@ describe("tracker CLI", () => {
     const records = JSON.parse(filtered.stdout) as Array<Record<string, unknown>>;
     expect(records.map((record) => record.identifier)).toEqual(["ENG-1"]);
     expect(records.map((record) => record.priority)).toEqual([1]);
+  });
+
+  it("saves, lists, applies, overrides, and deletes named issue filter views", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["label", "create", "Bug", "--color", "#EF4444"])).status).toBe(
+      0
+    );
+    expect((await tracker(dbPath, ["label", "create", "Docs", "--color", "#22C55E"])).status).toBe(
+      0
+    );
+    expect(
+      (
+        await tracker(dbPath, [
+          "issue",
+          "create",
+          "--title",
+          "Fix active bug",
+          "--priority",
+          "1",
+          "--label",
+          "Bug"
+        ])
+      ).status
+    ).toBe(0);
+    expect(
+      (
+        await tracker(dbPath, [
+          "issue",
+          "create",
+          "--title",
+          "Fix later bug",
+          "--priority",
+          "2",
+          "--label",
+          "Bug"
+        ])
+      ).status
+    ).toBe(0);
+    expect(
+      (
+        await tracker(dbPath, [
+          "issue",
+          "create",
+          "--title",
+          "Refresh docs",
+          "--priority",
+          "1",
+          "--label",
+          "Docs"
+        ])
+      ).status
+    ).toBe(0);
+
+    const saved = await tracker(dbPath, [
+      "view",
+      "save",
+      "Priority bugs",
+      "--label",
+      "Bug",
+      "--priority",
+      "1",
+      "--json"
+    ]);
+    expect(saved.status).toBe(0);
+    expect(JSON.parse(saved.stdout)).toMatchObject({
+      name: "Priority bugs",
+      filters: { label: "Bug", priority: 1 },
+      description: null,
+      createdAt: expect.any(String),
+      updatedAt: expect.any(String)
+    });
+
+    const listedViews = await tracker(dbPath, ["view", "list", "--json"]);
+    expect(listedViews.status).toBe(0);
+    expect(
+      (JSON.parse(listedViews.stdout) as Array<{ name: string }>).map((view) => view.name)
+    ).toEqual(["Priority bugs"]);
+
+    const fromView = await tracker(dbPath, [
+      "issue",
+      "list",
+      "--view",
+      "Priority bugs",
+      "--json"
+    ]);
+    expect(fromView.status).toBe(0);
+    expect(
+      (JSON.parse(fromView.stdout) as Array<Record<string, unknown>>).map(
+        (issue) => issue.identifier
+      )
+    ).toEqual(["ENG-1"]);
+
+    const overridden = await tracker(dbPath, [
+      "issue",
+      "list",
+      "--view",
+      "Priority bugs",
+      "--priority",
+      "2",
+      "--json"
+    ]);
+    expect(overridden.status).toBe(0);
+    expect(
+      (JSON.parse(overridden.stdout) as Array<Record<string, unknown>>).map(
+        (issue) => issue.identifier
+      )
+    ).toEqual(["ENG-2"]);
+
+    const duplicate = await tracker(dbPath, [
+      "view",
+      "save",
+      "Priority bugs",
+      "--state",
+      "Todo",
+      "--json"
+    ]);
+    expect(duplicate.status).not.toBe(0);
+    expect(JSON.parse(duplicate.stderr)).toMatchObject({
+      error: { code: "SAVED_VIEW_NAME_TAKEN" }
+    });
+
+    const deleted = await tracker(dbPath, ["view", "delete", "Priority bugs", "--json"]);
+    expect(deleted.status).toBe(0);
+    expect(JSON.parse(deleted.stdout)).toMatchObject({
+      name: "Priority bugs",
+      filters: { label: "Bug", priority: 1 }
+    });
+
+    const viewsAfterDelete = await tracker(dbPath, ["view", "list", "--json"]);
+    expect(viewsAfterDelete.status).toBe(0);
+    expect(JSON.parse(viewsAfterDelete.stdout)).toEqual([]);
   });
 
   it("searches issues as JSON by title and description, hides archived issues, and supports team and limit filters", async () => {

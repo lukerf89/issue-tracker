@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { applyMigrations, openDb } from "../src/index.js";
-import { actors, issues, teams, workflowStates } from "../src/db/schema.js";
+import { actors, issues, savedViews, teams, workflowStates } from "../src/db/schema.js";
 
 const tableNames = [
   "workspace",
@@ -21,7 +21,8 @@ const tableNames = [
   "comments",
   "actors",
   "attachments",
-  "activity"
+  "activity",
+  "saved_views"
 ] as const;
 
 const tempDirs: string[] = [];
@@ -83,17 +84,19 @@ describe("core database foundation", () => {
       expect(uniqueColumnSets(db, "workflow_states")).toContainEqual(["team_id", "name"]);
       expect(uniqueColumnSets(db, "cycles")).toContainEqual(["team_id", "number"]);
       expect(uniqueColumnSets(db, "labels")).toContainEqual(["name", "group_key"]);
+      expect(uniqueColumnSets(db, "saved_views")).toContainEqual(["name"]);
     } finally {
       db.$client.close();
     }
   });
 
-  it("enforces duplicate team keys and duplicate issue numbers at the DB layer", () => {
+  it("enforces duplicate team keys, issue numbers, and saved view names at the DB layer", () => {
     const db = openTempDb();
 
     try {
       applyMigrations(db);
       insertIssueFixture(db);
+      insertSavedViewFixture(db);
 
       expect(() =>
         db.insert(teams).values({
@@ -112,6 +115,17 @@ describe("core database foundation", () => {
           title: "Duplicate number",
           stateId: "state-todo",
           creatorId: "actor-human",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z"
+        }).run()
+      ).toThrow();
+
+      expect(() =>
+        db.insert(savedViews).values({
+          id: "saved-view-duplicate",
+          name: "My active work",
+          filters: { state: "Todo" },
+          description: null,
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z"
         }).run()
@@ -164,6 +178,19 @@ function insertIssueFixture(db: ReturnType<typeof openDb>): void {
       title: "Set up CI",
       stateId: "state-todo",
       creatorId: "actor-human",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    })
+    .run();
+}
+
+function insertSavedViewFixture(db: ReturnType<typeof openDb>): void {
+  db.insert(savedViews)
+    .values({
+      id: "saved-view-active",
+      name: "My active work",
+      filters: { state: "Todo", priority: 1 },
+      description: null,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z"
     })

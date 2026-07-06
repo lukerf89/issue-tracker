@@ -25,7 +25,10 @@ import {
   createIssueInputSchema,
   createLabel,
   createProject,
+  createSavedView,
+  createSavedViewInputSchema,
   createTeam,
+  deleteSavedView,
   detachLabel,
   getIssue,
   getProject,
@@ -41,8 +44,10 @@ import {
   listCycles,
   listLabels,
   listIssueFiltersSchema,
+  listIssuesWithView,
   listIssues,
   listProjects,
+  listSavedViews,
   listTeams,
   moveIssue,
   openDb,
@@ -54,6 +59,7 @@ import {
   serializeActivity,
   serializeActivityEvent,
   serializeCycle,
+  serializeSavedView,
   setConfig,
   unarchiveIssue,
   unarchiveLabel,
@@ -62,6 +68,8 @@ import {
   updateIssue,
   updateIssueInputSchema,
   whoami,
+  resolveIssueListFilters,
+  resolveSavedView,
   type Clock,
   type Db,
   type ServiceContext
@@ -692,6 +700,96 @@ describe("core services", () => {
         action: "archived",
         data: { identifier: "ENG-1" }
       });
+    } finally {
+      close();
+    }
+  });
+
+  it("creates, lists, resolves, applies, and deletes saved view filters", () => {
+    const { context, close } = initializedContext("2026-07-01T00:00:00.000Z");
+
+    try {
+      createLabel(context, { name: "Bug", color: "#EF4444" });
+      createLabel(context, { name: "Docs", color: "#22C55E" });
+      createIssue(context, {
+        title: "Fix active bug",
+        priority: 1,
+        labels: ["Bug"]
+      });
+      createIssue(context, {
+        title: "Fix later bug",
+        priority: 2,
+        labels: ["Bug"]
+      });
+      createIssue(context, {
+        title: "Refresh docs",
+        priority: 1,
+        labels: ["Docs"]
+      });
+
+      const view = createSavedView(context, {
+        name: "Priority bugs",
+        filters: { label: "Bug", priority: 1 },
+        description: "High-priority bug queue"
+      });
+
+      expect(view).toMatchObject({
+        name: "Priority bugs",
+        filters: { label: "Bug", priority: 1 },
+        description: "High-priority bug queue",
+        createdAt: "2026-07-01T00:00:00.000Z",
+        updatedAt: "2026-07-01T00:00:00.000Z"
+      });
+      expect(serializeSavedView(view)).toMatchObject({
+        name: "Priority bugs",
+        filters: { label: "Bug", priority: 1 },
+        description: "High-priority bug queue",
+        createdAt: "2026-07-01T00:00:00.000Z"
+      });
+      expect(listSavedViews(context).map((saved) => saved.name)).toEqual([
+        "Priority bugs"
+      ]);
+      expect(resolveSavedView(context, "Priority bugs")).toEqual({
+        label: "Bug",
+        priority: 1
+      });
+      expect(listIssuesWithView(context, { view: "Priority bugs" }).map((issue) => issue.identifier)).toEqual([
+        "ENG-1"
+      ]);
+      expect(
+        resolveIssueListFilters(context, {
+          view: "Priority bugs",
+          filters: { priority: 2 }
+        })
+      ).toEqual({ label: "Bug", priority: 2 });
+      expect(
+        listIssuesWithView(context, {
+          view: "Priority bugs",
+          filters: { priority: 2 }
+        }).map((issue) => issue.identifier)
+      ).toEqual(["ENG-2"]);
+      expectAppError(
+        () =>
+          createSavedView(context, {
+            name: "Priority bugs",
+            filters: { state: "Todo" }
+          }),
+        AppErrorCode.SAVED_VIEW_NAME_TAKEN
+      );
+      expect(
+        createSavedViewInputSchema.safeParse({
+          name: "Invalid priority",
+          filters: { priority: 99 }
+        }).success
+      ).toBe(false);
+
+      const deleted = deleteSavedView(context, view.id);
+      expect(deleted.id).toBe(view.id);
+      expect(listSavedViews(context)).toEqual([]);
+      expectAppError(
+        () => resolveSavedView(context, "Priority bugs"),
+        AppErrorCode.SAVED_VIEW_NOT_FOUND
+      );
     } finally {
       close();
     }
@@ -1580,6 +1678,10 @@ function recordTransactionOptions(db: Db): unknown[] {
 }
 
 function expectIssueParentCycle(work: () => unknown): void {
+  expectAppError(work, AppErrorCode.ISSUE_PARENT_CYCLE);
+}
+
+function expectAppError(work: () => unknown, code: string): void {
   let error: unknown;
 
   try {
@@ -1588,5 +1690,5 @@ function expectIssueParentCycle(work: () => unknown): void {
     error = caught;
   }
 
-  expect(error).toMatchObject({ code: AppErrorCode.ISSUE_PARENT_CYCLE });
+  expect(error).toMatchObject({ code });
 }
