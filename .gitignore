@@ -1,3 +1,9 @@
+# === Local-only docs (kept out of the public repo) ===
+docs/IMPLEMENTATION_PLAN.md
+
+# === Local orchestration tooling (personal Codex-driver, not public) ===
+tools/codex/
+
 # === Local data — NEVER commit (code is public, data stays local) ===
 *.db
 *.db-shm
