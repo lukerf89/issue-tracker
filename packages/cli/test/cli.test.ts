@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { openDb } from "@issue-tracker/core";
 
-import { createProgram, run } from "../src/index.js";
+import { createProgram, resolveWatchOptions, run } from "../src/index.js";
 
 const tempDirs: string[] = [];
 
@@ -957,6 +957,21 @@ describe("tracker CLI", () => {
     ]);
     expect(emptyWatch.status).toBe(0);
     expect(emptyWatch.stdout).toBe("");
+  });
+
+  it("resolves watch --since independently from --once", () => {
+    expect(resolveWatchOptions({ since: "42" })).toEqual({
+      intervalMs: 1000,
+      once: false
+    });
+    expect(resolveWatchOptions({ once: true })).toEqual({
+      intervalMs: 1000,
+      once: true
+    });
+    expect(resolveWatchOptions({ since: "42", once: true, interval: 25 })).toEqual({
+      intervalMs: 25,
+      once: true
+    });
   });
 
   it("creates, lists, archives, and applies labels through JSON commands", async () => {

@@ -24,6 +24,8 @@ import {
   serializeAttachment,
   serializeComment,
   serializeIssue,
+  unarchiveIssue,
+  unarchiveIssueInputSchema,
   updateIssue,
   updateIssueToolInputSchema
 } from "@issue-tracker/core";
@@ -167,6 +169,21 @@ export function registerIssueTools(
       const parsed = archiveIssueInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
         jsonResult(serializeIssue(archiveIssue(context, parsed.identifier)))
+      );
+    })
+  );
+
+  server.registerTool(
+    "unarchive_issue",
+    {
+      title: "Unarchive issue",
+      description: "Restore an archived issue.",
+      inputSchema: unarchiveIssueInputSchema.shape
+    },
+    (input) => mcpToolResult(() => {
+      const parsed = unarchiveIssueInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
+        jsonResult(serializeIssue(unarchiveIssue(context, parsed.identifier)))
       );
     })
   );

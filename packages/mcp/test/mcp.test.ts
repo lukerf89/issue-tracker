@@ -149,6 +149,75 @@ describe("MCP server", () => {
     }
   });
 
+  it("unarchives issues through unarchive_issue and restores default list visibility", async () => {
+    const dbPath = initializedDbPath();
+    const client = await connectClient(dbPath, { handle: "restore-agent" });
+
+    try {
+      const created = await callJsonTool(client, "create_issue", {
+        title: "Restore archived task"
+      });
+
+      await callJsonTool(client, "archive_issue", {
+        identifier: created.identifier
+      });
+
+      const archivedList = (await callJsonTool(client, "list_issues", {})) as unknown as Array<
+        Record<string, unknown>
+      >;
+      expect(archivedList).toEqual([]);
+
+      const unarchived = await callJsonTool(client, "unarchive_issue", {
+        identifier: created.identifier
+      });
+
+      expect(unarchived).toMatchObject({
+        identifier: created.identifier,
+        title: "Restore archived task",
+        archivedAt: null
+      });
+
+      const visibleAgain = (await callJsonTool(client, "list_issues", {})) as unknown as Array<
+        Record<string, unknown>
+      >;
+      expect(visibleAgain.map((issue) => issue.identifier)).toEqual([created.identifier]);
+
+      const fetched = await callJsonTool(client, "get_issue", {
+        identifier: created.identifier
+      });
+      expect(fetched).toEqual(unarchived);
+
+      const activity = (await callJsonTool(client, "list_activity", {
+        issue: created.identifier
+      })) as unknown as Array<{
+        action: string;
+        actor: { handle: string };
+        data: Record<string, unknown>;
+      }>;
+      expect(activity.map((entry) => entry.action)).toEqual(["created", "archived", "unarchived"]);
+      expect(activity.at(-1)).toMatchObject({
+        action: "unarchived",
+        actor: { handle: "restore-agent" },
+        data: { identifier: created.identifier }
+      });
+
+      await callJsonTool(client, "archive_issue", {
+        identifier: created.identifier
+      });
+      const cliUnarchived = JSON.parse(
+        tracker(dbPath, ["issue", "unarchive", created.identifier, "--json"])
+      ) as Record<string, unknown>;
+      expect(cliUnarchived).toMatchObject({
+        id: unarchived.id,
+        identifier: unarchived.identifier,
+        title: unarchived.title,
+        archivedAt: null
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
   it("returns byte-identical list_activity JSON to CLI issue history --json", async () => {
     const dbPath = initializedDbPath();
     const client = await connectClient(dbPath, { handle: "history-agent" });
@@ -416,6 +485,19 @@ describe("MCP server", () => {
 
       expect(archiveResult.isError).toBe(true);
       expect(jsonFromToolResult(archiveResult)).toEqual({
+        error: {
+          code: "ACTOR_NOT_FOUND",
+          message: "MCP mutations require an agent actor handle."
+        }
+      });
+
+      const unarchiveResult = await client.callTool({
+        name: "unarchive_issue",
+        arguments: { identifier: "ENG-1" }
+      });
+
+      expect(unarchiveResult.isError).toBe(true);
+      expect(jsonFromToolResult(unarchiveResult)).toEqual({
         error: {
           code: "ACTOR_NOT_FOUND",
           message: "MCP mutations require an agent actor handle."

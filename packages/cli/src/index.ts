@@ -685,10 +685,7 @@ export function createProgram(): Command {
         await watchActivity(
           cli.context,
           activitySinceInput(options),
-          {
-            intervalMs: numberOption(options.interval) ?? 1000,
-            once: booleanOption(options.once) === true || stringOption(options.since) !== undefined
-          }
+          resolveWatchOptions(options)
         );
       })
     );
@@ -1028,6 +1025,16 @@ function activitySinceInput(options: Record<string, unknown>): ListActivitySince
     assignee: stringOption(options.assignee),
     limit: numberOption(options.limit)
   }));
+}
+
+export function resolveWatchOptions(options: Record<string, unknown>): {
+  intervalMs: number;
+  once: boolean;
+} {
+  return {
+    intervalMs: numberOption(options.interval) ?? 1000,
+    once: booleanOption(options.once) === true
+  };
 }
 
 async function watchActivity(
