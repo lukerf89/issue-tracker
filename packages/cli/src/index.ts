@@ -36,6 +36,8 @@ import {
   getProject,
   listActivity,
   listActivityInputSchema,
+  listActivitySince,
+  listActivitySinceInputSchema,
   listActors,
   listActorsInputSchema,
   linkIssueInputSchema,
@@ -56,6 +58,7 @@ import {
   searchInputSchema,
   searchIssues,
   setConfig,
+  type ServiceContext,
   unarchiveIssue,
   unarchiveIssueInputSchema,
   unarchiveLabel,
@@ -78,6 +81,7 @@ import {
   type CreateCycleInput,
   type CreateLabelInput,
   type CreateProjectInput,
+  type ListActivitySinceInput,
   type ListIssueFilters,
   type SearchIssuesInput,
   type UpdateIssueInput,
@@ -92,6 +96,7 @@ import {
   printActor,
   printActors,
   printActivity,
+  printActivityEvents,
   printAttachment,
   printComment,
   printCycle,
@@ -665,6 +670,30 @@ export function createProgram(): Command {
     );
 
   program
+    .command("watch")
+    .description("print activity feed events as JSONL")
+    .option("--since <cursor>", "activity cursor to start after")
+    .option("--once", "print currently available events and exit")
+    .option("--interval <ms>", "poll interval in milliseconds", parsePositiveInteger)
+    .option("--team <key>", "team key or id")
+    .option("--assignee <actor>", "assignee id or handle")
+    .option("--limit <number>", "maximum events per poll", parsePositiveInteger)
+    .option("--json", "emit JSONL output")
+    .action((_options, command) =>
+      withContextAsync(command, { requireActor: false }, async (cli) => {
+        const options = optionsWithGlobals(command);
+        await watchActivity(
+          cli.context,
+          activitySinceInput(options),
+          {
+            intervalMs: numberOption(options.interval) ?? 1000,
+            once: booleanOption(options.once) === true || stringOption(options.since) !== undefined
+          }
+        );
+      })
+    );
+
+  program
     .command("backup")
     .description("write a safe SQLite database backup")
     .option("--output <path>", "backup output path")
@@ -736,6 +765,20 @@ function withContext<T>(
 
   try {
     return work(cli);
+  } finally {
+    cli.close();
+  }
+}
+
+async function withContextAsync<T>(
+  command: unknown,
+  options: { requireActor?: boolean },
+  work: (cli: ReturnType<typeof openCliContext>) => Promise<T>
+): Promise<T> {
+  const cli = openCliContext(optionsWithGlobals(command), options);
+
+  try {
+    return await work(cli);
   } finally {
     cli.close();
   }
@@ -978,6 +1021,35 @@ function issueLinkInput(
   }));
 }
 
+function activitySinceInput(options: Record<string, unknown>): ListActivitySinceInput {
+  return listActivitySinceInputSchema.parse(omitUndefined({
+    cursor: stringOption(options.since),
+    team: stringOption(options.team),
+    assignee: stringOption(options.assignee),
+    limit: numberOption(options.limit)
+  }));
+}
+
+async function watchActivity(
+  context: ServiceContext,
+  input: ListActivitySinceInput,
+  options: { intervalMs: number; once: boolean }
+): Promise<void> {
+  let cursor = input.cursor;
+
+  while (true) {
+    const result = listActivitySince(context, { ...input, cursor });
+    printActivityEvents(result.events);
+    cursor = result.cursor;
+
+    if (options.once) {
+      return;
+    }
+
+    await delay(options.intervalMs);
+  }
+}
+
 function writeExportSnapshot(snapshot: unknown, outputPath: string | undefined): void {
   const serialized = `${JSON.stringify(snapshot)}\n`;
 
@@ -995,6 +1067,15 @@ function parseInteger(value: string): number {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || String(parsed) !== value) {
     throw new InvalidArgumentError("expected an integer");
+  }
+
+  return parsed;
+}
+
+function parsePositiveInteger(value: string): number {
+  const parsed = parseInteger(value);
+  if (parsed <= 0) {
+    throw new InvalidArgumentError("expected a positive integer");
   }
 
   return parsed;
@@ -1052,6 +1133,12 @@ function stringArrayOption(value: unknown): string[] | undefined {
 
 function collectValues(value: string, previous: string[]): string[] {
   return [...previous, value];
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolveDelay) => {
+    setTimeout(resolveDelay, ms);
+  });
 }
 
 function omitUndefined<T extends Record<string, unknown>>(object: T): T {

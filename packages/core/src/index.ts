@@ -17,6 +17,7 @@ export {
 } from "./context.js";
 export {
   serializeActivity,
+  serializeActivityEvent,
   serializeActor,
   serializeAttachment,
   serializeComment,
@@ -30,9 +31,14 @@ export {
 export {
   appendActivity,
   listActivity,
+  listActivitySince,
+  type ActivityFeed,
+  type ActivityFeedEvent,
+  type ActivityFeedIssue,
   type ActivityWithActor,
   type AppendActivityInput,
-  type ListActivityInput
+  type ListActivityInput,
+  type ListActivitySinceInput
 } from "./services/activity.js";
 export {
   addAttachment,
@@ -135,6 +141,7 @@ export {
 } from "./services/team.js";
 export {
   listActivityInputSchema,
+  listActivitySinceInputSchema,
 } from "./schemas/activity.js";
 export {
   actorTypeSchema,

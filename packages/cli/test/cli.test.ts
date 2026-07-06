@@ -899,6 +899,66 @@ describe("tracker CLI", () => {
     expect(stripped).toContain("@owner  commented  comment=");
   });
 
+  it("prints watch events since a cursor as JSONL and exits in one-shot mode", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Seed watch cursor"])).status).toBe(
+      0
+    );
+
+    const initialWatch = await tracker(dbPath, ["watch", "--since", "0", "--once", "--json"]);
+    expect(initialWatch.status).toBe(0);
+    const initialEvents = parseJsonLines<{
+      cursor: string;
+      issueIdentifier: string;
+      action: string;
+      data: Record<string, unknown>;
+    }>(initialWatch.stdout);
+
+    expect(initialEvents.map((event) => [event.issueIdentifier, event.action])).toEqual([
+      ["ENG-1", "created"]
+    ]);
+    expect(initialEvents[0]?.data).toMatchObject({ identifier: "ENG-1" });
+
+    const cursor = initialEvents[0]?.cursor;
+    expect(cursor).toEqual(expect.any(String));
+
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Emit new watch event"])).status).toBe(
+      0
+    );
+    expect((await tracker(dbPath, ["issue", "move", "ENG-2", "In Progress"])).status).toBe(0);
+
+    const nextWatch = await tracker(dbPath, [
+      "watch",
+      "--since",
+      String(cursor),
+      "--once",
+      "--json"
+    ]);
+    expect(nextWatch.status).toBe(0);
+    const nextEvents = parseJsonLines<{ cursor: string; issueIdentifier: string; action: string }>(
+      nextWatch.stdout
+    );
+
+    expect(nextEvents.map((event) => [event.issueIdentifier, event.action])).toEqual([
+      ["ENG-2", "created"],
+      ["ENG-2", "state_changed"]
+    ]);
+    expect(Number(nextEvents[0]?.cursor)).toBeGreaterThan(Number(cursor));
+    expect(Number(nextEvents[1]?.cursor)).toBeGreaterThan(Number(nextEvents[0]?.cursor));
+
+    const emptyWatch = await tracker(dbPath, [
+      "watch",
+      "--since",
+      String(nextEvents.at(-1)?.cursor),
+      "--once",
+      "--json"
+    ]);
+    expect(emptyWatch.status).toBe(0);
+    expect(emptyWatch.stdout).toBe("");
+  });
+
   it("creates, lists, archives, and applies labels through JSON commands", async () => {
     const dbPath = tempDbPath();
 
@@ -1166,6 +1226,14 @@ function stripAnsi(value: string): string {
     .split(escape)
     .map((part, index) => (index === 0 ? part : part.replace(/^\[[0-?]*[ -/]*[@-~]/, "")))
     .join("");
+}
+
+function parseJsonLines<T>(value: string): T[] {
+  return value
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as T);
 }
 
 async function tracker(dbPath: string, args: string[]) {

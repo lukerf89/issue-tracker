@@ -33,6 +33,7 @@ import {
   getTeamByKey,
   init,
   listActivity,
+  listActivitySince,
   linkIssueInputSchema,
   listActors,
   listAttachments,
@@ -51,6 +52,7 @@ import {
   serializeIssue,
   serializeAttachment,
   serializeActivity,
+  serializeActivityEvent,
   serializeCycle,
   setConfig,
   unarchiveIssue,
@@ -1333,6 +1335,80 @@ describe("core services", () => {
         "createdAt"
       ]);
       expect(JSON.stringify(serialized)).not.toContain("undefined");
+    } finally {
+      close();
+    }
+  });
+
+  it("lists activity since a cursor across issues with stable cursors and filters", () => {
+    const { context, close } = initializedContext("2026-06-02T00:00:00.000Z");
+
+    try {
+      const agent = createActor(context, {
+        type: "agent",
+        name: "Build Agent",
+        handle: "build-agent"
+      });
+      createTeam(context, { key: "OPS", name: "Operations" });
+
+      const first = createIssue(context, { title: "Prepare feed" });
+      const second = createIssue(context, { title: "Route agent event" });
+      const operations = createIssue(context, {
+        team: "OPS",
+        title: "Watch operations event"
+      });
+
+      assignIssue(context, second.identifier, agent.handle);
+      moveIssue(context, first.identifier, "In Progress");
+
+      const firstPage = listActivitySince(context, { cursor: "0", limit: 2 });
+
+      expect(firstPage.events.map((event) => event.issueIdentifier)).toEqual([
+        first.identifier,
+        second.identifier
+      ]);
+      expect(firstPage.cursor).toBe(firstPage.events[1]?.cursor);
+      expect(Number(firstPage.events[0]?.cursor)).toBeLessThan(
+        Number(firstPage.events[1]?.cursor)
+      );
+
+      const nextPage = listActivitySince(context, { cursor: firstPage.cursor });
+      expect(nextPage.events.map((event) => [event.issueIdentifier, event.action])).toEqual([
+        [operations.identifier, "created"],
+        [second.identifier, "assigned"],
+        [first.identifier, "state_changed"]
+      ]);
+      expect(nextPage.cursor).toBe(nextPage.events.at(-1)?.cursor);
+
+      expect(listActivitySince(context, { cursor: nextPage.cursor }).events).toEqual([]);
+      expect(listActivitySince(context, { cursor: nextPage.cursor }).cursor).toBe(
+        nextPage.cursor
+      );
+      expect(
+        listActivitySince(context, { team: "ops" }).events.map((event) => event.issueIdentifier)
+      ).toEqual([operations.identifier]);
+      expect(
+        listActivitySince(context, { assignee: agent.handle }).events.map((event) => [
+          event.issueIdentifier,
+          event.action
+        ])
+      ).toEqual([
+        [second.identifier, "created"],
+        [second.identifier, "assigned"]
+      ]);
+
+      expect(serializeActivityEvent(nextPage.events[0])).toMatchObject({
+        cursor: nextPage.events[0]?.cursor,
+        issueIdentifier: operations.identifier,
+        issueId: operations.id,
+        actor: { handle: "owner" },
+        action: "created",
+        data: { identifier: operations.identifier },
+        createdAt: "2026-06-02T00:00:00.000Z"
+      });
+      expect(JSON.stringify(nextPage.events.map(serializeActivityEvent))).not.toContain(
+        "undefined"
+      );
     } finally {
       close();
     }

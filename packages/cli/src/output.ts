@@ -5,6 +5,7 @@ import {
   getState,
   serializeActor,
   serializeActivity,
+  serializeActivityEvent,
   serializeAttachment,
   serializeComment,
   serializeCycle,
@@ -13,6 +14,7 @@ import {
   serializeProject,
   serializeTeam,
   type Actor,
+  type ActivityFeedEvent,
   type ActivityWithActor,
   type Attachment,
   type CommentWithAuthor,
@@ -174,6 +176,12 @@ export function printActivity(
         formatActivityData(entry.data)
       ].filter(Boolean).join("  ") + "\n"
     );
+  }
+}
+
+export function printActivityEvents(entries: ActivityFeedEvent[]): void {
+  for (const entry of entries) {
+    printJson(serializeActivityEvent(entry));
   }
 }
 

@@ -1,4 +1,5 @@
 import type { Activity, Actor, Attachment, Comment, Cycle, Issue, Label, Project, Team, WorkflowState } from "./db/schema.js";
+import type { ActivityFeedEvent } from "./services/activity.js";
 
 interface IssueReference {
   id: string;
@@ -171,6 +172,14 @@ export function serializeActivity(entry: Activity & { actor: Actor }) {
     action: entry.action,
     data: entry.data as Record<string, unknown>,
     createdAt: toIso(entry.createdAt)
+  };
+}
+
+export function serializeActivityEvent(entry: ActivityFeedEvent) {
+  return {
+    cursor: entry.cursor,
+    issueIdentifier: entry.issueIdentifier,
+    ...serializeActivity(entry)
   };
 }
 
