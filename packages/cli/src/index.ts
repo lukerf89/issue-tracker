@@ -7,6 +7,7 @@ import {
   ConfigKey,
   addComment,
   addCommentInputSchema,
+  addAttachment,
   archiveIssue,
   archiveIssueInputSchema,
   archiveLabel,
@@ -33,6 +34,7 @@ import {
   listActivityInputSchema,
   listActors,
   listActorsInputSchema,
+  linkIssueInputSchema,
   listCycles,
   listCyclesInputSchema,
   listLabels,
@@ -57,6 +59,7 @@ import {
   whoami,
   init as initWorkspace,
   type AddCommentInput,
+  type AddAttachmentInput,
   type AssignIssueInput,
   type CreateActorInput,
   type CreateIssueInput,
@@ -77,6 +80,7 @@ import {
   printActor,
   printActors,
   printActivity,
+  printAttachment,
   printComment,
   printCycle,
   printCycles,
@@ -549,6 +553,27 @@ export function createProgram(): Command {
       })
     );
   issue
+    .command("link")
+    .argument("<identifier>")
+    .argument("[url]")
+    .option("--kind <kind>", "attachment kind: link, branch, pr, or commit", "link")
+    .option("--url <url>", "attachment URL")
+    .option("--repo <path>", "local repository path")
+    .option("--remote <remote>", "git remote name")
+    .option("--branch <name>", "branch name")
+    .option("--sha <sha>", "commit SHA")
+    .option("--title <title>", "attachment title")
+    .option("--json", "print JSON output")
+    .action((identifier, url, _options, command) =>
+      withContext(command, {}, (cli) => {
+        const options = optionsWithGlobals(command);
+        printAttachment(
+          addAttachment(cli.context, issueLinkInput(identifier, url, options)),
+          options
+        );
+      })
+    );
+  issue
     .command("archive")
     .argument("<identifier>")
     .option("--json", "print JSON output")
@@ -857,6 +882,23 @@ function issueCommentInput(
     issue: identifier,
     body,
     parent: nullableStringOption(options.parent)
+  }));
+}
+
+function issueLinkInput(
+  identifier: string,
+  urlArgument: string | undefined,
+  options: Record<string, unknown>
+): AddAttachmentInput {
+  return linkIssueInputSchema.parse(omitUndefined({
+    issue: identifier,
+    kind: stringOption(options.kind) ?? "link",
+    title: nullableStringOption(options.title),
+    url: stringOption(options.url) ?? urlArgument,
+    repoPath: stringOption(options.repo),
+    remote: nullableStringOption(options.remote),
+    branchName: stringOption(options.branch),
+    commitSha: stringOption(options.sha)
   }));
 }
 

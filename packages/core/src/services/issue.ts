@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 
 import { inTransaction, type ServiceContext } from "../context.js";
-import { actors, issueLabels, issues, labels, projects, teams, workflowStates, type Actor, type Issue } from "../db/schema.js";
+import { actors, issueLabels, issues, labels, projects, teams, workflowStates, type Actor, type Attachment, type Issue } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { identifier, uuid } from "../ids.js";
 import { appendActivityInTransaction } from "./activity.js";
@@ -18,6 +18,7 @@ import {
   withIssueLabels,
   type IssueWithLabels
 } from "./label.js";
+import { listAttachments } from "./attachment.js";
 import { listComments, type CommentWithAuthor } from "./comment.js";
 import { getState, resolveDefaultUnstartedState } from "./state.js";
 import { getTeam, getTeamByKey } from "./team.js";
@@ -102,6 +103,7 @@ export type IssueWithDetails = IssueWithLabels & {
   parent: IssueReference | null;
   children: IssueReference[];
   comments: CommentWithAuthor[];
+  attachments: Attachment[];
 };
 
 export function createIssue(context: ServiceContext, input: CreateIssueInput) {
@@ -504,7 +506,8 @@ function withIssueDetails(context: ServiceContext, issue: Issue): IssueWithDetai
     ...withIssueLabels(context, issue),
     parent: issue.parentId ? issueReference(getIssueById(context, issue.parentId)) : null,
     children: listChildIssueReferences(context, issue.id),
-    comments: listComments(context, { issue: issue.id })
+    comments: listComments(context, { issue: issue.id }),
+    attachments: listAttachments(context, { issue: issue.id })
   };
 }
 

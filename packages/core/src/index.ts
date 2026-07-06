@@ -18,6 +18,7 @@ export {
 export {
   serializeActivity,
   serializeActor,
+  serializeAttachment,
   serializeComment,
   serializeCycle,
   serializeIssue,
@@ -33,6 +34,13 @@ export {
   type AppendActivityInput,
   type ListActivityInput
 } from "./services/activity.js";
+export {
+  addAttachment,
+  listAttachments,
+  type AddAttachmentInput,
+  type AttachmentKind,
+  type ListAttachmentsInput
+} from "./services/attachment.js";
 export {
   createActor,
   getActor,
@@ -130,6 +138,12 @@ export {
   listCyclesInputSchema
 } from "./schemas/cycle.js";
 export { addCommentInputSchema } from "./schemas/comment.js";
+export {
+  attachmentKindSchema,
+  linkIssueInputSchema,
+  linkIssueToolInputSchema,
+  listAttachmentsInputSchema
+} from "./schemas/attachment.js";
 export {
   archiveIssueInputSchema,
   assignIssueInputSchema,

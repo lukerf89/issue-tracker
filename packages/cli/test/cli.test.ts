@@ -586,6 +586,137 @@ describe("tracker CLI", () => {
     );
   });
 
+  it("adds issue attachments through CLI link variants and renders them in issue view", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Trace linked work"])).status).toBe(
+      0
+    );
+
+    const genericLink = await tracker(dbPath, [
+      "issue",
+      "link",
+      "ENG-1",
+      "https://example.invalid/design-note",
+      "--json"
+    ]);
+    expect(genericLink.status).toBe(0);
+    expect(JSON.parse(genericLink.stdout)).toMatchObject({
+      kind: "link",
+      title: "https://example.invalid/design-note",
+      url: "https://example.invalid/design-note",
+      repoPath: null
+    });
+
+    const branch = await tracker(dbPath, [
+      "issue",
+      "link",
+      "ENG-1",
+      "--kind",
+      "branch",
+      "--repo",
+      "/workspace/fictional-app",
+      "--branch",
+      "lf-73-attachments",
+      "--json"
+    ]);
+    expect(branch.status).toBe(0);
+    expect(JSON.parse(branch.stdout)).toMatchObject({
+      kind: "branch",
+      title: "lf-73-attachments",
+      repoPath: "/workspace/fictional-app",
+      branchName: "lf-73-attachments",
+      url: null
+    });
+
+    const pr = await tracker(dbPath, [
+      "issue",
+      "link",
+      "ENG-1",
+      "--kind",
+      "pr",
+      "--repo",
+      "/workspace/fictional-app",
+      "--url",
+      "https://example.invalid/fictional-app/pull/73",
+      "--json"
+    ]);
+    expect(pr.status).toBe(0);
+    expect(JSON.parse(pr.stdout)).toMatchObject({
+      kind: "pr",
+      repoPath: "/workspace/fictional-app",
+      url: "https://example.invalid/fictional-app/pull/73"
+    });
+
+    const commit = await tracker(dbPath, [
+      "issue",
+      "link",
+      "ENG-1",
+      "--kind",
+      "commit",
+      "--repo",
+      "/workspace/fictional-app",
+      "--sha",
+      "abc123def456",
+      "--json"
+    ]);
+    expect(commit.status).toBe(0);
+    expect(JSON.parse(commit.stdout)).toMatchObject({
+      kind: "commit",
+      repoPath: "/workspace/fictional-app",
+      commitSha: "abc123def456"
+    });
+
+    const viewJson = await tracker(dbPath, ["issue", "view", "ENG-1", "--json"]);
+    expect(viewJson.status).toBe(0);
+    const attachments = (JSON.parse(viewJson.stdout) as {
+      attachments: Array<{
+        kind: string;
+        repoPath: string | null;
+        branchName: string | null;
+        commitSha: string | null;
+      }>;
+    }).attachments;
+    expect(attachments.map((attachment) => attachment.kind)).toEqual([
+      "link",
+      "branch",
+      "pr",
+      "commit"
+    ]);
+    expect(attachments.map((attachment) => attachment.repoPath)).toEqual([
+      null,
+      "/workspace/fictional-app",
+      "/workspace/fictional-app",
+      "/workspace/fictional-app"
+    ]);
+
+    const viewText = await tracker(dbPath, ["issue", "view", "ENG-1"]);
+    expect(viewText.status).toBe(0);
+    const stripped = stripAnsi(viewText.stdout);
+    expect(stripped).toContain("Attachments");
+    expect(stripped).toContain("branch  lf-73-attachments  /workspace/fictional-app");
+    expect(stripped).toContain("commit  abc123def456  /workspace/fictional-app");
+
+    const missingBranch = await tracker(dbPath, [
+      "issue",
+      "link",
+      "ENG-1",
+      "--kind",
+      "branch",
+      "--repo",
+      "/workspace/fictional-app",
+      "--json"
+    ]);
+    expect(missingBranch.status).not.toBe(0);
+    expect(JSON.parse(missingBranch.stderr)).toMatchObject({
+      error: {
+        code: "VALIDATION_FAILED",
+        message: "Input validation failed."
+      }
+    });
+  });
+
   it("prints ordered issue history as JSON and text", async () => {
     const dbPath = tempDbPath();
 

@@ -360,6 +360,23 @@ describe("MCP server", () => {
           message: "MCP mutations require an agent actor handle."
         }
       });
+
+      const linkResult = await client.callTool({
+        name: "link_issue",
+        arguments: {
+          issue: "ENG-1",
+          kind: "link",
+          url: "https://example.invalid/no-actor-link"
+        }
+      });
+
+      expect(linkResult.isError).toBe(true);
+      expect(jsonFromToolResult(linkResult)).toEqual({
+        error: {
+          code: "ACTOR_NOT_FOUND",
+          message: "MCP mutations require an agent actor handle."
+        }
+      });
     } finally {
       await client.close();
     }
@@ -673,6 +690,143 @@ describe("MCP server", () => {
           authorHandle: "comment-agent"
         }
       ]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("links issues to URLs, branches, PRs, and commits through link_issue", async () => {
+    const dbPath = initializedDbPath();
+    const client = await connectClient(dbPath, { handle: "link-agent" });
+
+    try {
+      const created = await callJsonTool(client, "create_issue", {
+        title: "Trace MCP linked work"
+      });
+
+      const link = await callJsonTool(client, "link_issue", {
+        issue: created.identifier,
+        kind: "link",
+        url: "https://example.invalid/mcp-design-note"
+      });
+      expect(link).toMatchObject({
+        issueId: created.id,
+        kind: "link",
+        title: "https://example.invalid/mcp-design-note",
+        url: "https://example.invalid/mcp-design-note",
+        repoPath: null
+      });
+
+      const branch = await callJsonTool(client, "link_issue", {
+        issue: created.id,
+        kind: "branch",
+        repoPath: "/workspace/mcp-fictional-app",
+        remote: "origin",
+        branchName: "lf-73-mcp-attachments"
+      });
+      expect(branch).toMatchObject({
+        issueId: created.id,
+        kind: "branch",
+        title: "lf-73-mcp-attachments",
+        repoPath: "/workspace/mcp-fictional-app",
+        remote: "origin",
+        branchName: "lf-73-mcp-attachments",
+        url: null,
+        commitSha: null
+      });
+
+      const pr = await callJsonTool(client, "link_issue", {
+        issue: created.identifier,
+        kind: "pr",
+        repoPath: "/workspace/mcp-fictional-app",
+        url: "https://example.invalid/mcp-fictional-app/pull/73"
+      });
+      expect(pr).toMatchObject({
+        kind: "pr",
+        repoPath: "/workspace/mcp-fictional-app",
+        url: "https://example.invalid/mcp-fictional-app/pull/73"
+      });
+
+      const commit = await callJsonTool(client, "link_issue", {
+        issue: created.identifier,
+        kind: "commit",
+        repoPath: "/workspace/mcp-fictional-app",
+        commitSha: "fed456abc123"
+      });
+      expect(commit).toMatchObject({
+        kind: "commit",
+        repoPath: "/workspace/mcp-fictional-app",
+        commitSha: "fed456abc123"
+      });
+
+      const fetched = await callJsonTool(client, "get_issue", {
+        identifier: created.identifier
+      });
+      expect(
+        (
+          fetched.attachments as Array<{
+            id: string;
+            kind: string;
+            repoPath: string | null;
+          }>
+        ).map((attachment) => ({
+          id: attachment.id,
+          kind: attachment.kind,
+          repoPath: attachment.repoPath
+        }))
+      ).toEqual([
+        { id: link.id, kind: "link", repoPath: null },
+        { id: branch.id, kind: "branch", repoPath: "/workspace/mcp-fictional-app" },
+        { id: pr.id, kind: "pr", repoPath: "/workspace/mcp-fictional-app" },
+        { id: commit.id, kind: "commit", repoPath: "/workspace/mcp-fictional-app" }
+      ]);
+
+      const activity = (await callJsonTool(client, "list_activity", {
+        issue: created.identifier
+      })) as unknown as Array<{
+        action: string;
+        actor: { handle: string };
+        data: Record<string, unknown>;
+      }>;
+      expect(activity.map((entry) => entry.action)).toEqual([
+        "created",
+        "linked",
+        "linked",
+        "linked",
+        "linked"
+      ]);
+      expect(activity.at(-1)).toMatchObject({
+        action: "linked",
+        actor: { handle: "link-agent" },
+        data: {
+          attachmentId: commit.id,
+          kind: "commit",
+          repoPath: "/workspace/mcp-fictional-app",
+          commitSha: "fed456abc123"
+        }
+      });
+
+      const cliOutput = tracker(dbPath, ["issue", "view", created.identifier, "--json"]);
+      expect(`${JSON.stringify(fetched)}\n`).toBe(cliOutput);
+
+      const missingCommitSha = await client.callTool({
+        name: "link_issue",
+        arguments: {
+          issue: created.identifier,
+          kind: "commit",
+          repoPath: "/workspace/mcp-fictional-app"
+        }
+      });
+      expect(missingCommitSha.isError).toBe(true);
+      const envelope = jsonFromToolResult(missingCommitSha);
+      expect(envelope).toMatchObject({
+        error: {
+          code: "VALIDATION_FAILED",
+          message: "Input validation failed.",
+          details: { issues: expect.any(Array) }
+        }
+      });
+      expect(JSON.stringify(envelope)).toContain("commitSha");
     } finally {
       await client.close();
     }

@@ -1,4 +1,5 @@
 import {
+  addAttachment,
   addComment,
   addCommentInputSchema,
   archiveIssue,
@@ -11,6 +12,8 @@ import {
   getIssueInputSchema,
   listActivity,
   listActivityInputSchema,
+  linkIssueInputSchema,
+  linkIssueToolInputSchema,
   listIssueFiltersSchema,
   listIssues,
   moveIssue,
@@ -18,6 +21,7 @@ import {
   searchInputSchema,
   searchIssues,
   serializeActivity,
+  serializeAttachment,
   serializeComment,
   serializeIssue,
   updateIssue,
@@ -178,6 +182,21 @@ export function registerIssueTools(
       const parsed = addCommentInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
         jsonResult(serializeComment(addComment(context, parsed)))
+      );
+    })
+  );
+
+  server.registerTool(
+    "link_issue",
+    {
+      title: "Link issue",
+      description: "Attach a branch, PR, commit, or URL to an issue.",
+      inputSchema: linkIssueToolInputSchema.shape
+    },
+    (input) => mcpToolResult(() => {
+      const parsed = linkIssueInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
+        jsonResult(serializeAttachment(addAttachment(context, parsed)))
       );
     })
   );
