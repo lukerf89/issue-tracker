@@ -26,7 +26,13 @@ export {
   serializeTeam,
   serializeWorkflowState
 } from "./serialize.js";
-export { appendActivity, type AppendActivityInput } from "./services/activity.js";
+export {
+  appendActivity,
+  listActivity,
+  type ActivityWithActor,
+  type AppendActivityInput,
+  type ListActivityInput
+} from "./services/activity.js";
 export {
   createActor,
   getActor,
@@ -103,6 +109,9 @@ export {
   listTeams,
   type CreateTeamInput
 } from "./services/team.js";
+export {
+  listActivityInputSchema,
+} from "./schemas/activity.js";
 export {
   actorTypeSchema,
   createActorInputSchema,

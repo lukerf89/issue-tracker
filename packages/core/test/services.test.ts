@@ -25,6 +25,7 @@ import {
   detachLabel,
   getIssue,
   init,
+  listActivity,
   listActors,
   listComments,
   listCycles,
@@ -36,6 +37,7 @@ import {
   searchInputSchema,
   searchIssues,
   serializeIssue,
+  serializeActivity,
   serializeCycle,
   updateIssue,
   updateIssueInputSchema,
@@ -819,6 +821,123 @@ describe("core services", () => {
 
       moveIssue(context, "ENG-1", "In Progress");
       expect(readActivityActions(db)).toEqual(["created", "updated", "state_changed"]);
+    } finally {
+      close();
+    }
+  });
+
+  it("lists and serializes one ordered activity row for every issue mutation type", () => {
+    const { context, close } = initializedContext("2026-06-01T00:00:00.000Z");
+
+    try {
+      const assignee = createActor(context, {
+        type: "agent",
+        name: "Build Agent",
+        handle: "build-agent"
+      });
+      const label = createLabel(context, { name: "Bug", color: "#EF4444" });
+      const cycle = createCycle(context, { team: "ENG", name: "Cycle 1" });
+      const parent = createIssue(context, { title: "Parent issue" });
+
+      context.clock = fixedClock("2026-06-01T00:01:00.000Z");
+      const issue = createIssue(context, { title: "Track activity trail" });
+
+      context.clock = fixedClock("2026-06-01T00:02:00.000Z");
+      moveIssue(context, issue.identifier, "In Progress");
+
+      context.clock = fixedClock("2026-06-01T00:03:00.000Z");
+      updateIssue(context, issue.identifier, { title: "Track all activity writes" });
+
+      context.clock = fixedClock("2026-06-01T00:04:00.000Z");
+      assignIssue(context, issue.identifier, assignee.handle);
+
+      context.clock = fixedClock("2026-06-01T00:05:00.000Z");
+      const comment = addComment(context, {
+        issue: issue.identifier,
+        body: "Activity write covered."
+      });
+
+      context.clock = fixedClock("2026-06-01T00:06:00.000Z");
+      attachLabel(context, issue.id, label.id);
+
+      context.clock = fixedClock("2026-06-01T00:07:00.000Z");
+      detachLabel(context, issue.id, label.id);
+
+      context.clock = fixedClock("2026-06-01T00:08:00.000Z");
+      updateIssue(context, issue.identifier, { parent: parent.identifier });
+
+      context.clock = fixedClock("2026-06-01T00:09:00.000Z");
+      updateIssue(context, issue.identifier, { parent: null });
+
+      context.clock = fixedClock("2026-06-01T00:10:00.000Z");
+      updateIssue(context, issue.identifier, { cycle: cycle.number });
+
+      context.clock = fixedClock("2026-06-01T00:11:00.000Z");
+      archiveIssue(context, issue.identifier);
+
+      const entries = listActivity(context, { issue: issue.identifier });
+      const serialized = entries.map(serializeActivity);
+
+      expect(entries).toHaveLength(11);
+      expect(listActivity(context, { issue: issue.id }).map((entry) => entry.id)).toEqual(
+        entries.map((entry) => entry.id)
+      );
+      expect(serialized.map((entry) => entry.action)).toEqual([
+        "created",
+        "state_changed",
+        "updated",
+        "assigned",
+        "commented",
+        "label_added",
+        "label_removed",
+        "updated",
+        "updated",
+        "updated",
+        "archived"
+      ]);
+      expect(serialized.map((entry) => entry.createdAt)).toEqual([
+        "2026-06-01T00:01:00.000Z",
+        "2026-06-01T00:02:00.000Z",
+        "2026-06-01T00:03:00.000Z",
+        "2026-06-01T00:04:00.000Z",
+        "2026-06-01T00:05:00.000Z",
+        "2026-06-01T00:06:00.000Z",
+        "2026-06-01T00:07:00.000Z",
+        "2026-06-01T00:08:00.000Z",
+        "2026-06-01T00:09:00.000Z",
+        "2026-06-01T00:10:00.000Z",
+        "2026-06-01T00:11:00.000Z"
+      ]);
+      expect(serialized).toMatchObject([
+        { issueId: issue.id, actor: { handle: "owner" }, data: { identifier: issue.identifier } },
+        { data: { fromName: "Todo", toName: "In Progress" } },
+        { data: { changed: { title: "Track all activity writes" } } },
+        {
+          data: {
+            from: null,
+            to: assignee.id,
+            fromHandle: null,
+            toHandle: "build-agent"
+          }
+        },
+        { data: { commentId: comment.id, parentId: null } },
+        { data: { labelId: label.id, labelName: "Bug" } },
+        { data: { labelId: label.id, labelName: "Bug" } },
+        { data: { changed: { parentId: parent.id } } },
+        { data: { changed: { parentId: null } } },
+        { data: { changed: { cycleId: cycle.id } } },
+        { data: { identifier: issue.identifier } }
+      ]);
+      expect(Object.keys(serialized[0] ?? {})).toEqual([
+        "id",
+        "issueId",
+        "actorId",
+        "actor",
+        "action",
+        "data",
+        "createdAt"
+      ]);
+      expect(JSON.stringify(serialized)).not.toContain("undefined");
     } finally {
       close();
     }

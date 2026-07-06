@@ -7,12 +7,15 @@ import {
   createIssueInputSchema,
   getIssue,
   getIssueInputSchema,
+  listActivity,
+  listActivityInputSchema,
   listIssueFiltersSchema,
   listIssues,
   moveIssue,
   moveIssueInputSchema,
   searchInputSchema,
   searchIssues,
+  serializeActivity,
   serializeComment,
   serializeIssue,
   updateIssue,
@@ -68,6 +71,21 @@ export function registerIssueTools(
       const parsed = getIssueInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
         jsonResult(serializeIssue(getIssue(context, parsed.identifier)))
+      );
+    })
+  );
+
+  server.registerTool(
+    "list_activity",
+    {
+      title: "List issue activity",
+      description: "Read the ordered activity trail for an issue.",
+      inputSchema: listActivityInputSchema.shape
+    },
+    (input) => mcpToolResult(() => {
+      const parsed = listActivityInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
+        jsonResult(listActivity(context, parsed).map(serializeActivity))
       );
     })
   );

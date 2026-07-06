@@ -4,6 +4,7 @@ import {
   getActor,
   getState,
   serializeActor,
+  serializeActivity,
   serializeComment,
   serializeCycle,
   serializeIssue,
@@ -11,6 +12,7 @@ import {
   serializeProject,
   serializeTeam,
   type Actor,
+  type ActivityWithActor,
   type CommentWithAuthor,
   type Cycle,
   type Issue,
@@ -139,6 +141,29 @@ export function printComment(comment: CommentWithAuthor, options: OutputOptions)
   }
 
   process.stdout.write(`${formatCommentLines(comment, 0).join("\n")}\n`);
+}
+
+export function printActivity(
+  entries: ActivityWithActor[],
+  options: OutputOptions
+): void {
+  const serialized = entries.map(serializeActivity);
+
+  if (options.json) {
+    printJson(serialized);
+    return;
+  }
+
+  for (const entry of serialized) {
+    process.stdout.write(
+      [
+        entry.createdAt,
+        pc.bold(`@${entry.actor.handle}`),
+        entry.action,
+        formatActivityData(entry.data)
+      ].filter(Boolean).join("  ") + "\n"
+    );
+  }
 }
 
 export function printProject(project: Project, options: OutputOptions): void {
@@ -321,6 +346,51 @@ function formatCommentLines(comment: CommentWithAuthor, depth: number): string[]
     `${indent}${pc.bold(`@${comment.author.handle}`)}  ${firstLine}`,
     ...rest.map((line) => `${indent}  ${line}`)
   ];
+}
+
+function formatActivityData(data: Record<string, unknown>): string {
+  if (isRecord(data.changed)) {
+    return Object.entries(data.changed)
+      .map(([key, value]) => `${key}=${formatActivityValue(value)}`)
+      .join(", ");
+  }
+
+  if (typeof data.fromName === "string" || typeof data.toName === "string") {
+    return `${formatActivityValue(data.fromName ?? null)} -> ${formatActivityValue(data.toName ?? null)}`;
+  }
+
+  if (hasOwn(data, "fromHandle") || hasOwn(data, "toHandle")) {
+    return `${formatActivityValue(data.fromHandle ?? null)} -> ${formatActivityValue(data.toHandle ?? null)}`;
+  }
+
+  if (typeof data.labelName === "string") {
+    return data.labelName;
+  }
+
+  if (typeof data.identifier === "string") {
+    return data.identifier;
+  }
+
+  if (typeof data.commentId === "string") {
+    return [
+      `comment=${data.commentId}`,
+      hasOwn(data, "parentId") ? `parent=${formatActivityValue(data.parentId)}` : ""
+    ].filter(Boolean).join(", ");
+  }
+
+  return Object.entries(data)
+    .map(([key, value]) => `${key}=${formatActivityValue(value)}`)
+    .join(", ");
+}
+
+function formatActivityValue(value: unknown): string {
+  if (value === null || value === undefined) return "null";
+  if (typeof value === "string") return value;
+  return JSON.stringify(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function hasOwn<T extends object>(object: T, key: PropertyKey): boolean {

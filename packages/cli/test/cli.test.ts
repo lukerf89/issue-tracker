@@ -447,6 +447,50 @@ describe("tracker CLI", () => {
     );
   });
 
+  it("prints ordered issue history as JSON and text", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Track history"])).status).toBe(
+      0
+    );
+    expect((await tracker(dbPath, ["issue", "move", "ENG-1", "In Progress"])).status).toBe(0);
+    expect(
+      (await tracker(dbPath, ["issue", "comment", "ENG-1", "History covered."])).status
+    ).toBe(0);
+
+    const historyJson = await tracker(dbPath, ["issue", "history", "ENG-1", "--json"]);
+    expect(historyJson.status).toBe(0);
+
+    const history = JSON.parse(historyJson.stdout) as Array<{
+      action: string;
+      actor: { handle: string };
+      createdAt: string;
+      data: Record<string, unknown>;
+    }>;
+    expect(history.map((entry) => entry.action)).toEqual([
+      "created",
+      "state_changed",
+      "commented"
+    ]);
+    expect(history).toMatchObject([
+      {
+        actor: { handle: "owner" },
+        createdAt: expect.any(String),
+        data: { identifier: "ENG-1" }
+      },
+      { actor: { handle: "owner" }, data: { fromName: "Todo", toName: "In Progress" } },
+      { actor: { handle: "owner" }, data: { parentId: null } }
+    ]);
+
+    const historyText = await tracker(dbPath, ["issue", "history", "ENG-1"]);
+    expect(historyText.status).toBe(0);
+    const stripped = stripAnsi(historyText.stdout);
+    expect(stripped).toContain("@owner  created  ENG-1");
+    expect(stripped).toContain("@owner  state_changed  Todo -> In Progress");
+    expect(stripped).toContain("@owner  commented  comment=");
+  });
+
   it("creates, lists, archives, and applies labels through JSON commands", async () => {
     const dbPath = tempDbPath();
 

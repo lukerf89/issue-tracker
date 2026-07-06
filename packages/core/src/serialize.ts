@@ -143,13 +143,14 @@ function serializeIssueReference(issue: IssueReference) {
   };
 }
 
-export function serializeActivity(entry: Activity) {
+export function serializeActivity(entry: Activity & { actor: Actor }) {
   return {
     id: entry.id,
     issueId: entry.issueId,
     actorId: entry.actorId,
+    actor: serializeActor(entry.actor),
     action: entry.action,
-    data: entry.data,
+    data: entry.data as Record<string, unknown>,
     createdAt: toIso(entry.createdAt)
   };
 }

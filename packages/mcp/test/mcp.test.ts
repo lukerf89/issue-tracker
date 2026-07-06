@@ -87,6 +87,54 @@ describe("MCP server", () => {
     }
   });
 
+  it("returns byte-identical list_activity JSON to CLI issue history --json", async () => {
+    const dbPath = initializedDbPath();
+    const client = await connectClient(dbPath, { handle: "history-agent" });
+
+    try {
+      const created = await callJsonTool(client, "create_issue", {
+        title: "Track MCP history"
+      });
+      await callJsonTool(client, "update_issue", {
+        identifier: created.identifier,
+        priority: 2
+      });
+      await callJsonTool(client, "move_issue", {
+        identifier: created.identifier,
+        state: "In Progress"
+      });
+      await callJsonTool(client, "comment_on_issue", {
+        issue: created.identifier,
+        body: "History is available."
+      });
+
+      const activity = (await callJsonTool(client, "list_activity", {
+        issue: created.identifier
+      })) as unknown as Array<{
+        action: string;
+        actor: { handle: string };
+        data: Record<string, unknown>;
+      }>;
+      const cliOutput = tracker(dbPath, ["issue", "history", created.identifier, "--json"]);
+
+      expect(activity.map((entry) => entry.action)).toEqual([
+        "created",
+        "updated",
+        "state_changed",
+        "commented"
+      ]);
+      expect(activity).toMatchObject([
+        { actor: { handle: "history-agent" }, data: { identifier: created.identifier } },
+        { actor: { handle: "history-agent" }, data: { changed: { priority: 2 } } },
+        { actor: { handle: "history-agent" }, data: { fromName: "Todo", toName: "In Progress" } },
+        { actor: { handle: "history-agent" }, data: { parentId: null } }
+      ]);
+      expect(`${JSON.stringify(activity)}\n`).toBe(cliOutput);
+    } finally {
+      await client.close();
+    }
+  });
+
   it("returns byte-identical list_issues JSON to CLI issue list --json for combined filters", async () => {
     const dbPath = initializedDbPath();
     createListFilterFixtures(dbPath);

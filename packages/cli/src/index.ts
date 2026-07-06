@@ -25,6 +25,8 @@ import {
   getConfig,
   getIssue,
   getProject,
+  listActivity,
+  listActivityInputSchema,
   listActors,
   listActorsInputSchema,
   listCycles,
@@ -69,6 +71,7 @@ import {
   handleCliError,
   printActor,
   printActors,
+  printActivity,
   printComment,
   printCycle,
   printCycles,
@@ -451,6 +454,16 @@ export function createProgram(): Command {
     .action((identifier, _options, command) =>
       withContext(command, { requireActor: false }, (cli) => {
         printIssue(cli.context, getIssue(cli.context, identifier), optionsWithGlobals(command));
+      })
+    );
+  issue
+    .command("history")
+    .argument("<identifier>")
+    .option("--json", "print JSON output")
+    .action((identifier, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const input = listActivityInputSchema.parse({ issue: identifier });
+        printActivity(listActivity(cli.context, input), optionsWithGlobals(command));
       })
     );
   issue
