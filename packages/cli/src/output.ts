@@ -4,11 +4,13 @@ import {
   getActor,
   getState,
   serializeActor,
+  serializeCycle,
   serializeIssue,
   serializeLabel,
   serializeProject,
   serializeTeam,
   type Actor,
+  type Cycle,
   type Issue,
   type Label,
   type Project,
@@ -74,6 +76,26 @@ export function printProjects(projects: Project[], options: OutputOptions): void
   for (const project of projects) {
     process.stdout.write(`${pc.bold(project.name)}  ${project.status}\n`);
   }
+}
+
+export function printCycles(cycles: Cycle[], options: OutputOptions): void {
+  if (options.json) {
+    printJson(cycles.map(serializeCycle));
+    return;
+  }
+
+  for (const cycle of cycles) {
+    process.stdout.write(`${pc.bold(`#${cycle.number}`)}  ${cycle.name ?? ""}\n`);
+  }
+}
+
+export function printCycle(cycle: Cycle, options: OutputOptions): void {
+  if (options.json) {
+    printJson(serializeCycle(cycle));
+    return;
+  }
+
+  process.stdout.write(`${pc.bold(`#${cycle.number}`)}  ${cycle.name ?? ""}\n`);
 }
 
 export function printLabels(labels: Label[], options: OutputOptions): void {

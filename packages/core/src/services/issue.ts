@@ -7,6 +7,11 @@ import { identifier, uuid } from "../ids.js";
 import { appendActivity } from "./activity.js";
 import { ConfigKey, getConfig } from "./config.js";
 import {
+  cycleIdsForIssueFilter,
+  resolveOptionalCycleId,
+  type CycleRef
+} from "./cycle.js";
+import {
   attachLabelInTransaction,
   detachLabelInTransaction,
   resolveIssueLabels,
@@ -27,6 +32,7 @@ export interface CreateIssueInput {
   assigneeId?: string | null;
   project?: string | null;
   projectId?: string | null;
+  cycle?: CycleRef | null;
   cycleId?: string | null;
   parentId?: string | null;
   estimate?: number | null;
@@ -42,6 +48,7 @@ export interface ListIssueFilters {
   team?: string;
   priority?: number;
   label?: string;
+  cycle?: CycleRef;
   limit?: number;
   includeArchived?: boolean;
 }
@@ -54,6 +61,7 @@ export interface UpdateIssueInput {
   assigneeId?: string | null;
   project?: string | null;
   projectId?: string | null;
+  cycle?: CycleRef | null;
   cycleId?: string | null;
   parentId?: string | null;
   estimate?: number | null;
@@ -73,6 +81,11 @@ export function createIssue(context: ServiceContext, input: CreateIssueInput) {
       : resolveDefaultUnstartedState(txContext, team.id);
     const assigneeId = resolveOptionalActorId(txContext, input.assigneeId ?? input.assignee);
     const projectId = resolveOptionalProjectId(txContext, input.projectId ?? input.project);
+    const cycleId = resolveOptionalCycleId(
+      txContext,
+      input.cycleId ?? input.cycle,
+      team.id
+    );
     const labelRows = resolveIssueLabels(txContext, input.labels);
 
     txContext.db
@@ -96,7 +109,7 @@ export function createIssue(context: ServiceContext, input: CreateIssueInput) {
       assigneeId,
       creatorId: requireActor(txContext).id,
       projectId,
-      cycleId: input.cycleId ?? null,
+      cycleId,
       parentId: input.parentId ?? null,
       estimate: input.estimate ?? null,
       dueDate: input.dueDate ?? null,
@@ -186,6 +199,16 @@ export function listIssues(context: ServiceContext, filters: ListIssueFilters = 
     conditions.push(inArray(issues.id, issueIds));
   }
 
+  if (filters.cycle !== undefined) {
+    const cycleIds = cycleIdsForIssueFilter(context, filters.cycle, filters.team);
+
+    if (cycleIds.length === 0) {
+      return [];
+    }
+
+    conditions.push(inArray(issues.cycleId, cycleIds));
+  }
+
   return context.db.query.issues.findMany({
     where: conditions.length ? and(...conditions) : undefined,
     orderBy: [asc(issues.teamId), asc(issues.number)],
@@ -226,7 +249,18 @@ export function updateIssue(context: ServiceContext, issueIdentifier: string, in
         resolveOptionalProjectId(txContext, input.projectId ?? input.project)
       );
     }
-    if (has(input, "cycleId")) addChange(changes, changedFields, "cycleId", input.cycleId ?? null);
+    if (has(input, "cycle") || has(input, "cycleId")) {
+      addChange(
+        changes,
+        changedFields,
+        "cycleId",
+        resolveOptionalCycleId(
+          txContext,
+          has(input, "cycleId") ? input.cycleId : input.cycle,
+          issue.teamId
+        )
+      );
+    }
     if (has(input, "parentId")) addChange(changes, changedFields, "parentId", input.parentId ?? null);
     if (has(input, "estimate")) addChange(changes, changedFields, "estimate", input.estimate ?? null);
     if (has(input, "dueDate")) addChange(changes, changedFields, "dueDate", input.dueDate ?? null);

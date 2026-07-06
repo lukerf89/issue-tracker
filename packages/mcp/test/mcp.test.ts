@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   applyMigrations,
   archiveLabel,
+  createCycle,
   createLabel,
   getActor,
   init,
@@ -210,7 +211,71 @@ describe("MCP server", () => {
       await client.close();
     }
   });
+
+  it("lists cycles and honors cycle fields on issue tools", async () => {
+    const dbPath = initializedDbPath();
+    const { firstCycleId, secondCycleId } = createCycleFixtures(dbPath);
+
+    const client = await connectClient(dbPath, { handle: "cycle-agent" });
+
+    try {
+      const cycles = (await callJsonTool(client, "list_cycles", {})) as unknown as Array<{
+        number: number;
+        name: string | null;
+      }>;
+      expect(cycles.map((cycle) => [cycle.number, cycle.name])).toEqual([
+        [1, "Cycle 1"],
+        [2, "Cycle 2"]
+      ]);
+
+      const created = await callJsonTool(client, "create_issue", {
+        title: "Fix cycle assignment",
+        cycle: 1
+      });
+      expect(created).toMatchObject({
+        identifier: "ENG-1",
+        cycleId: firstCycleId
+      });
+
+      const updated = await callJsonTool(client, "update_issue", {
+        identifier: created.identifier,
+        cycle: secondCycleId
+      });
+      expect(updated).toMatchObject({
+        identifier: "ENG-1",
+        cycleId: secondCycleId
+      });
+
+      const filtered = (await callJsonTool(client, "list_issues", {
+        cycle: 2
+      })) as unknown as Array<Record<string, unknown>>;
+      expect(filtered.map((issue) => issue.identifier)).toEqual(["ENG-1"]);
+    } finally {
+      await client.close();
+    }
+  });
 });
+
+function createCycleFixtures(dbPath: string) {
+  const setup = openContext(dbPath);
+
+  try {
+    const first = createCycle(setup.context, {
+      team: "ENG",
+      name: "Cycle 1",
+      startsAt: "2026-04-01T00:00:00.000Z",
+      endsAt: "2026-04-15T00:00:00.000Z"
+    });
+    const second = createCycle(setup.context, { team: "ENG", name: "Cycle 2" });
+
+    return {
+      firstCycleId: first.id,
+      secondCycleId: second.id
+    };
+  } finally {
+    setup.close();
+  }
+}
 
 async function connectClient(
   dbPath: string,

@@ -1,4 +1,4 @@
-import type { Activity, Actor, Issue, Label, Project, Team, WorkflowState } from "./db/schema.js";
+import type { Activity, Actor, Cycle, Issue, Label, Project, Team, WorkflowState } from "./db/schema.js";
 
 export function serializeTeam(team: Team) {
   return {
@@ -41,6 +41,17 @@ export function serializeProject(project: Project) {
     startDate: project.startDate ?? null,
     targetDate: project.targetDate ?? null,
     archivedAt: toIsoOrNull(project.archivedAt)
+  };
+}
+
+export function serializeCycle(cycle: Cycle) {
+  return {
+    id: cycle.id,
+    teamId: cycle.teamId,
+    number: cycle.number,
+    name: cycle.name ?? null,
+    startsAt: toIso(cycle.startsAt),
+    endsAt: toIso(cycle.endsAt)
   };
 }
 

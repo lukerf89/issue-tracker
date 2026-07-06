@@ -9,6 +9,7 @@ import {
   applyMigrations,
   archiveLabel,
   attachLabel,
+  createCycle,
   createIssue,
   createIssueInputSchema,
   createLabel,
@@ -17,12 +18,14 @@ import {
   detachLabel,
   getIssue,
   init,
+  listCycles,
   listLabels,
   listIssueFiltersSchema,
   listIssues,
   moveIssue,
   openDb,
   serializeIssue,
+  serializeCycle,
   updateIssue,
   updateIssueInputSchema,
   whoami,
@@ -137,6 +140,74 @@ describe("core services", () => {
       expect(listIssues(context, { label: "Docs" }).map((issue) => issue.identifier)).toEqual([
         "ENG-1"
       ]);
+    } finally {
+      close();
+    }
+  });
+
+  it("creates, lists, serializes, and enforces per-team cycle numbers", () => {
+    const { context, close } = initializedContext("2026-04-01T00:00:00.000Z");
+
+    try {
+      createTeam(context, { key: "OPS", name: "Operations" });
+
+      const first = createCycle(context, {
+        team: "ENG",
+        name: "Cycle 1",
+        startsAt: "2026-04-01T00:00:00.000Z",
+        endsAt: "2026-04-15T00:00:00.000Z"
+      });
+      const second = createCycle(context, { team: "ENG", name: "Cycle 2" });
+      const opsFirst = createCycle(context, { team: "OPS", number: 1 });
+
+      expect(first.number).toBe(1);
+      expect(second.number).toBe(2);
+      expect(opsFirst.number).toBe(1);
+      expect(listCycles(context, { team: "ENG" }).map((cycle) => cycle.number)).toEqual([1, 2]);
+      expect(serializeCycle(first)).toMatchObject({
+        number: 1,
+        name: "Cycle 1",
+        startsAt: "2026-04-01T00:00:00.000Z",
+        endsAt: "2026-04-15T00:00:00.000Z"
+      });
+      expect(serializeCycle(second)).toMatchObject({
+        name: "Cycle 2",
+        startsAt: "2026-04-01T00:00:00.000Z",
+        endsAt: "2026-04-01T00:00:00.000Z"
+      });
+      expect(() => createCycle(context, { team: "ENG", number: 1 })).toThrow(
+        "already exists"
+      );
+    } finally {
+      close();
+    }
+  });
+
+  it("assigns issues to cycles on create and update, then filters by cycle", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      const first = createCycle(context, { team: "ENG", name: "Cycle 1" });
+      const second = createCycle(context, { team: "ENG", name: "Cycle 2" });
+
+      const created = createIssue(context, {
+        title: "Fix cycle assignment",
+        cycle: 1
+      });
+      createIssue(context, { title: "Schedule next work" });
+
+      expect(created.cycleId).toBe(first.id);
+      expect(listIssues(context, { cycle: 1 }).map((issue) => issue.identifier)).toEqual([
+        "ENG-1"
+      ]);
+
+      const updated = updateIssue(context, "ENG-2", { cycle: second.id });
+      expect(updated.cycleId).toBe(second.id);
+      expect(listIssues(context, { cycle: second.id }).map((issue) => issue.identifier)).toEqual([
+        "ENG-2"
+      ]);
+      expect(serializeIssue(updated).cycleId).toBe(second.id);
+      expect(() => updateIssue(context, "ENG-2", { cycle: 999 })).toThrow("was not found");
     } finally {
       close();
     }

@@ -207,6 +207,117 @@ describe("tracker CLI", () => {
     ).toEqual(["Bug", "Docs"]);
   });
 
+  it("creates cycles, assigns issues to them, filters by cycle, and rejects duplicates", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+
+    const firstCycle = await tracker(dbPath, [
+      "cycle",
+      "create",
+      "Cycle 1",
+      "--starts-at",
+      "2026-04-01T00:00:00.000Z",
+      "--ends-at",
+      "2026-04-15T00:00:00.000Z",
+      "--json"
+    ]);
+    expect(firstCycle.status).toBe(0);
+    const first = JSON.parse(firstCycle.stdout) as Record<string, unknown>;
+    expect(first).toMatchObject({
+      number: 1,
+      name: "Cycle 1",
+      startsAt: "2026-04-01T00:00:00.000Z",
+      endsAt: "2026-04-15T00:00:00.000Z"
+    });
+
+    const secondCycle = await tracker(dbPath, [
+      "cycle",
+      "create",
+      "--number",
+      "2",
+      "--name",
+      "Cycle 2",
+      "--json"
+    ]);
+    expect(secondCycle.status).toBe(0);
+    const second = JSON.parse(secondCycle.stdout) as Record<string, unknown>;
+    expect(second).toMatchObject({ number: 2, name: "Cycle 2" });
+
+    const duplicate = await tracker(dbPath, [
+      "cycle",
+      "create",
+      "Duplicate Cycle",
+      "--number",
+      "1",
+      "--json"
+    ]);
+    expect(duplicate.status).not.toBe(0);
+    expect(JSON.parse(duplicate.stderr)).toMatchObject({
+      error: { code: "CONSTRAINT_VIOLATION" }
+    });
+
+    const created = await tracker(dbPath, [
+      "issue",
+      "create",
+      "--title",
+      "Fix cycle assignment",
+      "--cycle",
+      "1",
+      "--json"
+    ]);
+    expect(created.status).toBe(0);
+    expect(JSON.parse(created.stdout)).toMatchObject({
+      identifier: "ENG-1",
+      cycleId: first.id
+    });
+
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Plan next cycle"])).status).toBe(0);
+
+    const updated = await tracker(dbPath, [
+      "issue",
+      "update",
+      "ENG-2",
+      "--cycle",
+      String(second.id),
+      "--json"
+    ]);
+    expect(updated.status).toBe(0);
+    expect(JSON.parse(updated.stdout)).toMatchObject({
+      identifier: "ENG-2",
+      cycleId: second.id
+    });
+
+    const filteredByNumber = await tracker(dbPath, ["issue", "list", "--cycle", "1", "--json"]);
+    expect(filteredByNumber.status).toBe(0);
+    expect(
+      (JSON.parse(filteredByNumber.stdout) as Array<Record<string, unknown>>).map(
+        (issue) => issue.identifier
+      )
+    ).toEqual(["ENG-1"]);
+
+    const filteredById = await tracker(dbPath, [
+      "issue",
+      "list",
+      "--cycle",
+      String(second.id),
+      "--json"
+    ]);
+    expect(filteredById.status).toBe(0);
+    expect(
+      (JSON.parse(filteredById.stdout) as Array<Record<string, unknown>>).map(
+        (issue) => issue.identifier
+      )
+    ).toEqual(["ENG-2"]);
+
+    const cycles = await tracker(dbPath, ["cycle", "list", "--json"]);
+    expect(cycles.status).toBe(0);
+    expect((JSON.parse(cycles.stdout) as Array<{ number: number }>).map((cycle) => cycle.number)).toEqual([
+      1,
+      2
+    ]);
+  });
+
   it("rejects out-of-range priority values", async () => {
     const dbPath = tempDbPath();
 

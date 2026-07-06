@@ -5,6 +5,8 @@ import {
   ConfigKey,
   archiveLabel,
   archiveLabelInputSchema,
+  createCycle,
+  createCycleInputSchema,
   createLabel,
   createLabelInputSchema,
   createIssueInputSchema,
@@ -15,6 +17,8 @@ import {
   getConfig,
   getIssue,
   getProject,
+  listCycles,
+  listCyclesInputSchema,
   listLabels,
   listLabelsInputSchema,
   listIssueFiltersSchema,
@@ -34,6 +38,7 @@ import {
   whoami,
   init as initWorkspace,
   type CreateIssueInput,
+  type CreateCycleInput,
   type CreateLabelInput,
   type CreateProjectInput,
   type ListIssueFilters,
@@ -47,6 +52,8 @@ import { openCliContext, resolveDbPath, type CliGlobalOptions } from "./context.
 import {
   handleCliError,
   printActor,
+  printCycle,
+  printCycles,
   printIssue,
   printIssues,
   printJson,
@@ -232,6 +239,36 @@ export function createProgram(): Command {
       })
     );
 
+  const cycle = program.command("cycle").description("manage cycles");
+  cycle
+    .command("create")
+    .argument("[name]")
+    .option("--name <name>", "cycle name")
+    .option("--number <number>", "cycle number", parseInteger)
+    .option("--team <key>", "team key or id")
+    .option("--starts-at <timestamp>", "cycle start timestamp")
+    .option("--ends-at <timestamp>", "cycle end timestamp")
+    .option("--json", "print JSON output")
+    .action((name, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        printCycle(createCycle(cli.context, cycleCreateInput(name, options, cli.defaultTeam)), options);
+      })
+    );
+  cycle
+    .command("list")
+    .option("--team <key>", "team key or id")
+    .option("--json", "print JSON output")
+    .action((_options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        printCycles(
+          listCycles(cli.context, cycleListInput(options, cli.defaultTeam)),
+          options
+        );
+      })
+    );
+
   const project = program.command("project").description("manage projects");
   project
     .command("create")
@@ -305,6 +342,7 @@ export function createProgram(): Command {
     .option("--description <description>", "issue description")
     .option("--team <key>", "team key")
     .option("--project <project>", "project id or name")
+    .option("--cycle <cycle>", "cycle number or id")
     .option("--priority <number>", "priority", parseInteger)
     .option("--assignee <actor>", "assignee id or handle")
     .option("--state <state>", "workflow state")
@@ -324,6 +362,7 @@ export function createProgram(): Command {
     .option("--unassigned", "only unassigned issues")
     .option("--project <project>", "project id or name")
     .option("--no-project", "only issues without a project")
+    .option("--cycle <cycle>", "cycle number or id")
     .option("--label <label>", "label name")
     .option("--priority <number>", "priority", parseInteger)
     .option("--team <key>", "team key")
@@ -360,6 +399,7 @@ export function createProgram(): Command {
     .option("--unassigned", "clear assignee")
     .option("--project <project>", "project id or name")
     .option("--no-project", "clear project")
+    .option("--cycle <cycle>", "cycle number or id")
     .option("--label <label>", "add label by name or id", collectValues, [])
     .option("--remove-label <label>", "remove label by name or id", collectValues, [])
     .option("--estimate <number>", "estimate", parseInteger)
@@ -507,6 +547,26 @@ function labelCreateInput(name: string, options: Record<string, unknown>): Creat
   });
 }
 
+function cycleCreateInput(
+  name: string | undefined,
+  options: Record<string, unknown>,
+  defaultTeam?: string
+): CreateCycleInput {
+  return createCycleInputSchema.parse(omitUndefined({
+    team: stringOption(options.team) ?? defaultTeam,
+    number: numberOption(options.number),
+    name: stringOption(options.name) ?? name,
+    startsAt: stringOption(options.startsAt),
+    endsAt: stringOption(options.endsAt)
+  }));
+}
+
+function cycleListInput(options: Record<string, unknown>, defaultTeam?: string) {
+  return listCyclesInputSchema.parse(omitUndefined({
+    team: stringOption(options.team) ?? defaultTeam
+  }));
+}
+
 function projectUpdateInput(options: Record<string, unknown>): UpdateProjectInput {
   return updateProjectInputSchema.parse(omitUndefined({
     name: stringOption(options.name),
@@ -534,6 +594,7 @@ function issueCreateInput(
     priority: numberOption(options.priority),
     assignee: nullableStringOption(options.assignee),
     project: nullableStringOption(options.project),
+    cycle: cycleOption(options.cycle),
     labels: stringArrayOption(options.label)
   });
 }
@@ -548,6 +609,7 @@ function issueListFilters(options: Record<string, unknown>, defaultTeam?: string
     project,
     team: stringOption(options.team) ?? defaultTeam,
     label: stringOption(options.label),
+    cycle: cycleOption(options.cycle),
     priority: numberOption(options.priority),
     limit: numberOption(options.limit),
     includeArchived: booleanOption(options.includeArchived)
@@ -564,6 +626,7 @@ function issueUpdateInput(options: Record<string, unknown>): UpdateIssueInput {
     priority: numberOption(options.priority),
     assignee,
     project,
+    cycle: cycleOption(options.cycle),
     labels: stringArrayOption(options.label),
     removeLabels: stringArrayOption(options.removeLabel),
     estimate: numberOption(options.estimate),
@@ -606,6 +669,10 @@ function nullableStringOption(value: unknown): string | null | undefined {
 
 function numberOption(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
+}
+
+function cycleOption(value: unknown): string | number | undefined {
+  return typeof value === "string" || typeof value === "number" ? value : undefined;
 }
 
 function booleanOption(value: unknown): boolean | undefined {

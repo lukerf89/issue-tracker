@@ -10,9 +10,11 @@ import {
   optionalIntegerSchema,
   optionalNullableStringSchema
 } from "./common.js";
+import { cycleRefSchema } from "./cycle.js";
 
 export const prioritySchema = z.number().int().min(0).max(4);
 const optionalPrioritySchema = prioritySchema.optional();
+const optionalNullableCycleRefSchema = cycleRefSchema.nullable().optional();
 
 export const getIssueInputSchema = z.object({
   identifier: nonEmptyStringSchema
@@ -30,6 +32,7 @@ export const createIssueInputSchema = z.object({
   assigneeId: optionalNullableStringSchema,
   project: optionalNullableStringSchema,
   projectId: optionalNullableStringSchema,
+  cycle: optionalNullableCycleRefSchema,
   cycleId: optionalNullableStringSchema,
   parentId: optionalNullableStringSchema,
   estimate: z.number().int().nullable().optional(),
@@ -45,6 +48,7 @@ export const listIssueFiltersSchema = z.object({
   team: nonEmptyStringSchema.optional(),
   priority: optionalPrioritySchema,
   label: nonEmptyStringSchema.optional(),
+  cycle: cycleRefSchema.optional(),
   limit: optionalIntegerSchema,
   includeArchived: z.boolean().optional()
 }) satisfies z.ZodType<ListIssueFilters>;
@@ -57,6 +61,7 @@ export const updateIssueInputSchema = z.object({
   assigneeId: optionalNullableStringSchema,
   project: optionalNullableStringSchema,
   projectId: optionalNullableStringSchema,
+  cycle: optionalNullableCycleRefSchema,
   cycleId: optionalNullableStringSchema,
   parentId: optionalNullableStringSchema,
   estimate: z.number().int().nullable().optional(),

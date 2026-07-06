@@ -18,6 +18,7 @@ export {
 export {
   serializeActivity,
   serializeActor,
+  serializeCycle,
   serializeIssue,
   serializeLabel,
   serializeProject,
@@ -32,6 +33,14 @@ export {
   type CreateActorInput
 } from "./services/actor.js";
 export { ConfigKey, getConfig, setConfig, whoami } from "./services/config.js";
+export {
+  createCycle,
+  getCycle,
+  listCycles,
+  type CreateCycleInput,
+  type CycleRef,
+  type ListCyclesOptions
+} from "./services/cycle.js";
 export { init, type InitInput } from "./services/init.js";
 export {
   archiveLabel,
@@ -77,6 +86,11 @@ export {
   listTeams,
   type CreateTeamInput
 } from "./services/team.js";
+export {
+  createCycleInputSchema,
+  cycleRefSchema,
+  listCyclesInputSchema
+} from "./schemas/cycle.js";
 export {
   createIssueInputSchema,
   getIssueInputSchema,
