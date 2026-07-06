@@ -23,5 +23,7 @@ export function inTransaction<T>(
   context: ServiceContext,
   work: (context: ServiceContext & { db: ServiceTransaction }) => T
 ): T {
-  return context.db.transaction((tx) => work({ ...context, db: tx }));
+  return context.db.transaction((tx) => work({ ...context, db: tx }), {
+    behavior: "immediate"
+  });
 }

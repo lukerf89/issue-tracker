@@ -1,6 +1,6 @@
 import { and, asc, eq } from "drizzle-orm";
 
-import type { ServiceContext } from "../context.js";
+import { inTransaction, type ServiceContext, type ServiceTransaction } from "../context.js";
 import { workflowStates } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { uuid } from "../ids.js";
@@ -14,6 +14,15 @@ export const defaultWorkflowStates = [
 ] as const;
 
 export function seedDefaultWorkflowStates(context: ServiceContext, teamId: string) {
+  return inTransaction(context, (txContext) =>
+    seedDefaultWorkflowStatesInTransaction(txContext, teamId)
+  );
+}
+
+export function seedDefaultWorkflowStatesInTransaction(
+  context: ServiceContext & { db: ServiceTransaction },
+  teamId: string
+) {
   const rows = defaultWorkflowStates.map((state) => ({
     id: uuid(),
     teamId,

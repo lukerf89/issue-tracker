@@ -1,6 +1,6 @@
 import { asc, eq, sql } from "drizzle-orm";
 
-import type { ServiceContext } from "../context.js";
+import { inTransaction, type ServiceContext, type ServiceTransaction } from "../context.js";
 import { actors, activity, issues, type Activity, type Actor, type Issue } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { uuid } from "../ids.js";
@@ -19,6 +19,13 @@ export interface ListActivityInput {
 export type ActivityWithActor = Activity & { actor: Actor };
 
 export function appendActivity(context: ServiceContext, input: AppendActivityInput) {
+  return inTransaction(context, (txContext) => appendActivityInTransaction(txContext, input));
+}
+
+export function appendActivityInTransaction(
+  context: ServiceContext & { db: ServiceTransaction },
+  input: AppendActivityInput
+) {
   const now = context.clock.now().toISOString();
   const row = {
     id: uuid(),

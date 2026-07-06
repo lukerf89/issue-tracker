@@ -1,10 +1,10 @@
 import { asc, eq, isNull } from "drizzle-orm";
 
-import type { ServiceContext } from "../context.js";
+import { inTransaction, type ServiceContext, type ServiceTransaction } from "../context.js";
 import { teams } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { uuid } from "../ids.js";
-import { seedDefaultWorkflowStates } from "./state.js";
+import { seedDefaultWorkflowStatesInTransaction } from "./state.js";
 
 export interface CreateTeamInput {
   key: string;
@@ -12,6 +12,15 @@ export interface CreateTeamInput {
 }
 
 export function createTeam(context: ServiceContext, input: CreateTeamInput) {
+  return inTransaction(context, (txContext) =>
+    createTeamInTransaction(txContext, input)
+  );
+}
+
+export function createTeamInTransaction(
+  context: ServiceContext & { db: ServiceTransaction },
+  input: CreateTeamInput
+) {
   const key = normalizeTeamKey(input.key);
   const existing = context.db.query.teams.findFirst({
     where: eq(teams.key, key)
@@ -34,7 +43,7 @@ export function createTeam(context: ServiceContext, input: CreateTeamInput) {
   };
 
   context.db.insert(teams).values(row).run();
-  seedDefaultWorkflowStates(context, row.id);
+  seedDefaultWorkflowStatesInTransaction(context, row.id);
   return row;
 }
 
