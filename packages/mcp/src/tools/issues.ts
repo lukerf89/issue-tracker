@@ -1,6 +1,8 @@
 import {
   addComment,
   addCommentInputSchema,
+  archiveIssue,
+  archiveIssueInputSchema,
   assignIssue,
   assignIssueInputSchema,
   createIssue,
@@ -146,6 +148,21 @@ export function registerIssueTools(
       const parsed = assignIssueInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
         jsonResult(serializeIssue(assignIssue(context, parsed.identifier, parsed.actor)))
+      );
+    })
+  );
+
+  server.registerTool(
+    "archive_issue",
+    {
+      title: "Archive issue",
+      description: "Archive an issue without deleting it.",
+      inputSchema: archiveIssueInputSchema.shape
+    },
+    (input) => mcpToolResult(() => {
+      const parsed = archiveIssueInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
+        jsonResult(serializeIssue(archiveIssue(context, parsed.identifier)))
       );
     })
   );
