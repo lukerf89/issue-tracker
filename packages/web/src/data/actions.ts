@@ -3,11 +3,13 @@
 import {
   addAttachment,
   addComment,
+  addCommentInputSchema,
   archiveIssue,
   archiveLabel,
   archiveProject,
   archiveTeam,
   assignIssue,
+  assignIssueInputSchema,
   attachLabel,
   createActor,
   createCycle,
@@ -31,6 +33,7 @@ import {
   unarchiveProject,
   unarchiveTeam,
   updateIssue,
+  updateIssueInputSchema,
   updateProject,
   type AddAttachmentInput,
   type AddCommentInput,
@@ -68,10 +71,47 @@ export async function moveBoardIssueAction(formData: FormData) {
   await moveIssueAction(input.identifier, input.state);
 }
 
+export async function updateIssueDetailFieldsAction(formData: FormData) {
+  const identifier = requiredFormString(formData, "identifier");
+  const input = updateIssueInputSchema.parse({
+    title: requiredFormString(formData, "title"),
+    description: nullableFormString(formData, "description"),
+    priority: formInteger(formData, "priority")
+  });
+
+  await updateIssueAction(identifier, input);
+}
+
+export async function moveIssueDetailAction(formData: FormData) {
+  const input = moveIssueInputSchema.parse({
+    identifier: formString(formData.get("identifier")),
+    state: formString(formData.get("state"))
+  });
+
+  await moveIssueAction(input.identifier, input.state);
+}
+
 export async function assignIssueAction(input: AssignIssueInput) {
   return withTrackerContext((context) =>
     serializeIssue(assignIssue(context, input.identifier, input.actor))
   );
+}
+
+export async function assignIssueDetailAction(formData: FormData) {
+  const identifier = requiredFormString(formData, "identifier");
+  const requestedActor = requiredFormString(formData, "actor");
+
+  withTrackerContext((context) => {
+    const actor =
+      requestedActor === "--none"
+        ? null
+        : requestedActor === "--me"
+          ? requireCurrentActorHandle(context)
+          : requestedActor;
+    const input = assignIssueInputSchema.parse({ identifier, actor });
+
+    assignIssue(context, input.identifier, input.actor);
+  });
 }
 
 export async function archiveIssueAction(identifier: string) {
@@ -142,10 +182,58 @@ export async function addCommentAction(input: AddCommentInput) {
   return withTrackerContext((context) => serializeComment(addComment(context, input)));
 }
 
+export async function addIssueCommentAction(formData: FormData) {
+  const input = addCommentInputSchema.parse({
+    issue: requiredFormString(formData, "identifier"),
+    body: requiredFormString(formData, "body"),
+    parent: nullableFormString(formData, "parent")
+  });
+
+  withTrackerContext((context) => {
+    addComment(context, input);
+  });
+}
+
+export async function updateIssueLabelAction(formData: FormData) {
+  const identifier = requiredFormString(formData, "identifier");
+  const labelId = requiredFormString(formData, "labelId");
+  const operation = requiredFormString(formData, "operation");
+  const input = updateIssueInputSchema.parse(
+    operation === "add" ? { labels: [labelId] } : { removeLabels: [labelId] }
+  );
+
+  if (operation !== "add" && operation !== "remove") {
+    throw new Error(`Unsupported label operation ${operation}.`);
+  }
+
+  await updateIssueAction(identifier, input);
+}
+
 export async function addAttachmentAction(input: AddAttachmentInput) {
   return withTrackerContext((context) => serializeAttachment(addAttachment(context, input)));
 }
 
 function formString(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value : "";
+}
+
+function requiredFormString(formData: FormData, key: string): string {
+  return formString(formData.get(key)).trim();
+}
+
+function nullableFormString(formData: FormData, key: string): string | null {
+  const value = formString(formData.get(key)).trim();
+  return value.length > 0 ? value : null;
+}
+
+function formInteger(formData: FormData, key: string): number {
+  return Number.parseInt(requiredFormString(formData, key), 10);
+}
+
+function requireCurrentActorHandle(context: Parameters<typeof assignIssue>[0]): string {
+  if (!context.actor) {
+    throw new Error("A current actor is required to assign an issue to --me.");
+  }
+
+  return context.actor.handle;
 }

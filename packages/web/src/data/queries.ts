@@ -1,12 +1,15 @@
 import "server-only";
 
 import {
+  AppError,
+  AppErrorCode,
   getIssue,
   getLabel,
   getProject,
   getState,
   getTeam,
   getTeamByKey,
+  listActivity,
   listActors,
   listAttachments,
   listComments,
@@ -18,6 +21,7 @@ import {
   listStates,
   listTeams,
   searchIssues,
+  serializeActivity,
   serializeActor,
   serializeAttachment,
   serializeComment,
@@ -44,6 +48,30 @@ export async function listIssuesData(filters: ListIssueFilters = {}) {
 
 export async function getIssueData(identifier: string) {
   return withTrackerContext((context) => serializeIssue(getIssue(context, identifier)));
+}
+
+export async function getIssueDetailPageData(identifier: string) {
+  return withTrackerContext((context) => {
+    const issue = getIssue(context, identifier);
+
+    return {
+      issue: serializeIssue(issue),
+      activity: listActivity(context, { issue: issue.id }).map(serializeActivity),
+      actors: listActors(context, { includeArchived: true }).map(serializeActor),
+      currentActor: context.actor ? serializeActor(context.actor) : null,
+      cycles: listCycles(context, { teamId: issue.teamId }).map(serializeCycle),
+      labels: listLabels(context).map(serializeLabel),
+      projects: listProjects(context, { includeArchived: true }).map(serializeProject),
+      states: listStates(context, issue.teamId).map(serializeWorkflowState),
+      teams: listTeams(context, { includeArchived: true }).map(serializeTeam)
+    };
+  });
+}
+
+export type IssueDetailPageData = Awaited<ReturnType<typeof getIssueDetailPageData>>;
+
+export function isIssueNotFoundError(error: unknown): boolean {
+  return error instanceof AppError && error.code === AppErrorCode.ISSUE_NOT_FOUND;
 }
 
 export async function searchIssuesData(input: SearchIssuesInput) {
