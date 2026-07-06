@@ -58,6 +58,23 @@ export {
   listTeams,
   type CreateTeamInput
 } from "./services/team.js";
+export {
+  createIssueInputSchema,
+  getIssueInputSchema,
+  listIssueFiltersSchema,
+  moveIssueInputSchema,
+  updateIssueInputSchema,
+  updateIssueToolInputSchema
+} from "./schemas/issue.js";
+export {
+  createProjectInputSchema,
+  getProjectInputSchema,
+  listProjectsInputSchema,
+  projectStatusSchema,
+  updateProjectInputSchema,
+  updateProjectToolInputSchema
+} from "./schemas/project.js";
+export { createTeamInputSchema, listTeamsInputSchema } from "./schemas/team.js";
 
 export type {
   Activity,

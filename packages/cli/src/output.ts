@@ -186,6 +186,16 @@ function errorEnvelope(error: unknown) {
     };
   }
 
+  if (isZodError(error)) {
+    return {
+      error: {
+        code: AppErrorCode.VALIDATION_FAILED,
+        message: "Input validation failed.",
+        details: { issues: error.issues }
+      }
+    };
+  }
+
   return {
     error: {
       code: AppErrorCode.DATABASE_ERROR,
@@ -206,4 +216,15 @@ function isCommanderError(error: unknown): error is { code: string; message: str
 
 function isCommanderHelp(error: unknown): boolean {
   return isCommanderError(error) && error.code === "commander.helpDisplayed";
+}
+
+function isZodError(error: unknown): error is { issues: unknown[] } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    (error as { name?: unknown }).name === "ZodError" &&
+    "issues" in error &&
+    Array.isArray((error as { issues?: unknown }).issues)
+  );
 }

@@ -3,18 +3,27 @@ import { fileURLToPath } from "node:url";
 
 import {
   ConfigKey,
+  createIssueInputSchema,
   createIssue,
+  createProjectInputSchema,
   createProject,
   createTeam,
   getConfig,
   getIssue,
   getProject,
+  listIssueFiltersSchema,
   listIssues,
+  listProjectsInputSchema,
   listProjects,
+  listTeamsInputSchema,
   listTeams,
+  moveIssueInputSchema,
+  projectStatusSchema,
   moveIssue,
   setConfig,
+  updateIssueInputSchema,
   updateIssue,
+  updateProjectInputSchema,
   updateProject,
   whoami,
   init as initWorkspace,
@@ -24,9 +33,10 @@ import {
   type UpdateIssueInput,
   type UpdateProjectInput
 } from "@issue-tracker/core";
+import { runStdioServer } from "@issue-tracker/mcp";
 import { Command, InvalidArgumentError } from "commander";
 
-import { openCliContext, type CliGlobalOptions } from "./context.js";
+import { openCliContext, resolveDbPath, type CliGlobalOptions } from "./context.js";
 import {
   handleCliError,
   printActor,
@@ -46,6 +56,7 @@ type CommandOptions = CliGlobalOptions &
     [key: string]: unknown;
     actorHandle?: string;
     actorName?: string;
+    agent?: string;
     includeArchived?: boolean;
     teamKey?: string;
     teamName?: string;
@@ -163,7 +174,10 @@ export function createProgram(): Command {
       withContext(command, { requireActor: false }, (cli) => {
         const options = optionsWithGlobals(command);
         printTeams(
-          listTeams(cli.context, { includeArchived: options.includeArchived }),
+          listTeams(
+            cli.context,
+            listTeamsInputSchema.parse({ includeArchived: options.includeArchived })
+          ),
           options
         );
       })
@@ -195,7 +209,10 @@ export function createProgram(): Command {
       withContext(command, { requireActor: false }, (cli) => {
         const options = optionsWithGlobals(command);
         printProjects(
-          listProjects(cli.context, { includeArchived: options.includeArchived }),
+          listProjects(
+            cli.context,
+            listProjectsInputSchema.parse({ includeArchived: options.includeArchived })
+          ),
           options
         );
       })
@@ -312,15 +329,30 @@ export function createProgram(): Command {
     .option("--json", "print JSON output")
     .action((identifier, state, _options, command) =>
       withContext(command, {}, (cli) => {
-        printIssue(cli.context, moveIssue(cli.context, identifier, state), optionsWithGlobals(command));
+        const input = moveIssueInputSchema.parse({ identifier, state });
+        printIssue(
+          cli.context,
+          moveIssue(cli.context, input.identifier, input.state),
+          optionsWithGlobals(command)
+        );
       })
     );
 
   program
     .command("mcp")
     .description("run the MCP server on stdio")
-    .action(() => {
-      process.stdout.write("MCP server is not yet implemented.\n");
+    .option("--agent <handle>", "agent actor handle")
+    .action((_options, command) => {
+      const options = optionsWithGlobals(command);
+      return runStdioServer({
+        dbPath: resolveDbPath(options),
+        actor: options.agent
+          ? {
+              type: "agent",
+              handle: String(options.agent)
+            }
+          : undefined
+      });
     });
 
   return program;
@@ -404,25 +436,25 @@ function projectCreateInput(name: string | undefined, options: Record<string, un
   const projectName = stringOption(options.name) ?? name;
   if (!projectName) throw new InvalidArgumentError("project name is required");
 
-  return {
+  return createProjectInputSchema.parse({
     name: projectName,
     description: stringOption(options.description) ?? stringOption(options.desc) ?? null,
     status: projectStatusOption(options.status),
     leadId: nullableStringOption(options.leadId),
     startDate: nullableStringOption(options.startDate),
     targetDate: nullableStringOption(options.targetDate)
-  };
+  });
 }
 
 function projectUpdateInput(options: Record<string, unknown>): UpdateProjectInput {
-  return omitUndefined({
+  return updateProjectInputSchema.parse(omitUndefined({
     name: stringOption(options.name),
     description: stringOption(options.description) ?? stringOption(options.desc),
     status: projectStatusOption(options.status),
     leadId: nullableStringOption(options.leadId),
     startDate: nullableStringOption(options.startDate),
     targetDate: nullableStringOption(options.targetDate)
-  });
+  }));
 }
 
 function issueCreateInput(
@@ -433,7 +465,7 @@ function issueCreateInput(
   const issueTitle = stringOption(options.title) ?? title;
   if (!issueTitle) throw new InvalidArgumentError("issue title is required");
 
-  return {
+  return createIssueInputSchema.parse({
     title: issueTitle,
     description: stringOption(options.description) ?? stringOption(options.desc) ?? null,
     team: stringOption(options.team) ?? defaultTeam,
@@ -441,28 +473,28 @@ function issueCreateInput(
     priority: numberOption(options.priority),
     assignee: nullableStringOption(options.assignee),
     project: nullableStringOption(options.project)
-  };
+  });
 }
 
 function issueListFilters(options: Record<string, unknown>, defaultTeam?: string): ListIssueFilters {
   const project = options.project === false ? null : nullableStringOption(options.project);
   const assignee = options.unassigned === true ? null : nullableStringOption(options.assignee);
 
-  return omitUndefined({
+  return listIssueFiltersSchema.parse(omitUndefined({
     state: stringOption(options.state),
     assignee,
     project,
     team: stringOption(options.team) ?? defaultTeam,
     limit: numberOption(options.limit),
     includeArchived: booleanOption(options.includeArchived)
-  });
+  }));
 }
 
 function issueUpdateInput(options: Record<string, unknown>): UpdateIssueInput {
   const assignee = options.unassigned === true ? null : nullableStringOption(options.assignee);
   const project = options.project === false ? null : nullableStringOption(options.project);
 
-  return omitUndefined({
+  return updateIssueInputSchema.parse(omitUndefined({
     title: stringOption(options.title),
     description: stringOption(options.description) ?? stringOption(options.desc),
     priority: numberOption(options.priority),
@@ -470,7 +502,7 @@ function issueUpdateInput(options: Record<string, unknown>): UpdateIssueInput {
     project,
     estimate: numberOption(options.estimate),
     dueDate: nullableStringOption(options.dueDate)
-  });
+  }));
 }
 
 function parseInteger(value: string): number {
@@ -485,13 +517,17 @@ function parseInteger(value: string): number {
 function projectStatusOption(value: unknown): CreateProjectInput["status"] | undefined {
   if (value === undefined) return undefined;
   const status = stringOption(value);
-  const allowed = ["backlog", "planned", "started", "paused", "completed", "canceled"] as const;
 
-  if (!status || !allowed.includes(status as (typeof allowed)[number])) {
+  if (!status) {
     throw new InvalidArgumentError("expected a valid project status");
   }
 
-  return status as CreateProjectInput["status"];
+  const parsed = projectStatusSchema.safeParse(status);
+  if (!parsed.success) {
+    throw new InvalidArgumentError("expected a valid project status");
+  }
+
+  return parsed.data;
 }
 
 function stringOption(value: unknown): string | undefined {

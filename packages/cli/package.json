@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@issue-tracker/core": "0.0.0",
+    "@issue-tracker/mcp": "0.0.0",
     "commander": "^15.0.0",
     "picocolors": "^1.1.1"
   }
