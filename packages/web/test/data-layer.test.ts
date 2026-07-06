@@ -17,6 +17,7 @@ import {
 } from "@issue-tracker/core";
 
 import { listIssuesData } from "../src/data/queries";
+import { seedFilteredIssueListDb } from "./issue-list-fixture";
 
 const tempDirs: string[] = [];
 const originalIssueTrackerDb = process.env.ISSUE_TRACKER_DB;
@@ -58,7 +59,93 @@ describe("web data layer", () => {
       ]
     });
   });
+
+  it("passes list filters through to core individually and combined", async () => {
+    const seeded = seedFilteredIssueListDb(tempDirs);
+    process.env.ISSUE_TRACKER_DB = seeded.dbPath;
+
+    await expectIdentifiers({ state: "In Progress" }, [
+      "ENG-1",
+      "ENG-3",
+      "ENG-4",
+      "ENG-5",
+      "ENG-6",
+      "ENG-7"
+    ]);
+    await expectIdentifiers({ assignee: "build-agent" }, [
+      "ENG-1",
+      "ENG-2",
+      "ENG-4",
+      "ENG-5",
+      "ENG-6",
+      "ENG-7"
+    ]);
+    await expectIdentifiers({ project: seeded.projectId }, [
+      "ENG-1",
+      "ENG-2",
+      "ENG-3",
+      "ENG-5",
+      "ENG-6",
+      "ENG-7"
+    ]);
+    await expectIdentifiers({ label: "Frontend" }, [
+      "ENG-1",
+      "ENG-2",
+      "ENG-3",
+      "ENG-4",
+      "ENG-6",
+      "ENG-7"
+    ]);
+    await expectIdentifiers({ priority: 1 }, [
+      "ENG-1",
+      "ENG-2",
+      "ENG-3",
+      "ENG-4",
+      "ENG-5",
+      "ENG-7"
+    ]);
+    await expectIdentifiers({ cycle: seeded.cycleNumber }, [
+      "ENG-1",
+      "ENG-2",
+      "ENG-3",
+      "ENG-4",
+      "ENG-5",
+      "ENG-6"
+    ]);
+    await expectIdentifiers(
+      {
+        state: "In Progress",
+        assignee: "build-agent",
+        project: seeded.projectId,
+        label: "Frontend",
+        priority: 1,
+        cycle: seeded.cycleNumber
+      },
+      ["ENG-1"]
+    );
+    await expectIdentifiers(
+      {
+        state: "In Progress",
+        assignee: "build-agent",
+        project: seeded.projectId,
+        label: "Frontend",
+        priority: 1,
+        cycle: seeded.cycleNumber,
+        includeArchived: true
+      },
+      ["ENG-1", "ENG-8"]
+    );
+  });
 });
+
+async function expectIdentifiers(
+  filters: Parameters<typeof listIssuesData>[0],
+  identifiers: string[]
+) {
+  const issues = await listIssuesData(filters);
+
+  expect(issues.map((issue) => issue.identifier)).toEqual(identifiers);
+}
 
 function seedIssueTrackerDb(): string {
   const tempDir = mkdtempSync(join(tmpdir(), "issue-tracker-web-"));
