@@ -17,6 +17,7 @@ import {
   createTeam,
   detachLabel,
   moveIssue,
+  moveIssueInputSchema,
   serializeActor,
   serializeAttachment,
   serializeComment,
@@ -56,6 +57,15 @@ export async function updateIssueAction(identifier: string, input: UpdateIssueIn
 
 export async function moveIssueAction(identifier: string, state: string) {
   return withTrackerContext((context) => serializeIssue(moveIssue(context, identifier, state)));
+}
+
+export async function moveBoardIssueAction(formData: FormData) {
+  const input = moveIssueInputSchema.parse({
+    identifier: formString(formData.get("identifier")),
+    state: formString(formData.get("state"))
+  });
+
+  await moveIssueAction(input.identifier, input.state);
 }
 
 export async function assignIssueAction(input: AssignIssueInput) {
@@ -134,4 +144,8 @@ export async function addCommentAction(input: AddCommentInput) {
 
 export async function addAttachmentAction(input: AddAttachmentInput) {
   return withTrackerContext((context) => serializeAttachment(addAttachment(context, input)));
+}
+
+function formString(value: FormDataEntryValue | null): string {
+  return typeof value === "string" ? value : "";
 }

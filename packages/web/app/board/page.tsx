@@ -1,4 +1,5 @@
 import { getBoardPageData } from "../../src/data/queries";
+import { moveBoardIssueAction } from "../../src/data/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -6,6 +7,7 @@ export default async function BoardPage() {
   try {
     const data = await getBoardPageData();
     const stateById = new Map(data.states.map((state) => [state.id, state]));
+    const actorById = new Map(data.actors.map((actor) => [actor.id, actor]));
 
     return (
       <div className="space-y-5">
@@ -21,7 +23,11 @@ export default async function BoardPage() {
             const issues = data.issues.filter((issue) => issue.stateId === state.id);
 
             return (
-              <div className="min-h-80 rounded-md border border-zinc-800 bg-zinc-950" key={state.id}>
+              <section
+                aria-labelledby={`state-${state.id}`}
+                className="min-h-80 rounded-md border border-zinc-800 bg-zinc-950"
+                key={state.id}
+              >
                 <header className="flex items-center justify-between border-b border-zinc-800 px-3 py-2">
                   <div className="flex min-w-0 items-center gap-2">
                     <span
@@ -29,27 +35,77 @@ export default async function BoardPage() {
                       className="h-2.5 w-2.5 rounded-full"
                       style={{ backgroundColor: state.color }}
                     />
-                    <h2 className="truncate text-sm font-semibold text-zinc-100">{state.name}</h2>
+                    <h2
+                      className="truncate text-sm font-semibold text-zinc-100"
+                      id={`state-${state.id}`}
+                    >
+                      {state.name}
+                    </h2>
                   </div>
                   <span className="rounded bg-zinc-900 px-2 py-0.5 text-xs text-zinc-400">
                     {issues.length}
                   </span>
                 </header>
                 <div className="space-y-2 p-2">
-                  {issues.map((issue) => (
-                    <article
-                      className="rounded-md border border-zinc-800 bg-zinc-900 p-3 text-sm"
-                      key={issue.id}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="font-mono text-xs text-zinc-500">{issue.identifier}</span>
-                        <span className="text-xs text-zinc-500">P{issue.priority}</span>
-                      </div>
-                      <h3 className="mt-2 line-clamp-2 font-medium text-zinc-100">{issue.title}</h3>
-                    </article>
-                  ))}
+                  {issues.map((issue) => {
+                    const assignee = issue.assigneeId
+                      ? actorById.get(issue.assigneeId)?.handle ?? "Unknown"
+                      : "Unassigned";
+                    const issueStates = data.states.filter(
+                      (candidate) => candidate.teamId === issue.teamId
+                    );
+
+                    return (
+                      <article
+                        aria-label={`${issue.identifier} ${issue.title}`}
+                        className="rounded-md border border-zinc-800 bg-zinc-900 p-3 text-sm"
+                        key={issue.id}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-mono text-xs text-zinc-500">
+                            {issue.identifier}
+                          </span>
+                          <span className="text-xs text-zinc-500">P{issue.priority}</span>
+                        </div>
+                        <h3 className="mt-2 line-clamp-2 font-medium text-zinc-100">
+                          {issue.title}
+                        </h3>
+                        <p className="mt-2 truncate text-xs text-zinc-400">{assignee}</p>
+                        <form action={moveBoardIssueAction} className="mt-3 flex gap-2">
+                          <input name="identifier" type="hidden" value={issue.identifier} />
+                          <label className="sr-only" htmlFor={`move-${issue.id}`}>
+                            Move {issue.identifier} to state
+                          </label>
+                          <select
+                            className="h-8 min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 text-xs text-zinc-100 outline-none focus:border-zinc-500"
+                            defaultValue=""
+                            id={`move-${issue.id}`}
+                            name="state"
+                            required
+                          >
+                            <option disabled value="">
+                              Move to...
+                            </option>
+                            {issueStates
+                              .filter((candidate) => candidate.id !== issue.stateId)
+                              .map((candidate) => (
+                                <option key={candidate.id} value={candidate.id}>
+                                  {candidate.name}
+                                </option>
+                              ))}
+                          </select>
+                          <button
+                            className="h-8 rounded bg-zinc-100 px-2 text-xs font-medium text-zinc-950 hover:bg-white"
+                            type="submit"
+                          >
+                            Move
+                          </button>
+                        </form>
+                      </article>
+                    );
+                  })}
                 </div>
-              </div>
+              </section>
             );
           })}
 

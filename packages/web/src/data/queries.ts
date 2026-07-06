@@ -134,11 +134,20 @@ export type IssueListPageData = Awaited<ReturnType<typeof getIssueListPageData>>
 export async function getBoardPageData() {
   return withTrackerContext((context) => {
     const teams = listTeams(context).map(serializeTeam);
-    const states = teams.flatMap((team) =>
-      listStates(context, team.id).map(serializeWorkflowState)
-    );
+    const teamKeyById = new Map(teams.map((team) => [team.id, team.key]));
+    const states = teams
+      .flatMap((team) => listStates(context, team.id).map(serializeWorkflowState))
+      .sort(
+        (left, right) =>
+          left.position - right.position ||
+          (teamKeyById.get(left.teamId) ?? "").localeCompare(
+            teamKeyById.get(right.teamId) ?? ""
+          ) ||
+          left.name.localeCompare(right.name)
+      );
 
     return {
+      actors: listActors(context, { includeArchived: true }).map(serializeActor),
       issues: listIssues(context).map(serializeIssue),
       states,
       teams
