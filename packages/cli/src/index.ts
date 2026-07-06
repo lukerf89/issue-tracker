@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -11,6 +13,7 @@ import {
   archiveLabelInputSchema,
   assignIssue,
   assignIssueInputSchema,
+  backupDatabase,
   createActor,
   createActorInputSchema,
   createCycle,
@@ -22,6 +25,7 @@ import {
   createProjectInputSchema,
   createProject,
   createTeam,
+  exportSnapshot,
   getConfig,
   getIssue,
   getProject,
@@ -42,6 +46,7 @@ import {
   moveIssueInputSchema,
   projectStatusSchema,
   moveIssue,
+  resolveBackupPath,
   searchInputSchema,
   searchIssues,
   setConfig,
@@ -95,6 +100,7 @@ type CommandOptions = CliGlobalOptions &
     actorName?: string;
     agent?: string;
     includeArchived?: boolean;
+    output?: string;
     teamKey?: string;
     teamName?: string;
     workspace?: string;
@@ -558,6 +564,41 @@ export function createProgram(): Command {
     );
 
   program
+    .command("backup")
+    .description("write a safe SQLite database backup")
+    .option("--output <path>", "backup output path")
+    .action((_options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        const outputPath = resolveBackupPath({
+          dbPath: cli.dbPath,
+          output: stringOption(options.output),
+          clock: cli.context.clock
+        });
+        const writtenPath = backupDatabase(cli.db, outputPath);
+
+        process.stdout.write(`${writtenPath}\n`);
+      })
+    );
+
+  program
+    .command("export")
+    .description("export the workspace snapshot")
+    .option("--json", "emit JSON snapshot")
+    .option("--output <path>", "write JSON snapshot to a file")
+    .action((_options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+
+        if (!options.json) {
+          throw new InvalidArgumentError("export requires --json");
+        }
+
+        writeExportSnapshot(exportSnapshot(cli.context), stringOption(options.output));
+      })
+    );
+
+  program
     .command("mcp")
     .description("run the MCP server on stdio")
     .option("--agent <handle>", "agent actor handle")
@@ -817,6 +858,19 @@ function issueCommentInput(
     body,
     parent: nullableStringOption(options.parent)
   }));
+}
+
+function writeExportSnapshot(snapshot: unknown, outputPath: string | undefined): void {
+  const serialized = `${JSON.stringify(snapshot)}\n`;
+
+  if (!outputPath) {
+    process.stdout.write(serialized);
+    return;
+  }
+
+  const destination = resolve(outputPath);
+  mkdirSync(dirname(destination), { recursive: true });
+  writeFileSync(destination, serialized, "utf8");
 }
 
 function parseInteger(value: string): number {

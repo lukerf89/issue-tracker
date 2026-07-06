@@ -1,8 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { openDb } from "@issue-tracker/core";
 
 import { createProgram, run } from "../src/index.js";
 
@@ -61,6 +63,143 @@ describe("tracker CLI", () => {
       archivedAt: null
     });
     expect(records[0]?.projectId).toEqual(expect.any(String));
+  });
+
+  it("backs up a live database with a restorable copy", async () => {
+    const dbPath = tempDbPath();
+    const backupPath = join(dirname(dbPath), "tracker-backup-test.db");
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Back up live data"])).status).toBe(
+      0
+    );
+
+    const liveDb = openDb(dbPath);
+
+    try {
+      expect(
+        liveDb.$client
+          .prepare("select title from issues where identifier = ?")
+          .get("ENG-1")
+      ).toEqual({ title: "Back up live data" });
+
+      const result = await tracker(dbPath, ["backup", "--output", backupPath]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe(`${backupPath}\n`);
+      expect(existsSync(backupPath)).toBe(true);
+
+      const backupDb = openDb(backupPath);
+
+      try {
+        expect(
+          backupDb.$client
+            .prepare("select title from issues where identifier = ?")
+            .get("ENG-1")
+        ).toEqual({ title: "Back up live data" });
+      } finally {
+        backupDb.$client.close();
+      }
+    } finally {
+      liveDb.$client.close();
+    }
+  });
+
+  it("exports the workspace snapshot JSON to stdout or an output file", async () => {
+    const dbPath = tempDbPath();
+    const outputPath = join(dirname(dbPath), "snapshot.json");
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["label", "create", "Docs", "--color", "#22C55E"])).status).toBe(
+      0
+    );
+    expect(
+      (
+        await tracker(dbPath, [
+          "issue",
+          "create",
+          "--title",
+          "Export workspace data",
+          "--label",
+          "Docs"
+        ])
+      ).status
+    ).toBe(0);
+    expect(
+      (await tracker(dbPath, ["issue", "comment", "ENG-1", "Snapshot is readable."])).status
+    ).toBe(0);
+
+    const exported = await tracker(dbPath, ["export", "--json"]);
+    expect(exported.status).toBe(0);
+
+    const snapshot = JSON.parse(exported.stdout) as {
+      workspace: { name: string };
+      config: Array<{ key: string }>;
+      teams: Array<{ key: string }>;
+      workflowStates: Array<{ name: string }>;
+      projects: unknown[];
+      milestones: unknown[];
+      cycles: unknown[];
+      issues: Array<{ identifier: string; title: string }>;
+      labels: Array<{ name: string; group: string | null }>;
+      issueLabels: Array<{ issueId: string; labelId: string }>;
+      comments: Array<{ body: string; parentId: string | null }>;
+      actors: Array<{ handle: string }>;
+      attachments: unknown[];
+      activity: Array<{ action: string; data: Record<string, unknown> }>;
+    };
+
+    expect(Object.keys(snapshot)).toEqual([
+      "workspace",
+      "config",
+      "teams",
+      "workflowStates",
+      "projects",
+      "milestones",
+      "cycles",
+      "issues",
+      "labels",
+      "issueLabels",
+      "comments",
+      "actors",
+      "attachments",
+      "activity"
+    ]);
+    expect(snapshot.workspace.name).toBe("Local Workspace");
+    expect(snapshot.config.map((entry) => entry.key)).toEqual([
+      "default_actor",
+      "default_team"
+    ]);
+    expect(snapshot.teams.map((team) => team.key)).toEqual(["ENG"]);
+    expect(snapshot.workflowStates.map((state) => state.name)).toContain("Todo");
+    expect(snapshot.projects).toEqual([]);
+    expect(snapshot.milestones).toEqual([]);
+    expect(snapshot.cycles).toEqual([]);
+    expect(snapshot.issues.map((issue) => [issue.identifier, issue.title])).toEqual([
+      ["ENG-1", "Export workspace data"]
+    ]);
+    expect(snapshot.labels).toMatchObject([{ name: "Docs", group: null }]);
+    expect(snapshot.issueLabels).toHaveLength(1);
+    expect(snapshot.comments).toMatchObject([
+      { body: "Snapshot is readable.", parentId: null }
+    ]);
+    expect(snapshot.actors.map((actor) => actor.handle)).toEqual(["owner"]);
+    expect(snapshot.attachments).toEqual([]);
+    expect(snapshot.activity.map((entry) => entry.action)).toEqual([
+      "created",
+      "label_added",
+      "commented"
+    ]);
+    expect(snapshot.activity[0]?.data).toMatchObject({ identifier: "ENG-1" });
+    expect(exported.stdout).not.toContain("undefined");
+
+    const written = await tracker(dbPath, ["export", "--json", "--output", outputPath]);
+    expect(written.status).toBe(0);
+    expect(written.stdout).toBe("");
+    expect(JSON.parse(readFileSync(outputPath, "utf8"))).toMatchObject({
+      issues: [{ identifier: "ENG-1", title: "Export workspace data" }],
+      labels: [{ name: "Docs" }],
+      comments: [{ body: "Snapshot is readable." }]
+    });
   });
 
   it("creates and lists actors, assigns by handle, clears with --none, and assigns --me", async () => {

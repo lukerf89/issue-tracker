@@ -56,6 +56,13 @@ export {
   type CycleRef,
   type ListCyclesOptions
 } from "./services/cycle.js";
+export {
+  backupDatabase,
+  exportSnapshot,
+  resolveBackupPath,
+  type ExportSnapshot,
+  type ResolveBackupPathInput
+} from "./services/export.js";
 export { init, type InitInput } from "./services/init.js";
 export {
   archiveLabel,
