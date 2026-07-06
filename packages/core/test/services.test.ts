@@ -6,12 +6,15 @@ import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  addAttachment,
   addComment,
   addCommentInputSchema,
   appendActivity,
   applyMigrations,
   archiveIssue,
   archiveLabel,
+  archiveProject,
+  archiveTeam,
   assignIssue,
   assignIssueInputSchema,
   AppErrorCode,
@@ -25,23 +28,37 @@ import {
   createTeam,
   detachLabel,
   getIssue,
+  getProject,
+  getTeam,
+  getTeamByKey,
   init,
   listActivity,
+  listActivitySince,
+  linkIssueInputSchema,
   listActors,
+  listAttachments,
   listComments,
   listCycles,
   listLabels,
   listIssueFiltersSchema,
   listIssues,
+  listProjects,
+  listTeams,
   moveIssue,
   openDb,
   searchInputSchema,
   searchIssues,
   seedDefaultWorkflowStates,
   serializeIssue,
+  serializeAttachment,
   serializeActivity,
+  serializeActivityEvent,
   serializeCycle,
   setConfig,
+  unarchiveIssue,
+  unarchiveLabel,
+  unarchiveProject,
+  unarchiveTeam,
   updateIssue,
   updateIssueInputSchema,
   whoami,
@@ -196,6 +213,119 @@ describe("core services", () => {
         bug.id,
         groupedBug.id
       ]);
+    } finally {
+      close();
+    }
+  });
+
+  it("unarchives issues and labels, rejects active unarchive, and retains label links", () => {
+    const { context, db, close } = initializedContext();
+
+    try {
+      createLabel(context, { name: "Bug", color: "#EF4444" });
+      const issue = createIssue(context, {
+        title: "Restore archived work",
+        labels: ["Bug"]
+      });
+
+      context.clock = fixedClock("2026-01-01T00:10:00.000Z");
+      const archivedIssue = archiveIssue(context, issue.identifier);
+      const archivedLabel = archiveLabel(context, "Bug");
+
+      expect(archivedIssue.archivedAt).toBe("2026-01-01T00:10:00.000Z");
+      expect(archivedLabel.archivedAt).toBe("2026-01-01T00:10:00.000Z");
+      expect(listIssues(context)).toEqual([]);
+      expect(listLabels(context)).toEqual([]);
+      expect(getIssue(context, issue.identifier).labels).toEqual([]);
+
+      context.clock = fixedClock("2026-01-01T00:20:00.000Z");
+      const restoredIssue = unarchiveIssue(context, issue.id);
+      const restoredLabel = unarchiveLabel(context, archivedLabel.id);
+
+      expect(restoredIssue.archivedAt).toBeNull();
+      expect(restoredIssue.updatedAt).toBe("2026-01-01T00:20:00.000Z");
+      expect(restoredLabel.archivedAt).toBeNull();
+      expect(listIssues(context).map((listed) => listed.identifier)).toEqual([
+        issue.identifier
+      ]);
+      expect(listLabels(context).map((label) => label.name)).toEqual(["Bug"]);
+      expect(getIssue(context, issue.identifier).labels.map((label) => label.name)).toEqual([
+        "Bug"
+      ]);
+      expect(() => unarchiveIssue(context, issue.identifier)).toThrow("not archived");
+      expect(() => unarchiveLabel(context, "Bug")).toThrow("not archived");
+      expect(readActivityEntries(db).map((entry) => entry.action)).toEqual([
+        "created",
+        "label_added",
+        "archived",
+        "unarchived"
+      ]);
+    } finally {
+      close();
+    }
+  });
+
+  it("archives and unarchives teams and projects while retaining related issues", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      const operations = createTeam(context, { key: "OPS", name: "Operations" });
+      const project = createProject(context, {
+        name: "Platform Foundations",
+        status: "planned"
+      });
+      const issue = createIssue(context, {
+        title: "Keep related issue addressable",
+        team: "OPS",
+        project: project.name
+      });
+
+      context.clock = fixedClock("2026-01-01T00:30:00.000Z");
+      const archivedTeam = archiveTeam(context, "ops");
+      const archivedProject = archiveProject(context, project.name);
+
+      expect(archivedTeam).toMatchObject({
+        id: operations.id,
+        key: "OPS",
+        archivedAt: "2026-01-01T00:30:00.000Z"
+      });
+      expect(archivedProject).toMatchObject({
+        id: project.id,
+        archivedAt: "2026-01-01T00:30:00.000Z"
+      });
+      expect(listTeams(context).map((team) => team.key)).toEqual(["ENG"]);
+      expect(listTeams(context, { includeArchived: true }).map((team) => team.key)).toEqual([
+        "ENG",
+        "OPS"
+      ]);
+      expect(listProjects(context)).toEqual([]);
+      expect(listProjects(context, { includeArchived: true }).map((item) => item.id)).toEqual([
+        project.id
+      ]);
+      expect(getTeam(context, operations.id).archivedAt).toBe("2026-01-01T00:30:00.000Z");
+      expect(getTeamByKey(context, "OPS").archivedAt).toBe("2026-01-01T00:30:00.000Z");
+      expect(getProject(context, project.id).archivedAt).toBe("2026-01-01T00:30:00.000Z");
+      expect(getProject(context, project.name).archivedAt).toBe("2026-01-01T00:30:00.000Z");
+      expect(getIssue(context, issue.identifier)).toMatchObject({
+        identifier: "OPS-1",
+        teamId: operations.id,
+        projectId: project.id
+      });
+      expect(listIssues(context, { team: "OPS" }).map((listed) => listed.identifier)).toEqual([
+        "OPS-1"
+      ]);
+      expect(() => archiveTeam(context, operations.id)).toThrow("already archived");
+      expect(() => archiveProject(context, project.id)).toThrow("already archived");
+
+      const restoredTeam = unarchiveTeam(context, operations.id);
+      const restoredProject = unarchiveProject(context, project.id);
+
+      expect(restoredTeam.archivedAt).toBeNull();
+      expect(restoredProject.archivedAt).toBeNull();
+      expect(listTeams(context).map((team) => team.key)).toEqual(["ENG", "OPS"]);
+      expect(listProjects(context).map((item) => item.id)).toEqual([project.id]);
+      expect(() => unarchiveTeam(context, "OPS")).toThrow("not archived");
+      expect(() => unarchiveProject(context, project.name)).toThrow("not archived");
     } finally {
       close();
     }
@@ -642,6 +772,168 @@ describe("core services", () => {
     }
   });
 
+  it("adds, lists, validates, and serializes repo-aware attachments with linked activity", () => {
+    const { context, db, close } = initializedContext("2026-05-01T00:00:00.000Z");
+
+    try {
+      const issue = createIssue(context, { title: "Trace agent output" });
+
+      context.clock = fixedClock("2026-05-01T00:01:00.000Z");
+      const link = addAttachment(context, {
+        issue: issue.identifier,
+        kind: "link",
+        url: "https://example.invalid/design-note",
+        title: "Design note"
+      });
+
+      context.clock = fixedClock("2026-05-01T00:02:00.000Z");
+      const branch = addAttachment(context, {
+        issue: issue.id,
+        kind: "branch",
+        repoPath: "/workspace/fictional-app",
+        remote: "origin",
+        branchName: "lf-73-attachments"
+      });
+
+      context.clock = fixedClock("2026-05-01T00:03:00.000Z");
+      const pr = addAttachment(context, {
+        issue: issue.identifier,
+        kind: "pr",
+        repoPath: "/workspace/fictional-app",
+        url: "https://example.invalid/fictional-app/pull/73"
+      });
+
+      context.clock = fixedClock("2026-05-01T00:04:00.000Z");
+      const commit = addAttachment(context, {
+        issue: issue.identifier,
+        kind: "commit",
+        repoPath: "/workspace/fictional-app",
+        commitSha: "abc123def456"
+      });
+
+      expect(link).toMatchObject({
+        issueId: issue.id,
+        kind: "link",
+        title: "Design note",
+        url: "https://example.invalid/design-note",
+        repoPath: null,
+        createdAt: "2026-05-01T00:01:00.000Z"
+      });
+      expect(branch).toMatchObject({
+        issueId: issue.id,
+        kind: "branch",
+        title: "lf-73-attachments",
+        repoPath: "/workspace/fictional-app",
+        remote: "origin",
+        branchName: "lf-73-attachments",
+        url: null,
+        commitSha: null
+      });
+      expect(pr).toMatchObject({
+        kind: "pr",
+        title: "https://example.invalid/fictional-app/pull/73",
+        repoPath: "/workspace/fictional-app",
+        url: "https://example.invalid/fictional-app/pull/73"
+      });
+      expect(commit).toMatchObject({
+        kind: "commit",
+        title: "abc123def456",
+        repoPath: "/workspace/fictional-app",
+        commitSha: "abc123def456"
+      });
+      expect(listAttachments(context, { issue: issue.identifier }).map((item) => item.id)).toEqual([
+        link.id,
+        branch.id,
+        pr.id,
+        commit.id
+      ]);
+
+      const serialized = serializeIssue(getIssue(context, issue.identifier));
+      expect(serialized.attachments).toEqual([
+        serializeAttachment(link),
+        serializeAttachment(branch),
+        serializeAttachment(pr),
+        serializeAttachment(commit)
+      ]);
+      expect(serialized.updatedAt).toBe("2026-05-01T00:04:00.000Z");
+
+      expect(readActivityEntries(db)).toMatchObject([
+        { action: "created" },
+        { action: "linked", data: { attachmentId: link.id, kind: "link", repoPath: null } },
+        {
+          action: "linked",
+          data: {
+            attachmentId: branch.id,
+            kind: "branch",
+            repoPath: "/workspace/fictional-app",
+            branchName: "lf-73-attachments"
+          }
+        },
+        {
+          action: "linked",
+          data: {
+            attachmentId: pr.id,
+            kind: "pr",
+            repoPath: "/workspace/fictional-app",
+            url: "https://example.invalid/fictional-app/pull/73"
+          }
+        },
+        {
+          action: "linked",
+          data: {
+            attachmentId: commit.id,
+            kind: "commit",
+            repoPath: "/workspace/fictional-app",
+            commitSha: "abc123def456"
+          }
+        }
+      ]);
+
+      expect(() => addAttachment(context, { issue: issue.identifier, kind: "link" })).toThrow(
+        "Attachment kind link requires url."
+      );
+      expect(() =>
+        addAttachment(context, {
+          issue: issue.identifier,
+          kind: "branch",
+          repoPath: "/workspace/fictional-app"
+        })
+      ).toThrow("Attachment kind branch requires branchName.");
+      expect(() =>
+        addAttachment(context, {
+          issue: issue.identifier,
+          kind: "pr",
+          url: "https://example.invalid/fictional-app/pull/74"
+        })
+      ).toThrow("Attachment kind pr requires repoPath.");
+      expect(() =>
+        addAttachment(context, {
+          issue: issue.identifier,
+          kind: "commit",
+          repoPath: "/workspace/fictional-app"
+        })
+      ).toThrow("Attachment kind commit requires commitSha.");
+
+      expect(
+        linkIssueInputSchema.safeParse({
+          issue: issue.identifier,
+          kind: "commit",
+          repoPath: "/workspace/fictional-app",
+          commitSha: "abc123def456"
+        }).success
+      ).toBe(true);
+      expect(
+        linkIssueInputSchema.safeParse({
+          issue: issue.identifier,
+          kind: "branch",
+          repoPath: "/workspace/fictional-app"
+        }).success
+      ).toBe(false);
+    } finally {
+      close();
+    }
+  });
+
   it("adds comments and threaded replies with authors and serializes them on issues", () => {
     const { context, close } = initializedContext("2026-05-01T00:00:00.000Z");
 
@@ -844,6 +1136,11 @@ describe("core services", () => {
       createProject(context, { name: "Platform Foundations", status: "planned" });
 
       const issue = createIssue(context, { title: "Check transaction behavior" });
+      addAttachment(context, {
+        issue: issue.identifier,
+        kind: "link",
+        url: "https://example.invalid/transaction-link"
+      });
       appendActivity(context, {
         issueId: issue.id,
         actorId: actor.id,
@@ -852,7 +1149,7 @@ describe("core services", () => {
       });
 
       expect(transactionOptions).toEqual(
-        Array.from({ length: 9 }, () => ({ behavior: "immediate" }))
+        Array.from({ length: 10 }, () => ({ behavior: "immediate" }))
       );
     } finally {
       db.$client.close();
@@ -962,12 +1259,20 @@ describe("core services", () => {
       updateIssue(context, issue.identifier, { cycle: cycle.number });
 
       context.clock = fixedClock("2026-06-01T00:11:00.000Z");
+      const attachment = addAttachment(context, {
+        issue: issue.identifier,
+        kind: "branch",
+        repoPath: "/workspace/activity-app",
+        branchName: "activity-trail"
+      });
+
+      context.clock = fixedClock("2026-06-01T00:12:00.000Z");
       archiveIssue(context, issue.identifier);
 
       const entries = listActivity(context, { issue: issue.identifier });
       const serialized = entries.map(serializeActivity);
 
-      expect(entries).toHaveLength(11);
+      expect(entries).toHaveLength(12);
       expect(listActivity(context, { issue: issue.id }).map((entry) => entry.id)).toEqual(
         entries.map((entry) => entry.id)
       );
@@ -982,6 +1287,7 @@ describe("core services", () => {
         "updated",
         "updated",
         "updated",
+        "linked",
         "archived"
       ]);
       expect(serialized.map((entry) => entry.createdAt)).toEqual([
@@ -995,7 +1301,8 @@ describe("core services", () => {
         "2026-06-01T00:08:00.000Z",
         "2026-06-01T00:09:00.000Z",
         "2026-06-01T00:10:00.000Z",
-        "2026-06-01T00:11:00.000Z"
+        "2026-06-01T00:11:00.000Z",
+        "2026-06-01T00:12:00.000Z"
       ]);
       expect(serialized).toMatchObject([
         { issueId: issue.id, actor: { handle: "owner" }, data: { identifier: issue.identifier } },
@@ -1015,6 +1322,7 @@ describe("core services", () => {
         { data: { changed: { parentId: parent.id } } },
         { data: { changed: { parentId: null } } },
         { data: { changed: { cycleId: cycle.id } } },
+        { data: { attachmentId: attachment.id, kind: "branch", repoPath: "/workspace/activity-app" } },
         { data: { identifier: issue.identifier } }
       ]);
       expect(Object.keys(serialized[0] ?? {})).toEqual([
@@ -1027,6 +1335,80 @@ describe("core services", () => {
         "createdAt"
       ]);
       expect(JSON.stringify(serialized)).not.toContain("undefined");
+    } finally {
+      close();
+    }
+  });
+
+  it("lists activity since a cursor across issues with stable cursors and filters", () => {
+    const { context, close } = initializedContext("2026-06-02T00:00:00.000Z");
+
+    try {
+      const agent = createActor(context, {
+        type: "agent",
+        name: "Build Agent",
+        handle: "build-agent"
+      });
+      createTeam(context, { key: "OPS", name: "Operations" });
+
+      const first = createIssue(context, { title: "Prepare feed" });
+      const second = createIssue(context, { title: "Route agent event" });
+      const operations = createIssue(context, {
+        team: "OPS",
+        title: "Watch operations event"
+      });
+
+      assignIssue(context, second.identifier, agent.handle);
+      moveIssue(context, first.identifier, "In Progress");
+
+      const firstPage = listActivitySince(context, { cursor: "0", limit: 2 });
+
+      expect(firstPage.events.map((event) => event.issueIdentifier)).toEqual([
+        first.identifier,
+        second.identifier
+      ]);
+      expect(firstPage.cursor).toBe(firstPage.events[1]?.cursor);
+      expect(Number(firstPage.events[0]?.cursor)).toBeLessThan(
+        Number(firstPage.events[1]?.cursor)
+      );
+
+      const nextPage = listActivitySince(context, { cursor: firstPage.cursor });
+      expect(nextPage.events.map((event) => [event.issueIdentifier, event.action])).toEqual([
+        [operations.identifier, "created"],
+        [second.identifier, "assigned"],
+        [first.identifier, "state_changed"]
+      ]);
+      expect(nextPage.cursor).toBe(nextPage.events.at(-1)?.cursor);
+
+      expect(listActivitySince(context, { cursor: nextPage.cursor }).events).toEqual([]);
+      expect(listActivitySince(context, { cursor: nextPage.cursor }).cursor).toBe(
+        nextPage.cursor
+      );
+      expect(
+        listActivitySince(context, { team: "ops" }).events.map((event) => event.issueIdentifier)
+      ).toEqual([operations.identifier]);
+      expect(
+        listActivitySince(context, { assignee: agent.handle }).events.map((event) => [
+          event.issueIdentifier,
+          event.action
+        ])
+      ).toEqual([
+        [second.identifier, "created"],
+        [second.identifier, "assigned"]
+      ]);
+
+      expect(serializeActivityEvent(nextPage.events[0])).toMatchObject({
+        cursor: nextPage.events[0]?.cursor,
+        issueIdentifier: operations.identifier,
+        issueId: operations.id,
+        actor: { handle: "owner" },
+        action: "created",
+        data: { identifier: operations.identifier },
+        createdAt: "2026-06-02T00:00:00.000Z"
+      });
+      expect(JSON.stringify(nextPage.events.map(serializeActivityEvent))).not.toContain(
+        "undefined"
+      );
     } finally {
       close();
     }
@@ -1095,6 +1477,7 @@ describe("core services", () => {
         "parent",
         "children",
         "comments",
+        "attachments",
         "estimate",
         "dueDate",
         "sortOrder",
@@ -1116,6 +1499,7 @@ describe("core services", () => {
         parent: null,
         children: [],
         comments: [],
+        attachments: [],
         estimate: null,
         dueDate: null,
         startedAt: null,

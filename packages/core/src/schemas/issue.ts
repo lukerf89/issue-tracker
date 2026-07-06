@@ -6,6 +6,7 @@ import type {
   CreateIssueInput,
   ListIssueFilters,
   SearchIssuesInput,
+  UnarchiveIssueInput,
   UpdateIssueInput
 } from "../services/issue.js";
 import {
@@ -99,3 +100,7 @@ export const assignIssueInputSchema = z.object({
 export const archiveIssueInputSchema = z.object({
   identifier: nonEmptyStringSchema
 }) satisfies z.ZodType<ArchiveIssueInput>;
+
+export const unarchiveIssueInputSchema = z.object({
+  identifier: nonEmptyStringSchema
+}) satisfies z.ZodType<UnarchiveIssueInput>;

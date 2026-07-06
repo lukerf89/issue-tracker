@@ -7,10 +7,15 @@ import {
   ConfigKey,
   addComment,
   addCommentInputSchema,
+  addAttachment,
   archiveIssue,
   archiveIssueInputSchema,
   archiveLabel,
   archiveLabelInputSchema,
+  archiveProject,
+  archiveProjectInputSchema,
+  archiveTeam,
+  archiveTeamInputSchema,
   assignIssue,
   assignIssueInputSchema,
   backupDatabase,
@@ -31,8 +36,11 @@ import {
   getProject,
   listActivity,
   listActivityInputSchema,
+  listActivitySince,
+  listActivitySinceInputSchema,
   listActors,
   listActorsInputSchema,
+  linkIssueInputSchema,
   listCycles,
   listCyclesInputSchema,
   listLabels,
@@ -50,6 +58,15 @@ import {
   searchInputSchema,
   searchIssues,
   setConfig,
+  type ServiceContext,
+  unarchiveIssue,
+  unarchiveIssueInputSchema,
+  unarchiveLabel,
+  unarchiveLabelInputSchema,
+  unarchiveProject,
+  unarchiveProjectInputSchema,
+  unarchiveTeam,
+  unarchiveTeamInputSchema,
   updateIssueInputSchema,
   updateIssue,
   updateProjectInputSchema,
@@ -57,12 +74,14 @@ import {
   whoami,
   init as initWorkspace,
   type AddCommentInput,
+  type AddAttachmentInput,
   type AssignIssueInput,
   type CreateActorInput,
   type CreateIssueInput,
   type CreateCycleInput,
   type CreateLabelInput,
   type CreateProjectInput,
+  type ListActivitySinceInput,
   type ListIssueFilters,
   type SearchIssuesInput,
   type UpdateIssueInput,
@@ -77,6 +96,8 @@ import {
   printActor,
   printActors,
   printActivity,
+  printActivityEvents,
+  printAttachment,
   printComment,
   printCycle,
   printCycles,
@@ -255,6 +276,26 @@ export function createProgram(): Command {
         );
       })
     );
+  team
+    .command("archive")
+    .argument("<team>")
+    .option("--json", "print JSON output")
+    .action((teamRef, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const input = archiveTeamInputSchema.parse({ team: teamRef });
+        printTeam(archiveTeam(cli.context, input.team), optionsWithGlobals(command));
+      })
+    );
+  team
+    .command("unarchive")
+    .argument("<team>")
+    .option("--json", "print JSON output")
+    .action((teamRef, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const input = unarchiveTeamInputSchema.parse({ team: teamRef });
+        printTeam(unarchiveTeam(cli.context, input.team), optionsWithGlobals(command));
+      })
+    );
 
   const label = program.command("label").description("manage labels");
   label
@@ -293,6 +334,16 @@ export function createProgram(): Command {
       withContext(command, { requireActor: false }, (cli) => {
         const input = archiveLabelInputSchema.parse({ label: labelRef });
         printLabel(archiveLabel(cli.context, input.label), optionsWithGlobals(command));
+      })
+    );
+  label
+    .command("unarchive")
+    .argument("<label>")
+    .option("--json", "print JSON output")
+    .action((labelRef, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const input = unarchiveLabelInputSchema.parse({ label: labelRef });
+        printLabel(unarchiveLabel(cli.context, input.label), optionsWithGlobals(command));
       })
     );
 
@@ -387,6 +438,26 @@ export function createProgram(): Command {
           updateProject(cli.context, idOrName, projectUpdateInput(options)),
           options
         );
+      })
+    );
+  project
+    .command("archive")
+    .argument("<project>")
+    .option("--json", "print JSON output")
+    .action((projectRef, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const input = archiveProjectInputSchema.parse({ project: projectRef });
+        printProject(archiveProject(cli.context, input.project), optionsWithGlobals(command));
+      })
+    );
+  project
+    .command("unarchive")
+    .argument("<project>")
+    .option("--json", "print JSON output")
+    .action((projectRef, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const input = unarchiveProjectInputSchema.parse({ project: projectRef });
+        printProject(unarchiveProject(cli.context, input.project), optionsWithGlobals(command));
       })
     );
 
@@ -549,6 +620,27 @@ export function createProgram(): Command {
       })
     );
   issue
+    .command("link")
+    .argument("<identifier>")
+    .argument("[url]")
+    .option("--kind <kind>", "attachment kind: link, branch, pr, or commit", "link")
+    .option("--url <url>", "attachment URL")
+    .option("--repo <path>", "local repository path")
+    .option("--remote <remote>", "git remote name")
+    .option("--branch <name>", "branch name")
+    .option("--sha <sha>", "commit SHA")
+    .option("--title <title>", "attachment title")
+    .option("--json", "print JSON output")
+    .action((identifier, url, _options, command) =>
+      withContext(command, {}, (cli) => {
+        const options = optionsWithGlobals(command);
+        printAttachment(
+          addAttachment(cli.context, issueLinkInput(identifier, url, options)),
+          options
+        );
+      })
+    );
+  issue
     .command("archive")
     .argument("<identifier>")
     .option("--json", "print JSON output")
@@ -559,6 +651,41 @@ export function createProgram(): Command {
           cli.context,
           archiveIssue(cli.context, input.identifier),
           optionsWithGlobals(command)
+        );
+      })
+    );
+  issue
+    .command("unarchive")
+    .argument("<identifier>")
+    .option("--json", "print JSON output")
+    .action((identifier, _options, command) =>
+      withContext(command, {}, (cli) => {
+        const input = unarchiveIssueInputSchema.parse({ identifier });
+        printIssue(
+          cli.context,
+          unarchiveIssue(cli.context, input.identifier),
+          optionsWithGlobals(command)
+        );
+      })
+    );
+
+  program
+    .command("watch")
+    .description("print activity feed events as JSONL")
+    .option("--since <cursor>", "activity cursor to start after")
+    .option("--once", "print currently available events and exit")
+    .option("--interval <ms>", "poll interval in milliseconds", parsePositiveInteger)
+    .option("--team <key>", "team key or id")
+    .option("--assignee <actor>", "assignee id or handle")
+    .option("--limit <number>", "maximum events per poll", parsePositiveInteger)
+    .option("--json", "emit JSONL output")
+    .action((_options, command) =>
+      withContextAsync(command, { requireActor: false }, async (cli) => {
+        const options = optionsWithGlobals(command);
+        await watchActivity(
+          cli.context,
+          activitySinceInput(options),
+          resolveWatchOptions(options)
         );
       })
     );
@@ -635,6 +762,20 @@ function withContext<T>(
 
   try {
     return work(cli);
+  } finally {
+    cli.close();
+  }
+}
+
+async function withContextAsync<T>(
+  command: unknown,
+  options: { requireActor?: boolean },
+  work: (cli: ReturnType<typeof openCliContext>) => Promise<T>
+): Promise<T> {
+  const cli = openCliContext(optionsWithGlobals(command), options);
+
+  try {
+    return await work(cli);
   } finally {
     cli.close();
   }
@@ -860,6 +1001,62 @@ function issueCommentInput(
   }));
 }
 
+function issueLinkInput(
+  identifier: string,
+  urlArgument: string | undefined,
+  options: Record<string, unknown>
+): AddAttachmentInput {
+  return linkIssueInputSchema.parse(omitUndefined({
+    issue: identifier,
+    kind: stringOption(options.kind) ?? "link",
+    title: nullableStringOption(options.title),
+    url: stringOption(options.url) ?? urlArgument,
+    repoPath: stringOption(options.repo),
+    remote: nullableStringOption(options.remote),
+    branchName: stringOption(options.branch),
+    commitSha: stringOption(options.sha)
+  }));
+}
+
+function activitySinceInput(options: Record<string, unknown>): ListActivitySinceInput {
+  return listActivitySinceInputSchema.parse(omitUndefined({
+    cursor: stringOption(options.since),
+    team: stringOption(options.team),
+    assignee: stringOption(options.assignee),
+    limit: numberOption(options.limit)
+  }));
+}
+
+export function resolveWatchOptions(options: Record<string, unknown>): {
+  intervalMs: number;
+  once: boolean;
+} {
+  return {
+    intervalMs: numberOption(options.interval) ?? 1000,
+    once: booleanOption(options.once) === true
+  };
+}
+
+async function watchActivity(
+  context: ServiceContext,
+  input: ListActivitySinceInput,
+  options: { intervalMs: number; once: boolean }
+): Promise<void> {
+  let cursor = input.cursor;
+
+  while (true) {
+    const result = listActivitySince(context, { ...input, cursor });
+    printActivityEvents(result.events);
+    cursor = result.cursor;
+
+    if (options.once) {
+      return;
+    }
+
+    await delay(options.intervalMs);
+  }
+}
+
 function writeExportSnapshot(snapshot: unknown, outputPath: string | undefined): void {
   const serialized = `${JSON.stringify(snapshot)}\n`;
 
@@ -877,6 +1074,15 @@ function parseInteger(value: string): number {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || String(parsed) !== value) {
     throw new InvalidArgumentError("expected an integer");
+  }
+
+  return parsed;
+}
+
+function parsePositiveInteger(value: string): number {
+  const parsed = parseInteger(value);
+  if (parsed <= 0) {
+    throw new InvalidArgumentError("expected a positive integer");
   }
 
   return parsed;
@@ -934,6 +1140,12 @@ function stringArrayOption(value: unknown): string[] | undefined {
 
 function collectValues(value: string, previous: string[]): string[] {
   return [...previous, value];
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolveDelay) => {
+    setTimeout(resolveDelay, ms);
+  });
 }
 
 function omitUndefined<T extends Record<string, unknown>>(object: T): T {

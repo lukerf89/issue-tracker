@@ -90,6 +90,28 @@ export function archiveLabel(context: ServiceContext, idOrName: string) {
   });
 }
 
+export function unarchiveLabel(context: ServiceContext, idOrName: string) {
+  return inTransaction(context, (txContext) => {
+    const label = getLabelForArchive(txContext, idOrName);
+
+    if (label.archivedAt === null) {
+      throw new AppError(
+        AppErrorCode.CONSTRAINT_VIOLATION,
+        `Label ${label.name} is not archived.`,
+        { label: idOrName, id: label.id }
+      );
+    }
+
+    txContext.db
+      .update(labels)
+      .set({ archivedAt: null })
+      .where(eq(labels.id, label.id))
+      .run();
+
+    return getLabelById(txContext, label.id);
+  });
+}
+
 export function attachLabel(context: ServiceContext, issueId: string, labelId: string) {
   requireActor(context);
   return inTransaction(context, (txContext) => attachLabelInTransaction(txContext, issueId, labelId));

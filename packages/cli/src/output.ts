@@ -5,6 +5,8 @@ import {
   getState,
   serializeActor,
   serializeActivity,
+  serializeActivityEvent,
+  serializeAttachment,
   serializeComment,
   serializeCycle,
   serializeIssue,
@@ -12,7 +14,9 @@ import {
   serializeProject,
   serializeTeam,
   type Actor,
+  type ActivityFeedEvent,
   type ActivityWithActor,
+  type Attachment,
   type CommentWithAuthor,
   type Cycle,
   type Issue,
@@ -143,6 +147,15 @@ export function printComment(comment: CommentWithAuthor, options: OutputOptions)
   process.stdout.write(`${formatCommentLines(comment, 0).join("\n")}\n`);
 }
 
+export function printAttachment(attachment: Attachment, options: OutputOptions): void {
+  if (options.json) {
+    printJson(serializeAttachment(attachment));
+    return;
+  }
+
+  process.stdout.write(`${formatAttachmentLine(attachment)}\n`);
+}
+
 export function printActivity(
   entries: ActivityWithActor[],
   options: OutputOptions
@@ -163,6 +176,12 @@ export function printActivity(
         formatActivityData(entry.data)
       ].filter(Boolean).join("  ") + "\n"
     );
+  }
+}
+
+export function printActivityEvents(entries: ActivityFeedEvent[]): void {
+  for (const entry of entries) {
+    printJson(serializeActivityEvent(entry));
   }
 }
 
@@ -279,6 +298,7 @@ function printIssueRelations(issue: Issue): void {
     parent?: IssueReference | null;
     children?: IssueReference[];
     comments?: CommentWithAuthor[];
+    attachments?: Attachment[];
   };
   const lines: string[] = [];
 
@@ -299,9 +319,33 @@ function printIssueRelations(issue: Issue): void {
     lines.push(...commentThreadLines(detail.comments));
   }
 
+  if (hasOwn(detail, "attachments") && detail.attachments && detail.attachments.length > 0) {
+    lines.push("Attachments");
+
+    for (const attachment of detail.attachments) {
+      lines.push(`  ${formatAttachmentLine(attachment)}`);
+    }
+  }
+
   if (lines.length > 0) {
     process.stdout.write(`${lines.join("\n")}\n`);
   }
+}
+
+function formatAttachmentLine(attachment: Attachment): string {
+  const target = [
+    attachment.repoPath,
+    attachment.branchName,
+    attachment.commitSha,
+    attachment.url
+  ].filter((value): value is string => typeof value === "string" && value.length > 0)
+    .join("  ");
+
+  return [
+    pc.bold(attachment.kind),
+    attachment.title,
+    target === attachment.title ? "" : target
+  ].filter(Boolean).join("  ");
 }
 
 function commentThreadLines(comments: CommentWithAuthor[]): string[] {

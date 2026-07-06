@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { CreateProjectInput, UpdateProjectInput } from "../services/project.js";
+import type { ArchiveProjectInput, CreateProjectInput, UpdateProjectInput } from "../services/project.js";
 import { includeArchivedSchema, nonEmptyStringSchema, optionalNullableStringSchema } from "./common.js";
 
 export const projectStatusSchema = z.enum([
@@ -32,3 +32,9 @@ export const updateProjectToolInputSchema = updateProjectInputSchema.extend({
 });
 
 export const listProjectsInputSchema = includeArchivedSchema;
+
+export const archiveProjectInputSchema = z.object({
+  project: nonEmptyStringSchema
+}) satisfies z.ZodType<ArchiveProjectInput>;
+
+export const unarchiveProjectInputSchema = archiveProjectInputSchema;

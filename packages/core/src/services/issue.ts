@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 
 import { inTransaction, type ServiceContext } from "../context.js";
-import { actors, issueLabels, issues, labels, projects, teams, workflowStates, type Actor, type Issue } from "../db/schema.js";
+import { actors, issueLabels, issues, labels, projects, teams, workflowStates, type Actor, type Attachment, type Issue } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { identifier, uuid } from "../ids.js";
 import { appendActivityInTransaction } from "./activity.js";
@@ -18,6 +18,7 @@ import {
   withIssueLabels,
   type IssueWithLabels
 } from "./label.js";
+import { listAttachments } from "./attachment.js";
 import { listComments, type CommentWithAuthor } from "./comment.js";
 import { getState, resolveDefaultUnstartedState } from "./state.js";
 import { getTeam, getTeamByKey } from "./team.js";
@@ -90,6 +91,10 @@ export interface ArchiveIssueInput {
   identifier: string;
 }
 
+export interface UnarchiveIssueInput {
+  identifier: string;
+}
+
 export interface IssueReference {
   id: string;
   identifier: string;
@@ -102,6 +107,7 @@ export type IssueWithDetails = IssueWithLabels & {
   parent: IssueReference | null;
   children: IssueReference[];
   comments: CommentWithAuthor[];
+  attachments: Attachment[];
 };
 
 export function createIssue(context: ServiceContext, input: CreateIssueInput) {
@@ -428,6 +434,42 @@ export function archiveIssue(context: ServiceContext, issueIdentifier: string) {
   });
 }
 
+export function unarchiveIssue(context: ServiceContext, issueIdentifier: string) {
+  requireActor(context);
+
+  return inTransaction(context, (txContext) => {
+    const issue = getIssueByIdOrIdentifier(txContext, issueIdentifier);
+
+    if (issue.archivedAt === null) {
+      throw new AppError(
+        AppErrorCode.CONSTRAINT_VIOLATION,
+        `Issue ${issue.identifier} is not archived.`,
+        { identifier: issue.identifier }
+      );
+    }
+
+    const now = txContext.clock.now().toISOString();
+
+    txContext.db
+      .update(issues)
+      .set({
+        archivedAt: null,
+        updatedAt: now
+      })
+      .where(eq(issues.id, issue.id))
+      .run();
+
+    appendActivityInTransaction(txContext, {
+      issueId: issue.id,
+      actorId: requireActor(txContext).id,
+      action: "unarchived",
+      data: { identifier: issue.identifier }
+    });
+
+    return getIssue(txContext, issue.identifier);
+  });
+}
+
 export function moveIssue(context: ServiceContext, issueIdentifier: string, stateIdOrName: string) {
   requireActor(context);
 
@@ -504,7 +546,8 @@ function withIssueDetails(context: ServiceContext, issue: Issue): IssueWithDetai
     ...withIssueLabels(context, issue),
     parent: issue.parentId ? issueReference(getIssueById(context, issue.parentId)) : null,
     children: listChildIssueReferences(context, issue.id),
-    comments: listComments(context, { issue: issue.id })
+    comments: listComments(context, { issue: issue.id }),
+    attachments: listAttachments(context, { issue: issue.id })
   };
 }
 

@@ -1,4 +1,5 @@
 import {
+  addAttachment,
   addComment,
   addCommentInputSchema,
   archiveIssue,
@@ -11,6 +12,8 @@ import {
   getIssueInputSchema,
   listActivity,
   listActivityInputSchema,
+  linkIssueInputSchema,
+  linkIssueToolInputSchema,
   listIssueFiltersSchema,
   listIssues,
   moveIssue,
@@ -18,8 +21,11 @@ import {
   searchInputSchema,
   searchIssues,
   serializeActivity,
+  serializeAttachment,
   serializeComment,
   serializeIssue,
+  unarchiveIssue,
+  unarchiveIssueInputSchema,
   updateIssue,
   updateIssueToolInputSchema
 } from "@issue-tracker/core";
@@ -168,6 +174,21 @@ export function registerIssueTools(
   );
 
   server.registerTool(
+    "unarchive_issue",
+    {
+      title: "Unarchive issue",
+      description: "Restore an archived issue.",
+      inputSchema: unarchiveIssueInputSchema.shape
+    },
+    (input) => mcpToolResult(() => {
+      const parsed = unarchiveIssueInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
+        jsonResult(serializeIssue(unarchiveIssue(context, parsed.identifier)))
+      );
+    })
+  );
+
+  server.registerTool(
     "comment_on_issue",
     {
       title: "Comment on issue",
@@ -178,6 +199,21 @@ export function registerIssueTools(
       const parsed = addCommentInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
         jsonResult(serializeComment(addComment(context, parsed)))
+      );
+    })
+  );
+
+  server.registerTool(
+    "link_issue",
+    {
+      title: "Link issue",
+      description: "Attach a branch, PR, commit, or URL to an issue.",
+      inputSchema: linkIssueToolInputSchema.shape
+    },
+    (input) => mcpToolResult(() => {
+      const parsed = linkIssueInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
+        jsonResult(serializeAttachment(addAttachment(context, parsed)))
       );
     })
   );

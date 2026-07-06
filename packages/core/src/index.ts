@@ -17,7 +17,9 @@ export {
 } from "./context.js";
 export {
   serializeActivity,
+  serializeActivityEvent,
   serializeActor,
+  serializeAttachment,
   serializeComment,
   serializeCycle,
   serializeIssue,
@@ -29,10 +31,22 @@ export {
 export {
   appendActivity,
   listActivity,
+  listActivitySince,
+  type ActivityFeed,
+  type ActivityFeedEvent,
+  type ActivityFeedIssue,
   type ActivityWithActor,
   type AppendActivityInput,
-  type ListActivityInput
+  type ListActivityInput,
+  type ListActivitySinceInput
 } from "./services/activity.js";
+export {
+  addAttachment,
+  listAttachments,
+  type AddAttachmentInput,
+  type AttachmentKind,
+  type ListAttachmentsInput
+} from "./services/attachment.js";
 export {
   createActor,
   getActor,
@@ -72,6 +86,7 @@ export {
   getLabel,
   listIssueLabels,
   listLabels,
+  unarchiveLabel,
   type CreateLabelInput,
   type IssueWithLabels,
   type ListLabelsOptions
@@ -84,6 +99,7 @@ export {
   listIssues,
   moveIssue,
   searchIssues,
+  unarchiveIssue,
   updateIssue,
   type ArchiveIssueInput,
   type AssignIssueInput,
@@ -92,13 +108,17 @@ export {
   type IssueWithDetails,
   type ListIssueFilters,
   type SearchIssuesInput,
+  type UnarchiveIssueInput,
   type UpdateIssueInput
 } from "./services/issue.js";
 export {
+  archiveProject,
   createProject,
   getProject,
   listProjects,
+  unarchiveProject,
   updateProject,
+  type ArchiveProjectInput,
   type CreateProjectInput,
   type UpdateProjectInput
 } from "./services/project.js";
@@ -110,14 +130,18 @@ export {
   seedDefaultWorkflowStates
 } from "./services/state.js";
 export {
+  archiveTeam,
   createTeam,
   getTeam,
   getTeamByKey,
   listTeams,
+  unarchiveTeam,
+  type ArchiveTeamInput,
   type CreateTeamInput
 } from "./services/team.js";
 export {
   listActivityInputSchema,
+  listActivitySinceInputSchema,
 } from "./schemas/activity.js";
 export {
   actorTypeSchema,
@@ -131,6 +155,12 @@ export {
 } from "./schemas/cycle.js";
 export { addCommentInputSchema } from "./schemas/comment.js";
 export {
+  attachmentKindSchema,
+  linkIssueInputSchema,
+  linkIssueToolInputSchema,
+  listAttachmentsInputSchema
+} from "./schemas/attachment.js";
+export {
   archiveIssueInputSchema,
   assignIssueInputSchema,
   createIssueInputSchema,
@@ -138,23 +168,32 @@ export {
   listIssueFiltersSchema,
   moveIssueInputSchema,
   searchInputSchema,
+  unarchiveIssueInputSchema,
   updateIssueInputSchema,
   updateIssueToolInputSchema
 } from "./schemas/issue.js";
 export {
   archiveLabelInputSchema,
   createLabelInputSchema,
-  listLabelsInputSchema
+  listLabelsInputSchema,
+  unarchiveLabelInputSchema
 } from "./schemas/label.js";
 export {
+  archiveProjectInputSchema,
   createProjectInputSchema,
   getProjectInputSchema,
   listProjectsInputSchema,
   projectStatusSchema,
+  unarchiveProjectInputSchema,
   updateProjectInputSchema,
   updateProjectToolInputSchema
 } from "./schemas/project.js";
-export { createTeamInputSchema, listTeamsInputSchema } from "./schemas/team.js";
+export {
+  archiveTeamInputSchema,
+  createTeamInputSchema,
+  listTeamsInputSchema,
+  unarchiveTeamInputSchema
+} from "./schemas/team.js";
 
 export type {
   Activity,

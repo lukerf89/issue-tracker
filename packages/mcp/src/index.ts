@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
+import { registerIssueResources } from "./resources/issues.js";
 import { registerActorTools } from "./tools/actors.js";
 import { registerCycleTools } from "./tools/cycles.js";
 import { registerIssueTools } from "./tools/issues.js";
@@ -30,6 +31,7 @@ export function createServer(options: CreateServerOptions): McpServer {
   registerLabelTools(server, options);
   registerProjectTools(server, options);
   registerTeamTools(server, options);
+  registerIssueResources(server, options);
 
   return server;
 }

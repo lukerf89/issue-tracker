@@ -1,4 +1,5 @@
-import type { Activity, Actor, Comment, Cycle, Issue, Label, Project, Team, WorkflowState } from "./db/schema.js";
+import type { Activity, Actor, Attachment, Comment, Cycle, Issue, Label, Project, Team, WorkflowState } from "./db/schema.js";
+import type { ActivityFeedEvent } from "./services/activity.js";
 
 interface IssueReference {
   id: string;
@@ -79,6 +80,7 @@ export function serializeIssue(
     parent?: IssueReference | null;
     children?: IssueReference[];
     comments?: Array<Comment & { author: Actor }>;
+    attachments?: Attachment[];
   }
 ) {
   const relationFields = {
@@ -90,6 +92,9 @@ export function serializeIssue(
       : {}),
     ...(hasOwn(issue, "comments")
       ? { comments: (issue.comments ?? []).map(serializeComment) }
+      : {}),
+    ...(hasOwn(issue, "attachments")
+      ? { attachments: (issue.attachments ?? []).map(serializeAttachment) }
       : {})
   };
 
@@ -133,6 +138,21 @@ export function serializeComment(comment: Comment & { author: Actor }) {
   };
 }
 
+export function serializeAttachment(attachment: Attachment) {
+  return {
+    id: attachment.id,
+    issueId: attachment.issueId,
+    kind: attachment.kind,
+    title: attachment.title,
+    url: attachment.url ?? null,
+    repoPath: attachment.repoPath ?? null,
+    remote: attachment.remote ?? null,
+    branchName: attachment.branchName ?? null,
+    commitSha: attachment.commitSha ?? null,
+    createdAt: toIso(attachment.createdAt)
+  };
+}
+
 function serializeIssueReference(issue: IssueReference) {
   return {
     id: issue.id,
@@ -152,6 +172,14 @@ export function serializeActivity(entry: Activity & { actor: Actor }) {
     action: entry.action,
     data: entry.data as Record<string, unknown>,
     createdAt: toIso(entry.createdAt)
+  };
+}
+
+export function serializeActivityEvent(entry: ActivityFeedEvent) {
+  return {
+    cursor: entry.cursor,
+    issueIdentifier: entry.issueIdentifier,
+    ...serializeActivity(entry)
   };
 }
 

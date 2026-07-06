@@ -14,3 +14,5 @@ export const listLabelsInputSchema = includeArchivedSchema satisfies z.ZodType<L
 export const archiveLabelInputSchema = z.object({
   label: nonEmptyStringSchema
 });
+
+export const unarchiveLabelInputSchema = archiveLabelInputSchema;
