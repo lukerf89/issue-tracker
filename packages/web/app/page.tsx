@@ -1,6 +1,7 @@
 import { IssueListClient } from "../src/components/issue-list-client";
 import {
   getIssueListPageData,
+  isTrackerSetupRequiredError,
   type IssueListPageFilters
 } from "../src/data/queries";
 
@@ -24,7 +25,11 @@ export default async function IssueListPage({ searchParams }: IssueListPageProps
 
     return <IssueListClient data={data} filters={filters} />;
   } catch (error) {
-    return <SetupNotice error={error} />;
+    if (isTrackerSetupRequiredError(error)) {
+      return <SetupNotice error={error} />;
+    }
+
+    throw error;
   }
 }
 

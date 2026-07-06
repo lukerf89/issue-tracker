@@ -177,6 +177,15 @@ describe("web data layer", () => {
 
     expect(data.issues.map((issue) => issue.identifier)).toEqual(["ENG-4"]);
   });
+
+  it("intersects list page search results with active filters and archived inclusion", async () => {
+    const seeded = seedFilteredIssueListDb(tempDirs);
+    process.env.ISSUE_TRACKER_DB = seeded.dbPath;
+
+    await expectListPageIdentifiers({ q: "backlog", state: "In Progress" }, []);
+    await expectListPageIdentifiers({ q: "frontend", assignee: "build-agent" }, []);
+    await expectListPageIdentifiers({ q: "Archived", includeArchived: true }, ["ENG-8"]);
+  });
 });
 
 async function expectIdentifiers(
@@ -186,6 +195,15 @@ async function expectIdentifiers(
   const issues = await listIssuesData(filters);
 
   expect(issues.map((issue) => issue.identifier)).toEqual(identifiers);
+}
+
+async function expectListPageIdentifiers(
+  filters: Parameters<typeof getIssueListPageData>[0],
+  identifiers: string[]
+) {
+  const data = await getIssueListPageData(filters);
+
+  expect(data.issues.map((issue) => issue.identifier)).toEqual(identifiers);
 }
 
 function seedIssueTrackerDb(): string {

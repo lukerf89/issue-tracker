@@ -58,10 +58,8 @@ export const listIssueFiltersSchema = z.object({
   includeArchived: z.boolean().optional()
 }) satisfies z.ZodType<ListIssueFilters>;
 
-export const searchInputSchema = z.object({
-  query: nonEmptyStringSchema,
-  team: nonEmptyStringSchema.optional(),
-  limit: optionalIntegerSchema
+export const searchInputSchema = listIssueFiltersSchema.extend({
+  query: nonEmptyStringSchema
 }) satisfies z.ZodType<SearchIssuesInput>;
 
 export const updateIssueInputSchema = z.object({

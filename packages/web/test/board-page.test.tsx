@@ -105,7 +105,41 @@ describe("board page", () => {
       })
     );
   });
+
+  it("renders the setup notice for a migrated database without init records", async () => {
+    process.env.ISSUE_TRACKER_DB = seedUninitializedDb();
+
+    render(await BoardPage());
+
+    expect(
+      screen.getByRole("heading", { name: "Tracker database is not initialized" })
+    ).toBeInTheDocument();
+    expect(screen.getByText("Default actor is not configured.")).toBeInTheDocument();
+  });
+
+  it("rethrows unexpected board data errors instead of rendering the setup notice", async () => {
+    process.env.ISSUE_TRACKER_DB = mkdtempSync(join(tmpdir(), "issue-tracker-web-board-bad-db-"));
+    tempDirs.push(process.env.ISSUE_TRACKER_DB);
+
+    await expect(BoardPage()).rejects.toThrow();
+  });
 });
+
+function seedUninitializedDb(): string {
+  const tempDir = mkdtempSync(join(tmpdir(), "issue-tracker-web-board-uninitialized-"));
+  tempDirs.push(tempDir);
+
+  const dbPath = join(tempDir, "tracker.db");
+  const db = openDb(dbPath);
+
+  try {
+    applyMigrations(db);
+  } finally {
+    db.$client.close();
+  }
+
+  return dbPath;
+}
 
 function seedBoardDb() {
   const tempDir = mkdtempSync(join(tmpdir(), "issue-tracker-web-board-"));

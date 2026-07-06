@@ -186,6 +186,33 @@ describe("issue detail page", () => {
     expect(within(screen.getByLabelText("Current labels")).queryByText("Frontend")).toBeNull();
     expect(screen.getAllByText("comment", { selector: "strong" }).length).toBeGreaterThan(0);
   });
+
+  it("does not record activity or bump updatedAt when the detail move form keeps the current state", async () => {
+    const seeded = seedIssueDetailDb();
+    process.env.ISSUE_TRACKER_DB = seeded.dbPath;
+    const before = readIssueDetail(seeded.dbPath, seeded.identifier);
+    const previousStateChangedCount = before.activity.filter(
+      (entry) => entry.action === "state_changed"
+    ).length;
+
+    await moveIssueDetailAction(
+      formData({
+        identifier: seeded.identifier,
+        state: before.issue.stateId
+      })
+    );
+
+    const after = readIssueDetail(seeded.dbPath, seeded.identifier);
+
+    expect(after.issue.stateId).toBe(before.issue.stateId);
+    expect(after.issue.updatedAt).toBe(before.issue.updatedAt);
+    expect(after.activity.filter((entry) => entry.action === "state_changed")).toHaveLength(
+      previousStateChangedCount
+    );
+    expect(after.activity.map((entry) => entry.id)).toEqual(
+      before.activity.map((entry) => entry.id)
+    );
+  });
 });
 
 interface SeededIssueDetailDb {

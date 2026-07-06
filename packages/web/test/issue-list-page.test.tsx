@@ -1,7 +1,11 @@
-import { rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+
+import { applyMigrations, openDb } from "@issue-tracker/core";
 
 import IssueListPage from "../app/page";
 import { seedFilteredIssueListDb } from "./issue-list-fixture";
@@ -63,4 +67,37 @@ describe("issue list page", () => {
     expect(screen.queryByText("Archived filtered list cleanup")).not.toBeInTheDocument();
   });
 
+  it("renders the setup notice for a migrated database without init records", async () => {
+    process.env.ISSUE_TRACKER_DB = seedUninitializedDb();
+
+    render(await IssueListPage({ searchParams: Promise.resolve({}) }));
+
+    expect(
+      screen.getByRole("heading", { name: "Tracker database is not initialized" })
+    ).toBeInTheDocument();
+    expect(screen.getByText("Default actor is not configured.")).toBeInTheDocument();
+  });
+
+  it("rethrows unexpected list data errors instead of rendering the setup notice", async () => {
+    process.env.ISSUE_TRACKER_DB = mkdtempSync(join(tmpdir(), "issue-tracker-web-bad-db-"));
+    tempDirs.push(process.env.ISSUE_TRACKER_DB);
+
+    await expect(IssueListPage({ searchParams: Promise.resolve({}) })).rejects.toThrow();
+  });
 });
+
+function seedUninitializedDb(): string {
+  const tempDir = mkdtempSync(join(tmpdir(), "issue-tracker-web-uninitialized-"));
+  tempDirs.push(tempDir);
+
+  const dbPath = join(tempDir, "tracker.db");
+  const db = openDb(dbPath);
+
+  try {
+    applyMigrations(db);
+  } finally {
+    db.$client.close();
+  }
+
+  return dbPath;
+}

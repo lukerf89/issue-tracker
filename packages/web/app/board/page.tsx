@@ -1,4 +1,4 @@
-import { getBoardPageData } from "../../src/data/queries";
+import { getBoardPageData, isTrackerSetupRequiredError } from "../../src/data/queries";
 import { moveBoardIssueAction } from "../../src/data/actions";
 
 export const dynamic = "force-dynamic";
@@ -120,7 +120,11 @@ export default async function BoardPage() {
       </div>
     );
   } catch (error) {
-    return <SetupNotice error={error} />;
+    if (isTrackerSetupRequiredError(error)) {
+      return <SetupNotice error={error} />;
+    }
+
+    throw error;
   }
 }
 

@@ -19,6 +19,8 @@ import {
   createProject,
   createTeam,
   detachLabel,
+  getIssue,
+  getState,
   moveIssue,
   moveIssueInputSchema,
   serializeActor,
@@ -106,7 +108,16 @@ export async function moveIssueDetailAction(formData: FormData) {
     state: formString(formData.get("state"))
   });
 
-  await moveIssueAction(input.identifier, input.state);
+  withTrackerContext((context) => {
+    const issue = getIssue(context, input.identifier);
+    const requestedState = getState(context, input.state, issue.teamId);
+
+    if (requestedState.id === issue.stateId) {
+      return;
+    }
+
+    moveIssue(context, input.identifier, requestedState.id);
+  });
 }
 
 export async function assignIssueAction(input: AssignIssueInput) {

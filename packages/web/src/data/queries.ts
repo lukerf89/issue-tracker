@@ -3,6 +3,7 @@ import "server-only";
 import {
   AppError,
   AppErrorCode,
+  ConfigKey,
   getIssue,
   getLabel,
   getProject,
@@ -72,6 +73,26 @@ export type IssueDetailPageData = Awaited<ReturnType<typeof getIssueDetailPageDa
 
 export function isIssueNotFoundError(error: unknown): boolean {
   return error instanceof AppError && error.code === AppErrorCode.ISSUE_NOT_FOUND;
+}
+
+export function isTrackerSetupRequiredError(error: unknown): boolean {
+  if (!(error instanceof AppError)) {
+    return false;
+  }
+
+  if (
+    error.code === AppErrorCode.ACTOR_NOT_FOUND &&
+    isRecord(error.details) &&
+    (error.details.key === ConfigKey.DEFAULT_ACTOR || "actorId" in error.details)
+  ) {
+    return true;
+  }
+
+  return (
+    error.code === AppErrorCode.TEAM_NOT_FOUND &&
+    isRecord(error.details) &&
+    error.details.key === ConfigKey.DEFAULT_TEAM
+  );
 }
 
 export async function searchIssuesData(input: SearchIssuesInput) {
@@ -149,9 +170,10 @@ export async function getIssueListPageData(filters: IssueListPageFilters = {}) {
     );
 
     return {
-      issues: (q ? searchIssues(context, { query: q }) : listIssues(context, listFilters)).map(
-        serializeIssue
-      ),
+      issues: (q
+        ? searchIssues(context, { query: q, ...listFilters })
+        : listIssues(context, listFilters)
+      ).map(serializeIssue),
       projects: listProjects(context).map(serializeProject),
       teams,
       states,
@@ -160,6 +182,10 @@ export async function getIssueListPageData(filters: IssueListPageFilters = {}) {
       cycles: listCycles(context).map(serializeCycle)
     };
   });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export type IssueListPageData = Awaited<ReturnType<typeof getIssueListPageData>>;
