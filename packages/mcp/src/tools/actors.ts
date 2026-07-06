@@ -1,4 +1,6 @@
 import {
+  AppError,
+  AppErrorCode,
   listActors,
   listActorsInputSchema,
   serializeActor
@@ -12,6 +14,9 @@ export function registerActorTools(
   server: McpServer,
   options: Omit<OpenMcpContextOptions, "requireActor">
 ): void {
+  registerCurrentActorTool(server, options, "whoami");
+  registerCurrentActorTool(server, options, "get_current_actor");
+
   server.registerTool(
     "list_actors",
     {
@@ -25,5 +30,32 @@ export function registerActorTools(
         jsonResult(listActors(context, parsed).map(serializeActor))
       );
     })
+  );
+}
+
+function registerCurrentActorTool(
+  server: McpServer,
+  options: Omit<OpenMcpContextOptions, "requireActor">,
+  name: "whoami" | "get_current_actor"
+): void {
+  server.registerTool(
+    name,
+    {
+      title: "Get current actor",
+      description: "Return the resolved calling actor.",
+      inputSchema: {}
+    },
+    () => mcpToolResult(() =>
+      withMcpContext({ ...options, requireActor: true }, ({ context }) => {
+        if (!context.actor) {
+          throw new AppError(
+            AppErrorCode.ACTOR_NOT_FOUND,
+            "MCP mutations require an agent actor handle."
+          );
+        }
+
+        return jsonResult(serializeActor(context.actor));
+      })
+    )
   );
 }
