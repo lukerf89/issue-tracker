@@ -5,10 +5,12 @@ import {
   getState,
   serializeActor,
   serializeIssue,
+  serializeLabel,
   serializeProject,
   serializeTeam,
   type Actor,
   type Issue,
+  type Label,
   type Project,
   type ServiceContext,
   type Team
@@ -23,6 +25,7 @@ export interface IssueListRow {
   issue: Issue;
   state: string;
   assignee: string | null;
+  labels: string;
 }
 
 export function printJson(value: unknown): void {
@@ -71,6 +74,26 @@ export function printProjects(projects: Project[], options: OutputOptions): void
   for (const project of projects) {
     process.stdout.write(`${pc.bold(project.name)}  ${project.status}\n`);
   }
+}
+
+export function printLabels(labels: Label[], options: OutputOptions): void {
+  if (options.json) {
+    printJson(labels.map(serializeLabel));
+    return;
+  }
+
+  for (const label of labels) {
+    process.stdout.write(`${pc.bold(label.name)}  ${label.color}  ${label.group ?? ""}\n`);
+  }
+}
+
+export function printLabel(label: Label, options: OutputOptions): void {
+  if (options.json) {
+    printJson(serializeLabel(label));
+    return;
+  }
+
+  process.stdout.write(`${pc.bold(label.name)}  ${label.color}  ${label.group ?? ""}\n`);
 }
 
 export function printProject(project: Project, options: OutputOptions): void {
@@ -133,7 +156,8 @@ function printIssueTable(rows: IssueListRow[]): void {
     assignee: Math.max(
       "Assignee".length,
       ...rows.map((row) => (row.assignee ?? "Unassigned").length)
-    )
+    ),
+    labels: Math.max("Labels".length, ...rows.map((row) => row.labels.length))
   };
 
   process.stdout.write(
@@ -143,7 +167,8 @@ function printIssueTable(rows: IssueListRow[]): void {
         pad("P", widths.priority),
         pad("State", widths.state),
         pad("Title", widths.title),
-        pad("Assignee", widths.assignee)
+        pad("Assignee", widths.assignee),
+        pad("Labels", widths.labels)
       ].join("  ")
     ) + "\n"
   );
@@ -155,7 +180,8 @@ function printIssueTable(rows: IssueListRow[]): void {
         pad(String(row.issue.priority), widths.priority),
         pad(row.state, widths.state),
         pad(row.issue.title, widths.title),
-        pad(row.assignee ?? "Unassigned", widths.assignee)
+        pad(row.assignee ?? "Unassigned", widths.assignee),
+        pad(row.labels, widths.labels)
       ].join("  ") + "\n"
     );
   }
@@ -164,11 +190,17 @@ function printIssueTable(rows: IssueListRow[]): void {
 function issueRow(context: ServiceContext, issue: Issue): IssueListRow {
   const state = getState(context, issue.stateId, issue.teamId).name;
   const assignee = issue.assigneeId ? getActor(context, issue.assigneeId).handle : null;
-  return { issue, state, assignee };
+  const labels = issueLabels(issue).join(", ");
+  return { issue, state, assignee, labels };
 }
 
 function pad(value: string, width: number): string {
   return value.padEnd(width, " ");
+}
+
+function issueLabels(issue: Issue): string[] {
+  const maybeLabeled = issue as Issue & { labels?: Label[] };
+  return (maybeLabeled.labels ?? []).map((label) => label.name);
 }
 
 function isCommanderError(error: unknown): error is { code: string; message: string } {

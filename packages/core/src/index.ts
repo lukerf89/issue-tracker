@@ -19,6 +19,7 @@ export {
   serializeActivity,
   serializeActor,
   serializeIssue,
+  serializeLabel,
   serializeProject,
   serializeTeam,
   serializeWorkflowState
@@ -32,6 +33,18 @@ export {
 } from "./services/actor.js";
 export { ConfigKey, getConfig, setConfig, whoami } from "./services/config.js";
 export { init, type InitInput } from "./services/init.js";
+export {
+  archiveLabel,
+  attachLabel,
+  createLabel,
+  detachLabel,
+  getLabel,
+  listIssueLabels,
+  listLabels,
+  type CreateLabelInput,
+  type IssueWithLabels,
+  type ListLabelsOptions
+} from "./services/label.js";
 export {
   createIssue,
   getIssue,
@@ -72,6 +85,11 @@ export {
   updateIssueInputSchema,
   updateIssueToolInputSchema
 } from "./schemas/issue.js";
+export {
+  archiveLabelInputSchema,
+  createLabelInputSchema,
+  listLabelsInputSchema
+} from "./schemas/label.js";
 export {
   createProjectInputSchema,
   getProjectInputSchema,

@@ -10,6 +10,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   applyMigrations,
+  archiveLabel,
+  createLabel,
   getActor,
   init,
   listActors,
@@ -152,6 +154,58 @@ describe("MCP server", () => {
         }
       });
       expect(JSON.stringify(envelope)).toContain("priority");
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("lists labels and honors label fields on issue tools", async () => {
+    const dbPath = initializedDbPath();
+    const setup = openContext(dbPath);
+
+    try {
+      createLabel(setup.context, { name: "Bug", color: "#EF4444" });
+      createLabel(setup.context, { name: "Docs", color: "#22C55E" });
+      const archived = createLabel(setup.context, { name: "Archived", color: "#6B7280" });
+      archiveLabel(setup.context, archived.id);
+    } finally {
+      setup.close();
+    }
+
+    const client = await connectClient(dbPath, { handle: "label-agent" });
+
+    try {
+      const labels = (await callJsonTool(client, "list_labels", {})) as unknown as Array<{
+        name: string;
+      }>;
+      expect(labels.map((label) => label.name)).toEqual(["Bug", "Docs"]);
+
+      const allLabels = (await callJsonTool(client, "list_labels", {
+        includeArchived: true
+      })) as unknown as Array<{ name: string }>;
+      expect(allLabels.map((label) => label.name)).toEqual(["Archived", "Bug", "Docs"]);
+
+      const created = await callJsonTool(client, "create_issue", {
+        title: "Fix login redirect",
+        labels: ["Bug"]
+      });
+      expect((created.labels as Array<{ name: string }>).map((label) => label.name)).toEqual([
+        "Bug"
+      ]);
+
+      const updated = await callJsonTool(client, "update_issue", {
+        identifier: created.identifier,
+        labels: ["Docs"],
+        removeLabels: ["Bug"]
+      });
+      expect((updated.labels as Array<{ name: string }>).map((label) => label.name)).toEqual([
+        "Docs"
+      ]);
+
+      const filtered = (await callJsonTool(client, "list_issues", {
+        label: "Docs"
+      })) as unknown as Array<Record<string, unknown>>;
+      expect(filtered.map((issue) => issue.identifier)).toEqual(["ENG-1"]);
     } finally {
       await client.close();
     }

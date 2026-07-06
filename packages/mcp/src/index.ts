@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import { registerIssueTools } from "./tools/issues.js";
+import { registerLabelTools } from "./tools/labels.js";
 import { registerProjectTools } from "./tools/projects.js";
 import { jsonErrorResult } from "./tools/result.js";
 import { registerTeamTools } from "./tools/teams.js";
@@ -22,6 +23,7 @@ export function createServer(options: CreateServerOptions): McpServer {
     jsonErrorResult;
 
   registerIssueTools(server, options);
+  registerLabelTools(server, options);
   registerProjectTools(server, options);
   registerTeamTools(server, options);
 

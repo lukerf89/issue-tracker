@@ -7,12 +7,17 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   applyMigrations,
+  archiveLabel,
+  attachLabel,
   createIssue,
   createIssueInputSchema,
+  createLabel,
   createProject,
   createTeam,
+  detachLabel,
   getIssue,
   init,
+  listLabels,
   listIssueFiltersSchema,
   listIssues,
   moveIssue,
@@ -62,6 +67,76 @@ describe("core services", () => {
 
       expect(moved.stateId).toBe(fetched.stateId);
       expect(fetched.startedAt).toBe("2026-01-01T00:10:00.000Z");
+    } finally {
+      close();
+    }
+  });
+
+  it("creates, lists, archives, and enforces grouped label uniqueness", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      const bug = createLabel(context, { name: "Bug", color: "#EF4444" });
+      const groupedBug = createLabel(context, {
+        name: "Bug",
+        color: "#F97316",
+        group: "Type"
+      });
+
+      expect(listLabels(context).map((label) => [label.name, label.group])).toEqual([
+        ["Bug", null],
+        ["Bug", "Type"]
+      ]);
+      expect(() => createLabel(context, { name: "Bug", color: "#DC2626" })).toThrow(
+        "already exists"
+      );
+      expect(() =>
+        createLabel(context, { name: "Bug", color: "#EA580C", group: "Type" })
+      ).toThrow("already exists");
+
+      const archived = archiveLabel(context, bug.id);
+
+      expect(archived.archivedAt).toEqual(expect.any(String));
+      expect(listLabels(context).map((label) => label.id)).toEqual([groupedBug.id]);
+      expect(listLabels(context, { includeArchived: true }).map((label) => label.id)).toEqual([
+        bug.id,
+        groupedBug.id
+      ]);
+    } finally {
+      close();
+    }
+  });
+
+  it("tags issues on create and update, filters by label name, and serializes labels", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      createLabel(context, { name: "Bug", color: "#EF4444" });
+      createLabel(context, { name: "Docs", color: "#22C55E" });
+
+      const created = createIssue(context, {
+        title: "Fix login redirect",
+        labels: ["Bug"]
+      });
+      createIssue(context, { title: "Refresh setup guide" });
+
+      expect(created.labels.map((label) => label.name)).toEqual(["Bug"]);
+      expect(serializeIssue(created).labels).toEqual([
+        expect.objectContaining({ name: "Bug", group: null })
+      ]);
+      expect(listIssues(context, { label: "Bug" }).map((issue) => issue.identifier)).toEqual([
+        "ENG-1"
+      ]);
+
+      const updated = updateIssue(context, "ENG-1", { labels: ["Docs"] });
+      expect(updated.labels.map((label) => label.name)).toEqual(["Bug", "Docs"]);
+
+      const removed = updateIssue(context, "ENG-1", { removeLabels: ["Bug"] });
+      expect(removed.labels.map((label) => label.name)).toEqual(["Docs"]);
+      expect(listIssues(context, { label: "Bug" })).toHaveLength(0);
+      expect(listIssues(context, { label: "Docs" }).map((issue) => issue.identifier)).toEqual([
+        "ENG-1"
+      ]);
     } finally {
       close();
     }
@@ -193,6 +268,23 @@ describe("core services", () => {
     }
   });
 
+  it("writes exactly one activity row when attaching or detaching a label", () => {
+    const { context, db, close } = initializedContext();
+
+    try {
+      const issue = createIssue(context, { title: "Track label activity" });
+      const label = createLabel(context, { name: "Bug", color: "#EF4444" });
+
+      attachLabel(context, issue.id, label.id);
+      expect(readActivityActions(db)).toEqual(["created", "label_added"]);
+
+      detachLabel(context, issue.id, label.id);
+      expect(readActivityActions(db)).toEqual(["created", "label_added", "label_removed"]);
+    } finally {
+      close();
+    }
+  });
+
   it("serializes issues with ISO timestamps, camelCase keys, and explicit nulls", () => {
     const { context, close } = initializedContext("2026-03-01T00:00:00.000Z");
 
@@ -222,7 +314,8 @@ describe("core services", () => {
         "startedAt",
         "completedAt",
         "canceledAt",
-        "archivedAt"
+        "archivedAt",
+        "labels"
       ]);
       expect(serialized).toMatchObject({
         identifier: "ENG-1",
@@ -237,6 +330,7 @@ describe("core services", () => {
         completedAt: null,
         canceledAt: null,
         archivedAt: null,
+        labels: [],
         createdAt: "2026-03-01T00:00:00.000Z",
         updatedAt: "2026-03-01T00:00:00.000Z"
       });

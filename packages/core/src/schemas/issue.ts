@@ -34,7 +34,8 @@ export const createIssueInputSchema = z.object({
   parentId: optionalNullableStringSchema,
   estimate: z.number().int().nullable().optional(),
   dueDate: optionalNullableStringSchema,
-  sortOrder: optionalIntegerSchema
+  sortOrder: optionalIntegerSchema,
+  labels: z.array(nonEmptyStringSchema).optional()
 }) satisfies z.ZodType<CreateIssueInput>;
 
 export const listIssueFiltersSchema = z.object({
@@ -43,6 +44,7 @@ export const listIssueFiltersSchema = z.object({
   project: optionalNullableStringSchema,
   team: nonEmptyStringSchema.optional(),
   priority: optionalPrioritySchema,
+  label: nonEmptyStringSchema.optional(),
   limit: optionalIntegerSchema,
   includeArchived: z.boolean().optional()
 }) satisfies z.ZodType<ListIssueFilters>;
@@ -59,7 +61,9 @@ export const updateIssueInputSchema = z.object({
   parentId: optionalNullableStringSchema,
   estimate: z.number().int().nullable().optional(),
   dueDate: optionalNullableStringSchema,
-  sortOrder: optionalIntegerSchema
+  sortOrder: optionalIntegerSchema,
+  labels: z.array(nonEmptyStringSchema).optional(),
+  removeLabels: z.array(nonEmptyStringSchema).optional()
 }) satisfies z.ZodType<UpdateIssueInput>;
 
 export const updateIssueToolInputSchema = updateIssueInputSchema.extend({

@@ -3,6 +3,10 @@ import { fileURLToPath } from "node:url";
 
 import {
   ConfigKey,
+  archiveLabel,
+  archiveLabelInputSchema,
+  createLabel,
+  createLabelInputSchema,
   createIssueInputSchema,
   createIssue,
   createProjectInputSchema,
@@ -11,6 +15,8 @@ import {
   getConfig,
   getIssue,
   getProject,
+  listLabels,
+  listLabelsInputSchema,
   listIssueFiltersSchema,
   listIssues,
   listProjectsInputSchema,
@@ -28,6 +34,7 @@ import {
   whoami,
   init as initWorkspace,
   type CreateIssueInput,
+  type CreateLabelInput,
   type CreateProjectInput,
   type ListIssueFilters,
   type UpdateIssueInput,
@@ -43,6 +50,8 @@ import {
   printIssue,
   printIssues,
   printJson,
+  printLabel,
+  printLabels,
   printProject,
   printProjects,
   printTeam,
@@ -183,6 +192,46 @@ export function createProgram(): Command {
       })
     );
 
+  const label = program.command("label").description("manage labels");
+  label
+    .command("create")
+    .argument("<name>")
+    .option("--color <color>", "label color")
+    .option("--group <group>", "label group")
+    .option("--json", "print JSON output")
+    .action((name, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        printLabel(createLabel(cli.context, labelCreateInput(name, options)), options);
+      })
+    );
+  label
+    .command("list")
+    .option("--include-archived", "include archived labels")
+    .option("--json", "print JSON output")
+    .action((_options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        printLabels(
+          listLabels(
+            cli.context,
+            listLabelsInputSchema.parse({ includeArchived: options.includeArchived })
+          ),
+          options
+        );
+      })
+    );
+  label
+    .command("archive")
+    .argument("<label>")
+    .option("--json", "print JSON output")
+    .action((labelRef, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const input = archiveLabelInputSchema.parse({ label: labelRef });
+        printLabel(archiveLabel(cli.context, input.label), optionsWithGlobals(command));
+      })
+    );
+
   const project = program.command("project").description("manage projects");
   project
     .command("create")
@@ -259,6 +308,7 @@ export function createProgram(): Command {
     .option("--priority <number>", "priority", parseInteger)
     .option("--assignee <actor>", "assignee id or handle")
     .option("--state <state>", "workflow state")
+    .option("--label <label>", "label name or id", collectValues, [])
     .option("--json", "print JSON output")
     .action((title, _options, command) =>
       withContext(command, {}, (cli) => {
@@ -274,6 +324,7 @@ export function createProgram(): Command {
     .option("--unassigned", "only unassigned issues")
     .option("--project <project>", "project id or name")
     .option("--no-project", "only issues without a project")
+    .option("--label <label>", "label name")
     .option("--priority <number>", "priority", parseInteger)
     .option("--team <key>", "team key")
     .option("--limit <number>", "maximum number of issues", parseInteger)
@@ -309,6 +360,8 @@ export function createProgram(): Command {
     .option("--unassigned", "clear assignee")
     .option("--project <project>", "project id or name")
     .option("--no-project", "clear project")
+    .option("--label <label>", "add label by name or id", collectValues, [])
+    .option("--remove-label <label>", "remove label by name or id", collectValues, [])
     .option("--estimate <number>", "estimate", parseInteger)
     .option("--due-date <date>", "due date")
     .option("--json", "print JSON output")
@@ -446,6 +499,14 @@ function projectCreateInput(name: string | undefined, options: Record<string, un
   });
 }
 
+function labelCreateInput(name: string, options: Record<string, unknown>): CreateLabelInput {
+  return createLabelInputSchema.parse({
+    name,
+    color: stringOption(options.color),
+    group: nullableStringOption(options.group)
+  });
+}
+
 function projectUpdateInput(options: Record<string, unknown>): UpdateProjectInput {
   return updateProjectInputSchema.parse(omitUndefined({
     name: stringOption(options.name),
@@ -472,7 +533,8 @@ function issueCreateInput(
     state: stringOption(options.state),
     priority: numberOption(options.priority),
     assignee: nullableStringOption(options.assignee),
-    project: nullableStringOption(options.project)
+    project: nullableStringOption(options.project),
+    labels: stringArrayOption(options.label)
   });
 }
 
@@ -485,6 +547,7 @@ function issueListFilters(options: Record<string, unknown>, defaultTeam?: string
     assignee,
     project,
     team: stringOption(options.team) ?? defaultTeam,
+    label: stringOption(options.label),
     priority: numberOption(options.priority),
     limit: numberOption(options.limit),
     includeArchived: booleanOption(options.includeArchived)
@@ -501,6 +564,8 @@ function issueUpdateInput(options: Record<string, unknown>): UpdateIssueInput {
     priority: numberOption(options.priority),
     assignee,
     project,
+    labels: stringArrayOption(options.label),
+    removeLabels: stringArrayOption(options.removeLabel),
     estimate: numberOption(options.estimate),
     dueDate: nullableStringOption(options.dueDate)
   }));
@@ -545,6 +610,19 @@ function numberOption(value: unknown): number | undefined {
 
 function booleanOption(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
+}
+
+function stringArrayOption(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) {
+    return undefined;
+  }
+
+  const strings = value.filter((entry): entry is string => typeof entry === "string");
+  return strings.length > 0 ? strings : undefined;
+}
+
+function collectValues(value: string, previous: string[]): string[] {
+  return [...previous, value];
 }
 
 function omitUndefined<T extends Record<string, unknown>>(object: T): T {

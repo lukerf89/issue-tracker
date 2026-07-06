@@ -1,11 +1,17 @@
 import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 
 import { inTransaction, type ServiceContext } from "../context.js";
-import { actors, issues, projects, teams, workflowStates, type Issue } from "../db/schema.js";
+import { actors, issueLabels, issues, labels, projects, teams, workflowStates, type Issue } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { identifier, uuid } from "../ids.js";
 import { appendActivity } from "./activity.js";
 import { ConfigKey, getConfig } from "./config.js";
+import {
+  attachLabelInTransaction,
+  detachLabelInTransaction,
+  resolveIssueLabels,
+  withIssueLabels
+} from "./label.js";
 import { getState, resolveDefaultUnstartedState } from "./state.js";
 import { getTeam, getTeamByKey } from "./team.js";
 
@@ -26,6 +32,7 @@ export interface CreateIssueInput {
   estimate?: number | null;
   dueDate?: string | null;
   sortOrder?: number;
+  labels?: string[];
 }
 
 export interface ListIssueFilters {
@@ -34,6 +41,7 @@ export interface ListIssueFilters {
   project?: string | null;
   team?: string;
   priority?: number;
+  label?: string;
   limit?: number;
   includeArchived?: boolean;
 }
@@ -51,6 +59,8 @@ export interface UpdateIssueInput {
   estimate?: number | null;
   dueDate?: string | null;
   sortOrder?: number;
+  labels?: string[];
+  removeLabels?: string[];
 }
 
 export function createIssue(context: ServiceContext, input: CreateIssueInput) {
@@ -63,6 +73,7 @@ export function createIssue(context: ServiceContext, input: CreateIssueInput) {
       : resolveDefaultUnstartedState(txContext, team.id);
     const assigneeId = resolveOptionalActorId(txContext, input.assigneeId ?? input.assignee);
     const projectId = resolveOptionalProjectId(txContext, input.projectId ?? input.project);
+    const labelRows = resolveIssueLabels(txContext, input.labels);
 
     txContext.db
       .update(teams)
@@ -106,7 +117,11 @@ export function createIssue(context: ServiceContext, input: CreateIssueInput) {
       data: { identifier: row.identifier }
     });
 
-    return row;
+    for (const label of labelRows) {
+      attachLabelInTransaction(txContext, row.id, label.id);
+    }
+
+    return getIssue(txContext, row.identifier);
   });
 }
 
@@ -123,7 +138,7 @@ export function getIssue(context: ServiceContext, issueIdentifier: string) {
     );
   }
 
-  return issue;
+  return withIssueLabels(context, issue);
 }
 
 export function listIssues(context: ServiceContext, filters: ListIssueFilters = {}) {
@@ -161,11 +176,21 @@ export function listIssues(context: ServiceContext, filters: ListIssueFilters = 
     conditions.push(eq(issues.priority, filters.priority));
   }
 
+  if (filters.label) {
+    const issueIds = issueIdsForLabelName(context, filters.label);
+
+    if (issueIds.length === 0) {
+      return [];
+    }
+
+    conditions.push(inArray(issues.id, issueIds));
+  }
+
   return context.db.query.issues.findMany({
     where: conditions.length ? and(...conditions) : undefined,
     orderBy: [asc(issues.teamId), asc(issues.number)],
     limit: filters.limit
-  }).sync();
+  }).sync().map((issue) => withIssueLabels(context, issue));
 }
 
 export function updateIssue(context: ServiceContext, issueIdentifier: string, input: UpdateIssueInput) {
@@ -176,6 +201,9 @@ export function updateIssue(context: ServiceContext, issueIdentifier: string, in
     const now = txContext.clock.now().toISOString();
     const changes: Partial<typeof issues.$inferInsert> = { updatedAt: now };
     const changedFields: Record<string, unknown> = {};
+    const addLabels = resolveIssueLabels(txContext, input.labels);
+    const removeLabels = resolveIssueLabels(txContext, input.removeLabels);
+    assertNoLabelOverlap(addLabels, removeLabels);
 
     if (has(input, "title")) addChange(changes, changedFields, "title", input.title!);
     if (has(input, "description")) {
@@ -204,13 +232,23 @@ export function updateIssue(context: ServiceContext, issueIdentifier: string, in
     if (has(input, "dueDate")) addChange(changes, changedFields, "dueDate", input.dueDate ?? null);
     if (has(input, "sortOrder")) addChange(changes, changedFields, "sortOrder", input.sortOrder!);
 
-    txContext.db.update(issues).set(changes).where(eq(issues.id, issue.id)).run();
-    appendActivity(txContext, {
-      issueId: issue.id,
-      actorId: requireActor(txContext).id,
-      action: "updated",
-      data: { changed: changedFields }
-    });
+    if (Object.keys(changedFields).length > 0) {
+      txContext.db.update(issues).set(changes).where(eq(issues.id, issue.id)).run();
+      appendActivity(txContext, {
+        issueId: issue.id,
+        actorId: requireActor(txContext).id,
+        action: "updated",
+        data: { changed: changedFields }
+      });
+    }
+
+    for (const label of removeLabels) {
+      detachLabelInTransaction(txContext, issue.id, label.id);
+    }
+
+    for (const label of addLabels) {
+      attachLabelInTransaction(txContext, issue.id, label.id);
+    }
 
     return getIssue(txContext, issueIdentifier);
   });
@@ -285,6 +323,16 @@ function lifecycleTimestampChanges(
   }
 
   return { updatedAt: now, startedAt, completedAt, canceledAt };
+}
+
+function issueIdsForLabelName(context: ServiceContext, labelName: string): string[] {
+  return context.db
+    .select({ issueId: issueLabels.issueId })
+    .from(issueLabels)
+    .innerJoin(labels, eq(labels.id, issueLabels.labelId))
+    .where(and(eq(labels.name, labelName), isNull(labels.archivedAt)))
+    .all()
+    .map((row) => row.issueId);
 }
 
 function resolveTeam(context: ServiceContext, idOrKey?: string) {
@@ -404,6 +452,19 @@ function addChange<T extends keyof typeof issues.$inferInsert>(
 ): void {
   changes[key] = value;
   changedFields[key] = value ?? null;
+}
+
+function assertNoLabelOverlap(addLabels: Array<{ id: string }>, removeLabels: Array<{ id: string }>) {
+  const addedIds = new Set(addLabels.map((label) => label.id));
+  const overlap = removeLabels.find((label) => addedIds.has(label.id));
+
+  if (overlap) {
+    throw new AppError(
+      AppErrorCode.CONSTRAINT_VIOLATION,
+      "A label cannot be added and removed in the same update.",
+      { labelId: overlap.id }
+    );
+  }
 }
 
 function has<T extends object>(object: T, key: keyof T): boolean {

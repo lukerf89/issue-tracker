@@ -1,4 +1,4 @@
-import type { Activity, Actor, Issue, Project, Team, WorkflowState } from "./db/schema.js";
+import type { Activity, Actor, Issue, Label, Project, Team, WorkflowState } from "./db/schema.js";
 
 export function serializeTeam(team: Team) {
   return {
@@ -44,7 +44,17 @@ export function serializeProject(project: Project) {
   };
 }
 
-export function serializeIssue(issue: Issue) {
+export function serializeLabel(label: Label) {
+  return {
+    id: label.id,
+    name: label.name,
+    color: label.color,
+    group: label.group ?? null,
+    archivedAt: toIsoOrNull(label.archivedAt)
+  };
+}
+
+export function serializeIssue(issue: Issue & { labels?: Label[] }) {
   return {
     id: issue.id,
     identifier: issue.identifier,
@@ -67,7 +77,8 @@ export function serializeIssue(issue: Issue) {
     startedAt: toIsoOrNull(issue.startedAt),
     completedAt: toIsoOrNull(issue.completedAt),
     canceledAt: toIsoOrNull(issue.canceledAt),
-    archivedAt: toIsoOrNull(issue.archivedAt)
+    archivedAt: toIsoOrNull(issue.archivedAt),
+    labels: (issue.labels ?? []).map(serializeLabel)
   };
 }
 

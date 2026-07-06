@@ -121,6 +121,92 @@ describe("tracker CLI", () => {
     expect(records.map((record) => record.priority)).toEqual([1]);
   });
 
+  it("creates, lists, archives, and applies labels through JSON commands", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+
+    const createdLabel = await tracker(dbPath, [
+      "label",
+      "create",
+      "Bug",
+      "--color",
+      "#EF4444",
+      "--json"
+    ]);
+    expect(createdLabel.status).toBe(0);
+    expect(JSON.parse(createdLabel.stdout)).toMatchObject({
+      name: "Bug",
+      color: "#EF4444",
+      group: null,
+      archivedAt: null
+    });
+
+    expect((await tracker(dbPath, ["label", "create", "Docs", "--color", "#22C55E"])).status).toBe(
+      0
+    );
+    expect(
+      (
+        await tracker(dbPath, [
+          "issue",
+          "create",
+          "--title",
+          "Fix login redirect",
+          "--label",
+          "Bug"
+        ])
+      ).status
+    ).toBe(0);
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Refresh setup guide"])).status).toBe(
+      0
+    );
+
+    const filtered = await tracker(dbPath, ["issue", "list", "--label", "Bug", "--json"]);
+    expect(filtered.status).toBe(0);
+    expect((JSON.parse(filtered.stdout) as Array<Record<string, unknown>>).map((issue) => issue.identifier)).toEqual([
+      "ENG-1"
+    ]);
+
+    const updated = await tracker(dbPath, [
+      "issue",
+      "update",
+      "ENG-1",
+      "--label",
+      "Docs",
+      "--remove-label",
+      "Bug",
+      "--json"
+    ]);
+    expect(updated.status).toBe(0);
+    expect((JSON.parse(updated.stdout) as { labels: Array<{ name: string }> }).labels.map((label) => label.name)).toEqual([
+      "Docs"
+    ]);
+
+    const view = await tracker(dbPath, ["issue", "view", "ENG-1", "--json"]);
+    expect(view.status).toBe(0);
+    expect((JSON.parse(view.stdout) as { labels: Array<{ name: string }> }).labels.map((label) => label.name)).toEqual([
+      "Docs"
+    ]);
+
+    const archived = await tracker(dbPath, ["label", "archive", "Bug", "--json"]);
+    expect(archived.status).toBe(0);
+    expect((JSON.parse(archived.stdout) as Record<string, unknown>).archivedAt).toEqual(
+      expect.any(String)
+    );
+
+    const visibleLabels = await tracker(dbPath, ["label", "list", "--json"]);
+    expect(visibleLabels.status).toBe(0);
+    expect(
+      (JSON.parse(visibleLabels.stdout) as Array<Record<string, unknown>>).map((label) => label.name)
+    ).toEqual(["Docs"]);
+
+    const allLabels = await tracker(dbPath, ["label", "list", "--include-archived", "--json"]);
+    expect(allLabels.status).toBe(0);
+    expect(
+      (JSON.parse(allLabels.stdout) as Array<Record<string, unknown>>).map((label) => label.name)
+    ).toEqual(["Bug", "Docs"]);
+  });
+
   it("rejects out-of-range priority values", async () => {
     const dbPath = tempDbPath();
 
