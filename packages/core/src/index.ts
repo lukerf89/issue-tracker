@@ -31,7 +31,8 @@ export {
   createActor,
   getActor,
   listActors,
-  type CreateActorInput
+  type CreateActorInput,
+  type ListActorsOptions
 } from "./services/actor.js";
 export { ConfigKey, getConfig, setConfig, whoami } from "./services/config.js";
 export {
@@ -63,11 +64,13 @@ export {
   type ListLabelsOptions
 } from "./services/label.js";
 export {
+  assignIssue,
   createIssue,
   getIssue,
   listIssues,
   moveIssue,
   updateIssue,
+  type AssignIssueInput,
   type CreateIssueInput,
   type IssueReference,
   type IssueWithDetails,
@@ -97,12 +100,18 @@ export {
   type CreateTeamInput
 } from "./services/team.js";
 export {
+  actorTypeSchema,
+  createActorInputSchema,
+  listActorsInputSchema
+} from "./schemas/actor.js";
+export {
   createCycleInputSchema,
   cycleRefSchema,
   listCyclesInputSchema
 } from "./schemas/cycle.js";
 export { addCommentInputSchema } from "./schemas/comment.js";
 export {
+  assignIssueInputSchema,
   createIssueInputSchema,
   getIssueInputSchema,
   listIssueFiltersSchema,

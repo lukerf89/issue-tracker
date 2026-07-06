@@ -63,6 +63,88 @@ describe("tracker CLI", () => {
     expect(records[0]?.projectId).toEqual(expect.any(String));
   });
 
+  it("creates and lists actors, assigns by handle, clears with --none, and assigns --me", async () => {
+    const dbPath = tempDbPath();
+
+    const initialized = await tracker(dbPath, ["init", "--json"]);
+    expect(initialized.status).toBe(0);
+    const defaultActor = (JSON.parse(initialized.stdout) as { actor: { id: string } }).actor;
+
+    const actorResult = await tracker(dbPath, [
+      "actor",
+      "create",
+      "build-agent",
+      "Build Agent",
+      "--type",
+      "agent",
+      "--json"
+    ]);
+    expect(actorResult.status).toBe(0);
+    const agent = JSON.parse(actorResult.stdout) as { id: string; handle: string; type: string };
+    expect(agent).toMatchObject({
+      handle: "build-agent",
+      type: "agent",
+      archivedAt: null
+    });
+
+    const actors = await tracker(dbPath, ["actor", "list", "--json"]);
+    expect(actors.status).toBe(0);
+    expect(
+      (JSON.parse(actors.stdout) as Array<{ handle: string; type: string }>).map((actor) => [
+        actor.handle,
+        actor.type
+      ])
+    ).toEqual([
+      ["build-agent", "agent"],
+      ["owner", "human"]
+    ]);
+
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Route CLI work"])).status).toBe(
+      0
+    );
+
+    const assigned = await tracker(dbPath, [
+      "issue",
+      "assign",
+      "ENG-1",
+      "build-agent",
+      "--json"
+    ]);
+    expect(assigned.status).toBe(0);
+    expect(JSON.parse(assigned.stdout)).toMatchObject({
+      identifier: "ENG-1",
+      assigneeId: agent.id
+    });
+
+    const filtered = await tracker(dbPath, [
+      "issue",
+      "list",
+      "--assignee",
+      "build-agent",
+      "--json"
+    ]);
+    expect(filtered.status).toBe(0);
+    expect(
+      (JSON.parse(filtered.stdout) as Array<Record<string, unknown>>).map(
+        (issue) => issue.identifier
+      )
+    ).toEqual(["ENG-1"]);
+
+    const cleared = await tracker(dbPath, ["issue", "assign", "ENG-1", "--none", "--json"]);
+    expect(cleared.status).toBe(0);
+    expect(JSON.parse(cleared.stdout)).toMatchObject({
+      identifier: "ENG-1",
+      assigneeId: null
+    });
+
+    const assignedToMe = await tracker(dbPath, ["issue", "assign", "ENG-1", "--me", "--json"]);
+    expect(assignedToMe.status).toBe(0);
+    expect(JSON.parse(assignedToMe.stdout)).toMatchObject({
+      identifier: "ENG-1",
+      assigneeId: defaultActor.id
+    });
+  });
+
   it("moves an issue to a new workflow state", async () => {
     const dbPath = tempDbPath();
 

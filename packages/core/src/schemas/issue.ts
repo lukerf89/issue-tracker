@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type {
+  AssignIssueInput,
   CreateIssueInput,
   ListIssueFilters,
   UpdateIssueInput
@@ -81,3 +82,8 @@ export const moveIssueInputSchema = z.object({
   identifier: nonEmptyStringSchema,
   state: nonEmptyStringSchema
 });
+
+export const assignIssueInputSchema = z.object({
+  identifier: nonEmptyStringSchema,
+  actor: nonEmptyStringSchema.nullable()
+}) satisfies z.ZodType<AssignIssueInput>;

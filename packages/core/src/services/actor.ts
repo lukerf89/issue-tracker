@@ -11,6 +11,10 @@ export interface CreateActorInput {
   handle: string;
 }
 
+export interface ListActorsOptions {
+  includeArchived?: boolean;
+}
+
 export function createActor(context: ServiceContext, input: CreateActorInput) {
   const existing = context.db.query.actors.findFirst({
     where: eq(actors.handle, input.handle)
@@ -36,7 +40,7 @@ export function createActor(context: ServiceContext, input: CreateActorInput) {
   return row;
 }
 
-export function listActors(context: ServiceContext, options: { includeArchived?: boolean } = {}) {
+export function listActors(context: ServiceContext, options: ListActorsOptions = {}) {
   return context.db.query.actors.findMany({
     where: options.includeArchived ? undefined : isNull(actors.archivedAt),
     orderBy: [asc(actors.handle)]

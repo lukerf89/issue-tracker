@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 
 import { inTransaction, type ServiceContext } from "../context.js";
-import { actors, issueLabels, issues, labels, projects, teams, workflowStates, type Issue } from "../db/schema.js";
+import { actors, issueLabels, issues, labels, projects, teams, workflowStates, type Actor, type Issue } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { identifier, uuid } from "../ids.js";
 import { appendActivity } from "./activity.js";
@@ -73,6 +73,11 @@ export interface UpdateIssueInput {
   sortOrder?: number;
   labels?: string[];
   removeLabels?: string[];
+}
+
+export interface AssignIssueInput {
+  identifier: string;
+  actor: string | null;
 }
 
 export interface IssueReference {
@@ -311,6 +316,48 @@ export function updateIssue(context: ServiceContext, issueIdentifier: string, in
     }
 
     return getIssue(txContext, issueIdentifier);
+  });
+}
+
+export function assignIssue(
+  context: ServiceContext,
+  issueIdentifier: string,
+  actorRef: string | null
+) {
+  requireActor(context);
+
+  return inTransaction(context, (txContext) => {
+    const issue = getIssueByIdOrIdentifier(txContext, issueIdentifier);
+    const assignee = resolveOptionalActor(txContext, actorRef);
+    const previousAssignee = issue.assigneeId ? getActorById(txContext, issue.assigneeId) : null;
+    const assigneeId = assignee?.id ?? null;
+
+    if (issue.assigneeId !== assigneeId) {
+      const now = txContext.clock.now().toISOString();
+
+      txContext.db
+        .update(issues)
+        .set({
+          assigneeId,
+          updatedAt: now
+        })
+        .where(eq(issues.id, issue.id))
+        .run();
+
+      appendActivity(txContext, {
+        issueId: issue.id,
+        actorId: requireActor(txContext).id,
+        action: "assigned",
+        data: {
+          from: previousAssignee?.id ?? null,
+          to: assignee?.id ?? null,
+          fromHandle: previousAssignee?.handle ?? null,
+          toHandle: assignee?.handle ?? null
+        }
+      });
+    }
+
+    return getIssue(txContext, issue.identifier);
   });
 }
 
@@ -565,6 +612,17 @@ function resolveOptionalActorId(context: ServiceContext, actorRef: string | null
 }
 
 function resolveActorId(context: ServiceContext, actorRef: string) {
+  return resolveActor(context, actorRef).id;
+}
+
+function resolveOptionalActor(
+  context: ServiceContext,
+  actorRef: string | null | undefined
+): Actor | null {
+  return actorRef == null ? null : resolveActor(context, actorRef);
+}
+
+function resolveActor(context: ServiceContext, actorRef: string): Actor {
   const actor =
     context.db.query.actors.findFirst({ where: eq(actors.id, actorRef) }).sync() ??
     context.db.query.actors.findFirst({ where: eq(actors.handle, actorRef) }).sync();
@@ -575,7 +633,21 @@ function resolveActorId(context: ServiceContext, actorRef: string) {
     });
   }
 
-  return actor.id;
+  return actor;
+}
+
+function getActorById(context: ServiceContext, id: string): Actor {
+  const actor = context.db.query.actors.findFirst({
+    where: eq(actors.id, id)
+  }).sync();
+
+  if (!actor) {
+    throw new AppError(AppErrorCode.ACTOR_NOT_FOUND, `Actor ${id} was not found.`, {
+      actor: id
+    });
+  }
+
+  return actor;
 }
 
 function resolveOptionalProjectId(context: ServiceContext, projectRef: string | null | undefined) {

@@ -10,8 +10,11 @@ import {
   addCommentInputSchema,
   applyMigrations,
   archiveLabel,
+  assignIssue,
+  assignIssueInputSchema,
   AppErrorCode,
   attachLabel,
+  createActor,
   createCycle,
   createIssue,
   createIssueInputSchema,
@@ -21,6 +24,7 @@ import {
   detachLabel,
   getIssue,
   init,
+  listActors,
   listComments,
   listCycles,
   listLabels,
@@ -74,6 +78,81 @@ describe("core services", () => {
 
       expect(moved.stateId).toBe(fetched.stateId);
       expect(fetched.startedAt).toBe("2026-01-01T00:10:00.000Z");
+    } finally {
+      close();
+    }
+  });
+
+  it("creates actors, assigns and clears issues, filters by assignee, and records assigned activity", () => {
+    const { context, db, close } = initializedContext();
+
+    try {
+      const agent = createActor(context, {
+        type: "agent",
+        name: "Build Agent",
+        handle: "build-agent"
+      });
+      const issue = createIssue(context, { title: "Route agent work" });
+
+      expect(listActors(context).map((actor) => [actor.handle, actor.type])).toEqual([
+        ["build-agent", "agent"],
+        ["owner", "human"]
+      ]);
+      expect(() =>
+        createActor(context, {
+          type: "agent",
+          name: "Duplicate Agent",
+          handle: "build-agent"
+        })
+      ).toThrow("already taken");
+
+      context.clock = fixedClock("2026-01-01T00:05:00.000Z");
+      const assigned = assignIssue(context, issue.identifier, "build-agent");
+      expect(assigned.assigneeId).toBe(agent.id);
+      expect(assigned.updatedAt).toBe("2026-01-01T00:05:00.000Z");
+      expect(listIssues(context, { assignee: "build-agent" }).map((item) => item.identifier)).toEqual([
+        "ENG-1"
+      ]);
+      expect(listIssues(context, { assignee: agent.id }).map((item) => item.identifier)).toEqual([
+        "ENG-1"
+      ]);
+      expect(listIssues(context, { assignee: null })).toEqual([]);
+
+      context.clock = fixedClock("2026-01-01T00:06:00.000Z");
+      const cleared = assignIssue(context, issue.id, null);
+      expect(cleared.assigneeId).toBeNull();
+      expect(cleared.updatedAt).toBe("2026-01-01T00:06:00.000Z");
+      expect(listIssues(context, { assignee: null }).map((item) => item.identifier)).toEqual([
+        "ENG-1"
+      ]);
+
+      expect(readActivityEntries(db)).toMatchObject([
+        { action: "created" },
+        {
+          action: "assigned",
+          data: {
+            from: null,
+            to: agent.id,
+            fromHandle: null,
+            toHandle: "build-agent"
+          }
+        },
+        {
+          action: "assigned",
+          data: {
+            from: agent.id,
+            to: null,
+            fromHandle: "build-agent",
+            toHandle: null
+          }
+        }
+      ]);
+      expect(assignIssueInputSchema.safeParse({ identifier: "ENG-1", actor: null }).success).toBe(
+        true
+      );
+      expect(assignIssueInputSchema.safeParse({ identifier: "ENG-1", actor: "" }).success).toBe(
+        false
+      );
     } finally {
       close();
     }

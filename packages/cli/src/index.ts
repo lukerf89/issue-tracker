@@ -7,6 +7,10 @@ import {
   addCommentInputSchema,
   archiveLabel,
   archiveLabelInputSchema,
+  assignIssue,
+  assignIssueInputSchema,
+  createActor,
+  createActorInputSchema,
   createCycle,
   createCycleInputSchema,
   createLabel,
@@ -19,6 +23,8 @@ import {
   getConfig,
   getIssue,
   getProject,
+  listActors,
+  listActorsInputSchema,
   listCycles,
   listCyclesInputSchema,
   listLabels,
@@ -40,6 +46,8 @@ import {
   whoami,
   init as initWorkspace,
   type AddCommentInput,
+  type AssignIssueInput,
+  type CreateActorInput,
   type CreateIssueInput,
   type CreateCycleInput,
   type CreateLabelInput,
@@ -55,6 +63,7 @@ import { openCliContext, resolveDbPath, type CliGlobalOptions } from "./context.
 import {
   handleCliError,
   printActor,
+  printActors,
   printComment,
   printCycle,
   printCycles,
@@ -172,6 +181,36 @@ export function createProgram(): Command {
         }
 
         printValue(value);
+      })
+    );
+
+  const actor = program.command("actor").description("manage actors");
+  actor
+    .command("create")
+    .argument("<handle>")
+    .argument("<name>")
+    .requiredOption("--type <type>", "actor type: human or agent")
+    .option("--json", "print JSON output")
+    .action((handle, name, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        printActor(createActor(cli.context, actorCreateInput(handle, name, options)), options);
+      })
+    );
+  actor
+    .command("list")
+    .option("--include-archived", "include archived actors")
+    .option("--json", "print JSON output")
+    .action((_options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        printActors(
+          listActors(
+            cli.context,
+            listActorsInputSchema.parse({ includeArchived: options.includeArchived })
+          ),
+          options
+        );
       })
     );
 
@@ -437,6 +476,24 @@ export function createProgram(): Command {
       })
     );
   issue
+    .command("assign")
+    .argument("<identifier>")
+    .argument("[actor]")
+    .option("--me", "assign to the default actor")
+    .option("--none", "clear assignee")
+    .option("--json", "print JSON output")
+    .action((identifier, actor, _options, command) =>
+      withContext(command, {}, (cli) => {
+        const options = optionsWithGlobals(command);
+        const input = issueAssignInput(identifier, actor, options, cli.context.actor?.id);
+        printIssue(
+          cli.context,
+          assignIssue(cli.context, input.identifier, input.actor),
+          options
+        );
+      })
+    );
+  issue
     .command("comment")
     .argument("<identifier>")
     .argument("<body>")
@@ -568,6 +625,18 @@ function labelCreateInput(name: string, options: Record<string, unknown>): Creat
   });
 }
 
+function actorCreateInput(
+  handle: string,
+  name: string,
+  options: Record<string, unknown>
+): CreateActorInput {
+  return createActorInputSchema.parse({
+    handle,
+    name,
+    type: stringOption(options.type)
+  });
+}
+
 function cycleCreateInput(
   name: string | undefined,
   options: Record<string, unknown>,
@@ -655,6 +724,27 @@ function issueUpdateInput(options: Record<string, unknown>): UpdateIssueInput {
     estimate: numberOption(options.estimate),
     dueDate: nullableStringOption(options.dueDate)
   }));
+}
+
+function issueAssignInput(
+  identifier: string,
+  actorArgument: string | undefined,
+  options: Record<string, unknown>,
+  defaultActorId: string | undefined
+): AssignIssueInput {
+  const hasActorArgument = actorArgument !== undefined;
+  const useDefaultActor = options.me === true;
+  const clearAssignee = options.none === true;
+  const targetCount = [hasActorArgument, useDefaultActor, clearAssignee].filter(Boolean).length;
+
+  if (targetCount !== 1) {
+    throw new InvalidArgumentError("provide exactly one of <actor>, --me, or --none");
+  }
+
+  return assignIssueInputSchema.parse({
+    identifier,
+    actor: clearAssignee ? null : useDefaultActor ? defaultActorId : actorArgument
+  });
 }
 
 function issueCommentInput(

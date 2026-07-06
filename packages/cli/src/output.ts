@@ -50,6 +50,17 @@ export function printActor(actor: Actor, options: OutputOptions): void {
   process.stdout.write(`${actor.handle} (${actor.name})\n`);
 }
 
+export function printActors(actors: Actor[], options: OutputOptions): void {
+  if (options.json) {
+    printJson(actors.map(serializeActor));
+    return;
+  }
+
+  for (const actor of actors) {
+    process.stdout.write(`${pc.bold(actor.handle)}  ${actor.type}  ${actor.name}\n`);
+  }
+}
+
 export function printTeams(teams: Team[], options: OutputOptions): void {
   if (options.json) {
     printJson(teams.map(serializeTeam));

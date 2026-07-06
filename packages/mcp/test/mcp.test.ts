@@ -11,7 +11,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   applyMigrations,
   archiveLabel,
+  createActor,
   createCycle,
+  createIssue,
   createLabel,
   getActor,
   init,
@@ -132,6 +134,112 @@ describe("MCP server", () => {
       expect(listActors(after.context).map((actor) => actor.handle)).not.toContain("new-human");
     } finally {
       after.close();
+    }
+  });
+
+  it("returns a structured actor error when mutations are invoked without an actor handle", async () => {
+    const dbPath = initializedDbPath();
+    const client = await connectClient(dbPath);
+
+    try {
+      const result = await client.callTool({
+        name: "create_issue",
+        arguments: { title: "Missing actor handle" }
+      });
+
+      expect(result.isError).toBe(true);
+      expect(jsonFromToolResult(result)).toEqual({
+        error: {
+          code: "ACTOR_NOT_FOUND",
+          message: "MCP mutations require an agent actor handle."
+        }
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("lists actors and assigns, reassigns, and clears issues through assign_issue", async () => {
+    const dbPath = initializedDbPath();
+    const { issueIdentifier, buildAgentId } = createAssignmentFixtures(dbPath);
+
+    const client = await connectClient(dbPath, { handle: "claim-agent" });
+
+    try {
+      const claimed = await callJsonTool(client, "assign_issue", {
+        identifier: issueIdentifier,
+        actor: "claim-agent"
+      });
+      const claimAgent = getPersistedActor(dbPath, "claim-agent");
+
+      expect(claimed).toMatchObject({
+        identifier: "ENG-1",
+        assigneeId: claimAgent.id
+      });
+      expect(claimAgent).toMatchObject({
+        type: "agent",
+        handle: "claim-agent",
+        name: "claim-agent"
+      });
+
+      const actors = (await callJsonTool(client, "list_actors", {})) as unknown as Array<{
+        handle: string;
+        type: string;
+      }>;
+      expect(actors.map((actor) => [actor.handle, actor.type])).toEqual([
+        ["build-agent", "agent"],
+        ["claim-agent", "agent"],
+        ["owner", "human"]
+      ]);
+
+      const reassigned = await callJsonTool(client, "assign_issue", {
+        identifier: issueIdentifier,
+        actor: "build-agent"
+      });
+      expect(reassigned).toMatchObject({
+        identifier: "ENG-1",
+        assigneeId: buildAgentId
+      });
+
+      const filtered = (await callJsonTool(client, "list_issues", {
+        assignee: "build-agent"
+      })) as unknown as Array<Record<string, unknown>>;
+      expect(filtered.map((issue) => issue.identifier)).toEqual(["ENG-1"]);
+
+      const cleared = await callJsonTool(client, "assign_issue", {
+        identifier: issueIdentifier,
+        actor: null
+      });
+      expect(cleared).toMatchObject({
+        identifier: "ENG-1",
+        assigneeId: null
+      });
+    } finally {
+      await client.close();
+    }
+
+    const humanClient = await connectClient(dbPath, {
+      handle: "new-human",
+      type: "human"
+    });
+
+    try {
+      const result = await humanClient.callTool({
+        name: "assign_issue",
+        arguments: { identifier: issueIdentifier, actor: null }
+      });
+
+      expect(result.isError).toBe(true);
+      expect(jsonFromToolResult(result)).toEqual({
+        error: {
+          code: "ACTOR_NOT_FOUND",
+          message: "Actor new-human was not found.",
+          details: { actor: "new-human" }
+        }
+      });
+      expect(listPersistedActorHandles(dbPath)).not.toContain("new-human");
+    } finally {
+      await humanClient.close();
     }
   });
 
@@ -386,9 +494,30 @@ function createCycleFixtures(dbPath: string) {
   }
 }
 
+function createAssignmentFixtures(dbPath: string) {
+  const setup = openContext(dbPath);
+
+  try {
+    setup.context.actor = whoami(setup.context);
+    const buildAgent = createActor(setup.context, {
+      type: "agent",
+      name: "Build Agent",
+      handle: "build-agent"
+    });
+    const issue = createIssue(setup.context, { title: "Route MCP work" });
+
+    return {
+      issueIdentifier: issue.identifier,
+      buildAgentId: buildAgent.id
+    };
+  } finally {
+    setup.close();
+  }
+}
+
 async function connectClient(
   dbPath: string,
-  actor: { handle: string; type?: "agent" | "human" }
+  actor?: { handle: string; type?: "agent" | "human" }
 ) {
   const server = createServer({ dbPath, actor });
   const client = new Client({
@@ -447,6 +576,26 @@ function initializedDbPath(): string {
   }
 
   return dbPath;
+}
+
+function getPersistedActor(dbPath: string, handle: string) {
+  const { context, close } = openContext(dbPath);
+
+  try {
+    return getActor(context, handle);
+  } finally {
+    close();
+  }
+}
+
+function listPersistedActorHandles(dbPath: string): string[] {
+  const { context, close } = openContext(dbPath);
+
+  try {
+    return listActors(context).map((actor) => actor.handle);
+  } finally {
+    close();
+  }
 }
 
 function openContext(dbPath: string) {
