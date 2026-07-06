@@ -8,14 +8,18 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   applyMigrations,
   createIssue,
+  createIssueInputSchema,
   createProject,
+  createTeam,
   getIssue,
   init,
+  listIssueFiltersSchema,
   listIssues,
   moveIssue,
   openDb,
   serializeIssue,
   updateIssue,
+  updateIssueInputSchema,
   whoami,
   type Clock,
   type Db,
@@ -60,6 +64,51 @@ describe("core services", () => {
       expect(fetched.startedAt).toBe("2026-01-01T00:10:00.000Z");
     } finally {
       close();
+    }
+  });
+
+  it("matches state names across teams when no team filter is supplied", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      createTeam(context, { key: "OPS", name: "Operations" });
+      createIssue(context, { title: "Triage engineering backlog", team: "ENG" });
+      createIssue(context, { title: "Triage operations backlog", team: "OPS" });
+
+      expect(
+        listIssues(context, { state: "Todo" })
+          .map((issue) => issue.identifier)
+          .sort()
+      ).toEqual(["ENG-1", "OPS-1"]);
+    } finally {
+      close();
+    }
+  });
+
+  it("filters listed issues by priority", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      createIssue(context, { title: "Patch urgent regression", priority: 1 });
+      createIssue(context, { title: "Improve onboarding copy", priority: 3 });
+      createIssue(context, { title: "Investigate flaky setup", priority: 1 });
+
+      expect(listIssues(context, { priority: 1 }).map((issue) => issue.identifier)).toEqual([
+        "ENG-1",
+        "ENG-3"
+      ]);
+    } finally {
+      close();
+    }
+  });
+
+  it("rejects out-of-range priorities at the validation boundary", () => {
+    for (const priority of [-1, 99]) {
+      expect(
+        createIssueInputSchema.safeParse({ title: "Validate priority", priority }).success
+      ).toBe(false);
+      expect(updateIssueInputSchema.safeParse({ priority }).success).toBe(false);
+      expect(listIssueFiltersSchema.safeParse({ priority }).success).toBe(false);
     }
   });
 

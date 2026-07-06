@@ -13,8 +13,8 @@ import {
 } from "@issue-tracker/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { openMcpContext, type OpenMcpContextOptions } from "../context.js";
-import { jsonResult } from "./result.js";
+import type { OpenMcpContextOptions } from "../context.js";
+import { jsonResult, mcpToolResult, withMcpContext } from "./result.js";
 
 export function registerIssueTools(
   server: McpServer,
@@ -27,12 +27,12 @@ export function registerIssueTools(
       description: "Query issues with optional filters.",
       inputSchema: listIssueFiltersSchema.shape
     },
-    (input) => {
+    (input) => mcpToolResult(() => {
       const parsed = listIssueFiltersSchema.parse(input);
       return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
         jsonResult(listIssues(context, parsed).map(serializeIssue))
       );
-    }
+    })
   );
 
   server.registerTool(
@@ -42,12 +42,12 @@ export function registerIssueTools(
       description: "Read one issue by identifier.",
       inputSchema: getIssueInputSchema.shape
     },
-    (input) => {
+    (input) => mcpToolResult(() => {
       const parsed = getIssueInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
         jsonResult(serializeIssue(getIssue(context, parsed.identifier)))
       );
-    }
+    })
   );
 
   server.registerTool(
@@ -57,12 +57,12 @@ export function registerIssueTools(
       description: "Create an issue.",
       inputSchema: createIssueInputSchema.shape
     },
-    (input) => {
+    (input) => mcpToolResult(() => {
       const parsed = createIssueInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
         jsonResult(serializeIssue(createIssue(context, parsed)))
       );
-    }
+    })
   );
 
   server.registerTool(
@@ -72,12 +72,12 @@ export function registerIssueTools(
       description: "Update issue fields.",
       inputSchema: updateIssueToolInputSchema.shape
     },
-    (input) => {
+    (input) => mcpToolResult(() => {
       const { identifier, ...update } = updateIssueToolInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
         jsonResult(serializeIssue(updateIssue(context, identifier, update)))
       );
-    }
+    })
   );
 
   server.registerTool(
@@ -87,24 +87,11 @@ export function registerIssueTools(
       description: "Move an issue to another workflow state.",
       inputSchema: moveIssueInputSchema.shape
     },
-    (input) => {
+    (input) => mcpToolResult(() => {
       const parsed = moveIssueInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
         jsonResult(serializeIssue(moveIssue(context, parsed.identifier, parsed.state)))
       );
-    }
+    })
   );
-}
-
-function withMcpContext<T>(
-  options: OpenMcpContextOptions,
-  work: (mcp: ReturnType<typeof openMcpContext>) => T
-): T {
-  const mcp = openMcpContext(options);
-
-  try {
-    return work(mcp);
-  } finally {
-    mcp.close();
-  }
 }

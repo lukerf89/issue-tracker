@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 
 import { inTransaction, type ServiceContext } from "../context.js";
 import { actors, issues, projects, teams, workflowStates, type Issue } from "../db/schema.js";
@@ -33,6 +33,7 @@ export interface ListIssueFilters {
   assignee?: string | null;
   project?: string | null;
   team?: string;
+  priority?: number;
   limit?: number;
   includeArchived?: boolean;
 }
@@ -137,8 +138,7 @@ export function listIssues(context: ServiceContext, filters: ListIssueFilters = 
   }
 
   if (filters.state) {
-    const state = resolveStateForFilter(context, filters.state, filters.team);
-    conditions.push(eq(issues.stateId, state.id));
+    conditions.push(stateFilterCondition(context, filters.state, filters.team));
   }
 
   if (filters.assignee !== undefined) {
@@ -155,6 +155,10 @@ export function listIssues(context: ServiceContext, filters: ListIssueFilters = 
         ? isNull(issues.projectId)
         : eq(issues.projectId, resolveProjectId(context, filters.project))
     );
+  }
+
+  if (filters.priority !== undefined) {
+    conditions.push(eq(issues.priority, filters.priority));
   }
 
   return context.db.query.issues.findMany({
@@ -312,6 +316,35 @@ function resolveStateForFilter(context: ServiceContext, stateRef: string, teamRe
 
   const teamId = teamRef ? resolveTeam(context, teamRef).id : undefined;
   return getState(context, stateRef, teamId);
+}
+
+function stateFilterCondition(context: ServiceContext, stateRef: string, teamRef?: string): SQL {
+  if (teamRef) {
+    const state = resolveStateForFilter(context, stateRef, teamRef);
+    return eq(issues.stateId, state.id);
+  }
+
+  const byId = context.db.query.workflowStates.findFirst({
+    where: eq(workflowStates.id, stateRef)
+  }).sync();
+
+  if (byId) {
+    return eq(issues.stateId, byId.id);
+  }
+
+  const statesByName = context.db.query.workflowStates.findMany({
+    where: eq(workflowStates.name, stateRef)
+  }).sync();
+
+  if (statesByName.length === 0) {
+    throw new AppError(
+      AppErrorCode.WORKFLOW_STATE_NOT_FOUND,
+      `Workflow state ${stateRef} was not found.`,
+      { state: stateRef, teamId: null }
+    );
+  }
+
+  return inArray(issues.stateId, statesByName.map((state) => state.id));
 }
 
 function resolveOptionalActorId(context: ServiceContext, actorRef: string | null | undefined) {

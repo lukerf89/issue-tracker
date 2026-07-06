@@ -9,8 +9,8 @@ import {
 } from "@issue-tracker/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { openMcpContext, type OpenMcpContextOptions } from "../context.js";
-import { jsonResult } from "./result.js";
+import type { OpenMcpContextOptions } from "../context.js";
+import { jsonResult, mcpToolResult, withMcpContext } from "./result.js";
 
 export function registerProjectTools(
   server: McpServer,
@@ -23,12 +23,12 @@ export function registerProjectTools(
       description: "List projects.",
       inputSchema: listProjectsInputSchema.shape
     },
-    (input) => {
+    (input) => mcpToolResult(() => {
       const parsed = listProjectsInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
         jsonResult(listProjects(context, parsed).map(serializeProject))
       );
-    }
+    })
   );
 
   server.registerTool(
@@ -38,12 +38,12 @@ export function registerProjectTools(
       description: "Read one project by id or name.",
       inputSchema: getProjectInputSchema.shape
     },
-    (input) => {
+    (input) => mcpToolResult(() => {
       const parsed = getProjectInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
         jsonResult(serializeProject(getProject(context, parsed.project)))
       );
-    }
+    })
   );
 
   server.registerTool(
@@ -53,24 +53,11 @@ export function registerProjectTools(
       description: "Create a project.",
       inputSchema: createProjectInputSchema.shape
     },
-    (input) => {
+    (input) => mcpToolResult(() => {
       const parsed = createProjectInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
         jsonResult(serializeProject(createProject(context, parsed)))
       );
-    }
+    })
   );
-}
-
-function withMcpContext<T>(
-  options: OpenMcpContextOptions,
-  work: (mcp: ReturnType<typeof openMcpContext>) => T
-): T {
-  const mcp = openMcpContext(options);
-
-  try {
-    return work(mcp);
-  } finally {
-    mcp.close();
-  }
 }

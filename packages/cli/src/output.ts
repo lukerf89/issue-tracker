@@ -1,8 +1,6 @@
-import { inspect } from "node:util";
-
 import {
-  AppError,
   AppErrorCode,
+  errorEnvelope,
   getActor,
   getState,
   serializeActor,
@@ -112,7 +110,14 @@ export function handleCliError(error: unknown): number {
     return 0;
   }
 
-  const envelope = errorEnvelope(error);
+  const envelope = isCommanderError(error)
+    ? {
+        error: {
+          code: AppErrorCode.VALIDATION_FAILED,
+          message: error.message
+        }
+      }
+    : errorEnvelope(error);
   process.stderr.write(`${JSON.stringify(envelope)}\n`);
   return 1;
 }
@@ -166,44 +171,6 @@ function pad(value: string, width: number): string {
   return value.padEnd(width, " ");
 }
 
-function errorEnvelope(error: unknown) {
-  if (error instanceof AppError) {
-    return {
-      error: {
-        code: error.code,
-        message: error.message,
-        ...(error.details === undefined ? {} : { details: error.details })
-      }
-    };
-  }
-
-  if (isCommanderError(error)) {
-    return {
-      error: {
-        code: AppErrorCode.VALIDATION_FAILED,
-        message: error.message
-      }
-    };
-  }
-
-  if (isZodError(error)) {
-    return {
-      error: {
-        code: AppErrorCode.VALIDATION_FAILED,
-        message: "Input validation failed.",
-        details: { issues: error.issues }
-      }
-    };
-  }
-
-  return {
-    error: {
-      code: AppErrorCode.DATABASE_ERROR,
-      message: error instanceof Error ? error.message : inspect(error)
-    }
-  };
-}
-
 function isCommanderError(error: unknown): error is { code: string; message: string } {
   return (
     typeof error === "object" &&
@@ -216,15 +183,4 @@ function isCommanderError(error: unknown): error is { code: string; message: str
 
 function isCommanderHelp(error: unknown): boolean {
   return isCommanderError(error) && error.code === "commander.helpDisplayed";
-}
-
-function isZodError(error: unknown): error is { issues: unknown[] } {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "name" in error &&
-    (error as { name?: unknown }).name === "ZodError" &&
-    "issues" in error &&
-    Array.isArray((error as { issues?: unknown }).issues)
-  );
 }

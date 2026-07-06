@@ -5,8 +5,8 @@ import {
 } from "@issue-tracker/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { openMcpContext, type OpenMcpContextOptions } from "../context.js";
-import { jsonResult } from "./result.js";
+import type { OpenMcpContextOptions } from "../context.js";
+import { jsonResult, mcpToolResult, withMcpContext } from "./result.js";
 
 export function registerTeamTools(
   server: McpServer,
@@ -19,24 +19,11 @@ export function registerTeamTools(
       description: "List teams.",
       inputSchema: listTeamsInputSchema.shape
     },
-    (input) => {
+    (input) => mcpToolResult(() => {
       const parsed = listTeamsInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
         jsonResult(listTeams(context, parsed).map(serializeTeam))
       );
-    }
+    })
   );
-}
-
-function withMcpContext<T>(
-  options: OpenMcpContextOptions,
-  work: (mcp: ReturnType<typeof openMcpContext>) => T
-): T {
-  const mcp = openMcpContext(options);
-
-  try {
-    return work(mcp);
-  } finally {
-    mcp.close();
-  }
 }

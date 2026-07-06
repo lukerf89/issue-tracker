@@ -1,3 +1,5 @@
+import { inspect } from "node:util";
+
 export const AppErrorCode = {
   ISSUE_NOT_FOUND: "ISSUE_NOT_FOUND",
   TEAM_NOT_FOUND: "TEAM_NOT_FOUND",
@@ -26,4 +28,52 @@ export class AppError extends Error {
     this.code = code;
     this.details = details;
   }
+}
+
+export interface ErrorEnvelope {
+  error: {
+    code: AppErrorCode;
+    message: string;
+    details?: unknown;
+  };
+}
+
+export function errorEnvelope(error: unknown): ErrorEnvelope {
+  if (error instanceof AppError) {
+    return {
+      error: {
+        code: error.code,
+        message: error.message,
+        ...(error.details === undefined ? {} : { details: error.details })
+      }
+    };
+  }
+
+  if (isZodError(error)) {
+    return {
+      error: {
+        code: AppErrorCode.VALIDATION_FAILED,
+        message: "Input validation failed.",
+        details: { issues: error.issues }
+      }
+    };
+  }
+
+  return {
+    error: {
+      code: AppErrorCode.DATABASE_ERROR,
+      message: error instanceof Error ? error.message : inspect(error)
+    }
+  };
+}
+
+function isZodError(error: unknown): error is { issues: unknown[] } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    (error as { name?: unknown }).name === "ZodError" &&
+    "issues" in error &&
+    Array.isArray((error as { issues?: unknown }).issues)
+  );
 }

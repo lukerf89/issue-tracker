@@ -485,6 +485,7 @@ function issueListFilters(options: Record<string, unknown>, defaultTeam?: string
     assignee,
     project,
     team: stringOption(options.team) ?? defaultTeam,
+    priority: numberOption(options.priority),
     limit: numberOption(options.limit),
     includeArchived: booleanOption(options.includeArchived)
   }));

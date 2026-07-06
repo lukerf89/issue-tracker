@@ -14,7 +14,6 @@ import {
   init,
   listActors,
   openDb,
-  serializeIssue,
   whoami,
   type Clock,
   type ServiceContext
@@ -114,12 +113,13 @@ describe("MCP server", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(result.content).toEqual([
-        {
-          type: "text",
-          text: "Actor new-human was not found."
+      expect(jsonFromToolResult(result)).toEqual({
+        error: {
+          code: "ACTOR_NOT_FOUND",
+          message: "Actor new-human was not found.",
+          details: { actor: "new-human" }
         }
-      ]);
+      });
     } finally {
       await humanClient.close();
     }
@@ -129,6 +129,31 @@ describe("MCP server", () => {
       expect(listActors(after.context).map((actor) => actor.handle)).not.toContain("new-human");
     } finally {
       after.close();
+    }
+  });
+
+  it("returns structured validation errors from MCP tools", async () => {
+    const dbPath = initializedDbPath();
+    const client = await connectClient(dbPath, { handle: "validation-agent" });
+
+    try {
+      const result = await client.callTool({
+        name: "create_issue",
+        arguments: { title: "Reject invalid priority", priority: 99 }
+      });
+
+      expect(result.isError).toBe(true);
+      const envelope = jsonFromToolResult(result);
+      expect(envelope).toMatchObject({
+        error: {
+          code: "VALIDATION_FAILED",
+          message: "Input validation failed.",
+          details: { issues: expect.any(Array) }
+        }
+      });
+      expect(JSON.stringify(envelope)).toContain("priority");
+    } finally {
+      await client.close();
     }
   });
 });
@@ -163,6 +188,18 @@ async function callJsonTool(
 
   if (!content || content.type !== "text") {
     throw new Error(`Tool ${name} did not return JSON text content.`);
+  }
+
+  return JSON.parse(content.text) as Record<string, unknown>;
+}
+
+function jsonFromToolResult(result: {
+  content: ReadonlyArray<{ type: string; text?: string }>;
+}): Record<string, unknown> {
+  const [content] = result.content;
+
+  if (!content || content.type !== "text" || typeof content.text !== "string") {
+    throw new Error("Tool did not return JSON text content.");
   }
 
   return JSON.parse(content.text) as Record<string, unknown>;

@@ -84,6 +84,67 @@ describe("tracker CLI", () => {
     expect(records.map((record) => record.identifier)).toEqual(["ENG-1"]);
   });
 
+  it("filters issue list JSON by priority", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect(
+      (
+        await tracker(dbPath, [
+          "issue",
+          "create",
+          "--title",
+          "Fix release blocker",
+          "--priority",
+          "1"
+        ])
+      ).status
+    ).toBe(0);
+    expect(
+      (
+        await tracker(dbPath, [
+          "issue",
+          "create",
+          "--title",
+          "Tidy help output",
+          "--priority",
+          "4"
+        ])
+      ).status
+    ).toBe(0);
+
+    const filtered = await tracker(dbPath, ["issue", "list", "--priority", "1", "--json"]);
+    expect(filtered.status).toBe(0);
+
+    const records = JSON.parse(filtered.stdout) as Array<Record<string, unknown>>;
+    expect(records.map((record) => record.identifier)).toEqual(["ENG-1"]);
+    expect(records.map((record) => record.priority)).toEqual([1]);
+  });
+
+  it("rejects out-of-range priority values", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+
+    const result = await tracker(dbPath, [
+      "issue",
+      "create",
+      "--title",
+      "Reject invalid priority",
+      "--priority",
+      "99",
+      "--json"
+    ]);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr)).toMatchObject({
+      error: {
+        code: "VALIDATION_FAILED",
+        message: "Input validation failed."
+      }
+    });
+  });
+
   it("prints an error envelope to stderr with non-zero exit for a bad identifier", async () => {
     const dbPath = tempDbPath();
 

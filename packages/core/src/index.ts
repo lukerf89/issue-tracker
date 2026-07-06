@@ -1,7 +1,13 @@
 export { systemClock, type Clock } from "./clock.js";
 export { openDb, type Db } from "./db/client.js";
 export { applyMigrations, type MigrationOptions } from "./db/migrate.js";
-export { AppError, AppErrorCode, type AppErrorCode as AppErrorCodeValue } from "./errors.js";
+export {
+  AppError,
+  AppErrorCode,
+  errorEnvelope,
+  type AppErrorCode as AppErrorCodeValue,
+  type ErrorEnvelope
+} from "./errors.js";
 export { identifier, uuid } from "./ids.js";
 export {
   inTransaction,

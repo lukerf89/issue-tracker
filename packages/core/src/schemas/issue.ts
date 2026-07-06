@@ -11,6 +11,9 @@ import {
   optionalNullableStringSchema
 } from "./common.js";
 
+export const prioritySchema = z.number().int().min(0).max(4);
+const optionalPrioritySchema = prioritySchema.optional();
+
 export const getIssueInputSchema = z.object({
   identifier: nonEmptyStringSchema
 });
@@ -22,7 +25,7 @@ export const createIssueInputSchema = z.object({
   teamId: nonEmptyStringSchema.optional(),
   state: nonEmptyStringSchema.optional(),
   stateId: nonEmptyStringSchema.optional(),
-  priority: optionalIntegerSchema,
+  priority: optionalPrioritySchema,
   assignee: optionalNullableStringSchema,
   assigneeId: optionalNullableStringSchema,
   project: optionalNullableStringSchema,
@@ -39,6 +42,7 @@ export const listIssueFiltersSchema = z.object({
   assignee: optionalNullableStringSchema,
   project: optionalNullableStringSchema,
   team: nonEmptyStringSchema.optional(),
+  priority: optionalPrioritySchema,
   limit: optionalIntegerSchema,
   includeArchived: z.boolean().optional()
 }) satisfies z.ZodType<ListIssueFilters>;
@@ -46,7 +50,7 @@ export const listIssueFiltersSchema = z.object({
 export const updateIssueInputSchema = z.object({
   title: nonEmptyStringSchema.optional(),
   description: z.string().nullable().optional(),
-  priority: optionalIntegerSchema,
+  priority: optionalPrioritySchema,
   assignee: optionalNullableStringSchema,
   assigneeId: optionalNullableStringSchema,
   project: optionalNullableStringSchema,
