@@ -24,6 +24,7 @@ describe("tracker CLI", () => {
     expect(help).toContain("issue");
     expect(help).toContain("project");
     expect(help).toContain("team");
+    expect(help).toContain("tui");
   });
 
   it("initializes a temp DB, creates a project and issue, and lists JSON records", async () => {

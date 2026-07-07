@@ -9,7 +9,7 @@ export default defineConfig({
       {
         test: {
           environment: "node",
-          include: ["packages/{core,cli,mcp}/test/**/*.test.ts"],
+          include: ["packages/{core,cli,mcp,tui}/test/**/*.test.ts"],
           name: "backend"
         }
       },

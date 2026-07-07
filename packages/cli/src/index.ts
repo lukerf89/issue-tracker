@@ -109,6 +109,7 @@ import {
   type UpdateProjectInput
 } from "@issue-tracker/core";
 import { runStdioServer } from "@issue-tracker/mcp";
+import { runLinekeeperTui } from "@issue-tracker/tui";
 import { Command, InvalidArgumentError } from "commander";
 
 import { openCliContext, resolveDbPath, type CliGlobalOptions } from "./context.js";
@@ -874,6 +875,19 @@ export function createProgram(): Command {
 
         process.stdout.write(`Imported ${formatImportSummary(summary)}\n`);
       })
+    );
+
+  program
+    .command("tui")
+    .description("open the Linekeeper terminal UI")
+    .action((_options, command) =>
+      withContextAsync(command, {}, (cli) =>
+        runLinekeeperTui({
+          context: cli.context,
+          dbPath: cli.dbPath,
+          defaultTeam: cli.defaultTeam
+        })
+      )
     );
 
   program
