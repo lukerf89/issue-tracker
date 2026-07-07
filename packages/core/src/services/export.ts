@@ -18,7 +18,9 @@ import {
   labels,
   milestones,
   projects,
+  savedViews,
   teams,
+  templates,
   workflowStates,
   workspace,
   type Activity,
@@ -28,6 +30,8 @@ import {
   type Issue,
   type IssueLabel,
   type Milestone,
+  type SavedView,
+  type Template,
   type Workspace
 } from "../db/schema.js";
 import {
@@ -35,9 +39,14 @@ import {
   serializeCycle,
   serializeLabel,
   serializeProject,
+  serializeSavedView,
   serializeTeam,
+  serializeTemplate,
   serializeWorkflowState
 } from "../serialize.js";
+import { listIssueFiltersSchema } from "../schemas/issue.js";
+import { templateLabelsSchema } from "../schemas/template.js";
+import type { ListIssueFilters } from "./issue.js";
 
 export interface ExportSnapshot {
   workspace: SerializedWorkspace | null;
@@ -54,6 +63,8 @@ export interface ExportSnapshot {
   actors: ReturnType<typeof serializeActor>[];
   attachments: SerializedAttachment[];
   activity: SerializedActivity[];
+  savedViews: ReturnType<typeof serializeSavedView>[];
+  templates: ReturnType<typeof serializeTemplate>[];
 }
 
 export interface ResolveBackupPathInput {
@@ -198,7 +209,19 @@ export function exportSnapshot(context: ServiceContext): ExportSnapshot {
     }).sync().map(serializeAttachment),
     activity: context.db.query.activity.findMany({
       orderBy: [asc(activity.issueId), asc(activity.createdAt), sql`${activity}.rowid`]
-    }).sync().map(serializeActivityRow)
+    }).sync().map(serializeActivityRow),
+    savedViews: context.db.query.savedViews.findMany({
+      orderBy: [asc(savedViews.name), asc(savedViews.id)]
+    }).sync().map((view) => serializeSavedView({
+      ...view,
+      filters: parseSavedViewFilters(view)
+    })),
+    templates: context.db.query.templates.findMany({
+      orderBy: [asc(templates.name), asc(templates.id)]
+    }).sync().map((template) => serializeTemplate({
+      ...template,
+      labels: parseTemplateLabels(template)
+    }))
   };
 }
 
@@ -334,6 +357,16 @@ function formatBackupTimestamp(date: Date): string {
 function parseActivityData(data: unknown): Record<string, unknown> {
   const parsed = typeof data === "string" ? JSON.parse(data) as unknown : data;
   return isRecord(parsed) ? parsed : {};
+}
+
+function parseSavedViewFilters(view: SavedView): ListIssueFilters {
+  const parsed = typeof view.filters === "string" ? JSON.parse(view.filters) as unknown : view.filters;
+  return listIssueFiltersSchema.parse(parsed);
+}
+
+function parseTemplateLabels(template: Template): string[] {
+  const parsed = typeof template.labels === "string" ? JSON.parse(template.labels) as unknown : template.labels;
+  return templateLabelsSchema.parse(parsed);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

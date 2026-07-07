@@ -25,7 +25,9 @@ export {
   serializeIssue,
   serializeLabel,
   serializeProject,
+  serializeSavedView,
   serializeTeam,
+  serializeTemplate,
   serializeWorkflowState
 } from "./serialize.js";
 export {
@@ -77,7 +79,38 @@ export {
   type ExportSnapshot,
   type ResolveBackupPathInput
 } from "./services/export.js";
+export {
+  importSnapshot,
+  importSnapshotSchema,
+  type ImportSnapshot,
+  type ImportSnapshotOptions,
+  type ImportSnapshotSummary
+} from "./services/import.js";
 export { init, type InitInput } from "./services/init.js";
+export {
+  createSavedView,
+  deleteSavedView,
+  listIssuesWithView,
+  listSavedViews,
+  resolveIssueListFilters,
+  resolveSavedView,
+  type CreateSavedViewInput,
+  type DeleteSavedViewInput,
+  type ListIssuesWithViewInput,
+  type ResolveSavedViewInput,
+  type SavedViewWithFilters
+} from "./services/savedView.js";
+export {
+  createIssueFromTemplate,
+  createTemplate,
+  deleteTemplate,
+  listTemplates,
+  type CreateIssueFromTemplateInput,
+  type CreateIssueFromTemplateOverrides,
+  type CreateTemplateInput,
+  type DeleteTemplateInput,
+  type TemplateWithLabels
+} from "./services/template.js";
 export {
   archiveLabel,
   attachLabel,
@@ -173,6 +206,22 @@ export {
   updateIssueToolInputSchema
 } from "./schemas/issue.js";
 export {
+  createSavedViewInputSchema,
+  deleteSavedViewInputSchema,
+  listIssuesWithViewInputSchema,
+  listIssuesWithViewToolInputSchema,
+  listSavedViewsInputSchema,
+  resolveSavedViewInputSchema
+} from "./schemas/savedView.js";
+export {
+  createIssueFromTemplateInputSchema,
+  createIssueFromTemplateOverridesSchema,
+  createTemplateInputSchema,
+  deleteTemplateInputSchema,
+  listTemplatesInputSchema,
+  templateLabelsSchema
+} from "./schemas/template.js";
+export {
   archiveLabelInputSchema,
   createLabelInputSchema,
   listLabelsInputSchema,
@@ -217,10 +266,14 @@ export type {
   NewLabel,
   NewMilestone,
   NewProject,
+  NewSavedView,
+  NewTemplate,
   NewTeam,
   NewWorkflowState,
   NewWorkspace,
   Project,
+  SavedView,
+  Template,
   Team,
   WorkflowState,
   Workspace

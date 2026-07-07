@@ -8,7 +8,9 @@ import { registerIssueTools } from "./tools/issues.js";
 import { registerLabelTools } from "./tools/labels.js";
 import { registerProjectTools } from "./tools/projects.js";
 import { jsonErrorResult } from "./tools/result.js";
+import { registerSavedViewTools } from "./tools/savedViews.js";
 import { registerTeamTools } from "./tools/teams.js";
+import { registerTemplateTools } from "./tools/templates.js";
 import type { McpActorContext } from "./context.js";
 
 export interface CreateServerOptions {
@@ -30,7 +32,9 @@ export function createServer(options: CreateServerOptions): McpServer {
   registerCycleTools(server, options);
   registerLabelTools(server, options);
   registerProjectTools(server, options);
+  registerSavedViewTools(server, options);
   registerTeamTools(server, options);
+  registerTemplateTools(server, options);
   registerIssueResources(server, options);
 
   return server;

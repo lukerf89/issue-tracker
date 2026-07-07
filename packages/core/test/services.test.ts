@@ -22,13 +22,21 @@ import {
   createActor,
   createCycle,
   createIssue,
+  createIssueFromTemplate,
   createIssueInputSchema,
   createLabel,
   createProject,
+  createSavedView,
+  createSavedViewInputSchema,
   createTeam,
+  createTemplate,
+  createTemplateInputSchema,
+  deleteSavedView,
+  deleteTemplate,
   detachLabel,
   getIssue,
   getProject,
+  getState,
   getTeam,
   getTeamByKey,
   init,
@@ -41,8 +49,11 @@ import {
   listCycles,
   listLabels,
   listIssueFiltersSchema,
+  listIssuesWithView,
   listIssues,
   listProjects,
+  listSavedViews,
+  listTemplates,
   listTeams,
   moveIssue,
   openDb,
@@ -54,6 +65,8 @@ import {
   serializeActivity,
   serializeActivityEvent,
   serializeCycle,
+  serializeSavedView,
+  serializeTemplate,
   setConfig,
   unarchiveIssue,
   unarchiveLabel,
@@ -61,7 +74,10 @@ import {
   unarchiveTeam,
   updateIssue,
   updateIssueInputSchema,
+  updateProject,
   whoami,
+  resolveIssueListFilters,
+  resolveSavedView,
   type Clock,
   type Db,
   type ServiceContext
@@ -692,6 +708,206 @@ describe("core services", () => {
         action: "archived",
         data: { identifier: "ENG-1" }
       });
+    } finally {
+      close();
+    }
+  });
+
+  it("creates, lists, resolves, applies, and deletes saved view filters", () => {
+    const { context, close } = initializedContext("2026-07-01T00:00:00.000Z");
+
+    try {
+      createLabel(context, { name: "Bug", color: "#EF4444" });
+      createLabel(context, { name: "Docs", color: "#22C55E" });
+      createIssue(context, {
+        title: "Fix active bug",
+        priority: 1,
+        labels: ["Bug"]
+      });
+      createIssue(context, {
+        title: "Fix later bug",
+        priority: 2,
+        labels: ["Bug"]
+      });
+      createIssue(context, {
+        title: "Refresh docs",
+        priority: 1,
+        labels: ["Docs"]
+      });
+
+      const view = createSavedView(context, {
+        name: "Priority bugs",
+        filters: { label: "Bug", priority: 1 },
+        description: "High-priority bug queue"
+      });
+
+      expect(view).toMatchObject({
+        name: "Priority bugs",
+        filters: { label: "Bug", priority: 1 },
+        description: "High-priority bug queue",
+        createdAt: "2026-07-01T00:00:00.000Z",
+        updatedAt: "2026-07-01T00:00:00.000Z"
+      });
+      expect(serializeSavedView(view)).toMatchObject({
+        name: "Priority bugs",
+        filters: { label: "Bug", priority: 1 },
+        description: "High-priority bug queue",
+        createdAt: "2026-07-01T00:00:00.000Z"
+      });
+      expect(listSavedViews(context).map((saved) => saved.name)).toEqual([
+        "Priority bugs"
+      ]);
+      expect(resolveSavedView(context, "Priority bugs")).toEqual({
+        label: "Bug",
+        priority: 1
+      });
+      expect(listIssuesWithView(context, { view: "Priority bugs" }).map((issue) => issue.identifier)).toEqual([
+        "ENG-1"
+      ]);
+      expect(
+        resolveIssueListFilters(context, {
+          view: "Priority bugs",
+          filters: { priority: 2 }
+        })
+      ).toEqual({ label: "Bug", priority: 2 });
+      expect(
+        listIssuesWithView(context, {
+          view: "Priority bugs",
+          filters: { priority: 2 }
+        }).map((issue) => issue.identifier)
+      ).toEqual(["ENG-2"]);
+      expectAppError(
+        () =>
+          createSavedView(context, {
+            name: "Priority bugs",
+            filters: { state: "Todo" }
+          }),
+        AppErrorCode.SAVED_VIEW_NAME_TAKEN
+      );
+      expect(
+        createSavedViewInputSchema.safeParse({
+          name: "Invalid priority",
+          filters: { priority: 99 }
+        }).success
+      ).toBe(false);
+
+      const deleted = deleteSavedView(context, view.id);
+      expect(deleted.id).toBe(view.id);
+      expect(listSavedViews(context)).toEqual([]);
+      expectAppError(
+        () => resolveSavedView(context, "Priority bugs"),
+        AppErrorCode.SAVED_VIEW_NOT_FOUND
+      );
+    } finally {
+      close();
+    }
+  });
+
+  it("creates, lists, deletes, and creates issues from templates through createIssue", () => {
+    const { context, db, close } = initializedContext("2026-07-02T00:00:00.000Z");
+
+    try {
+      createTeam(context, { key: "OPS", name: "Operations" });
+      const project = createProject(context, {
+        name: "Platform Foundations",
+        status: "planned"
+      });
+      createLabel(context, { name: "Bug", color: "#EF4444" });
+
+      const template = createTemplate(context, {
+        name: "Bug report",
+        title: "Investigate fictional bug",
+        description: "Capture reproduction steps.",
+        priority: 2,
+        team: "ENG",
+        project: project.name,
+        labels: ["Bug"]
+      });
+
+      expect(template).toMatchObject({
+        name: "Bug report",
+        title: "Investigate fictional bug",
+        description: "Capture reproduction steps.",
+        priority: 2,
+        team: "ENG",
+        project: project.id,
+        labels: ["Bug"],
+        createdAt: "2026-07-02T00:00:00.000Z",
+        updatedAt: "2026-07-02T00:00:00.000Z"
+      });
+      expect(serializeTemplate(template)).toMatchObject({
+        name: "Bug report",
+        title: "Investigate fictional bug",
+        priority: 2,
+        labels: ["Bug"],
+        createdAt: "2026-07-02T00:00:00.000Z"
+      });
+      expect(listTemplates(context).map((saved) => saved.name)).toEqual(["Bug report"]);
+
+      updateProject(context, project.id, { name: "Platform Reliability" });
+
+      context.clock = fixedClock("2026-07-02T00:10:00.000Z");
+      const issue = createIssueFromTemplate(context, "Bug report", {
+        title: "Investigate export bug",
+        priority: 1
+      });
+      const state = getState(context, issue.stateId, issue.teamId);
+
+      expect(issue).toMatchObject({
+        identifier: "ENG-1",
+        number: 1,
+        title: "Investigate export bug",
+        description: "Capture reproduction steps.",
+        priority: 1,
+        projectId: project.id,
+        startedAt: null,
+        completedAt: null,
+        canceledAt: null
+      });
+      expect(state).toMatchObject({ name: "Todo", type: "unstarted" });
+      expect(issue.labels.map((label) => label.name)).toEqual(["Bug"]);
+      expect(readActivityEntries(db)).toMatchObject([
+        { action: "created", data: { identifier: "ENG-1" } },
+        { action: "label_added", data: { labelName: "Bug" } }
+      ]);
+      expect(getTeamByKey(context, "ENG").issueCounter).toBe(1);
+
+      context.clock = fixedClock("2026-07-02T00:20:00.000Z");
+      const operationsIssue = createIssueFromTemplate(context, "Bug report", {
+        title: "Route operations bug",
+        team: "OPS",
+        labels: []
+      });
+
+      expect(operationsIssue).toMatchObject({
+        identifier: "OPS-1",
+        number: 1,
+        title: "Route operations bug",
+        labels: []
+      });
+      expect(getTeamByKey(context, "OPS").issueCounter).toBe(1);
+      expectAppError(
+        () =>
+          createTemplate(context, {
+            name: "Bug report",
+            title: "Duplicate template"
+          }),
+        AppErrorCode.TEMPLATE_NAME_TAKEN
+      );
+      expect(
+        createTemplateInputSchema.safeParse({
+          name: "Invalid priority",
+          priority: 99
+        }).success
+      ).toBe(false);
+      expectAppError(
+        () => createIssueFromTemplate(context, "Missing template", { title: "No template" }),
+        AppErrorCode.TEMPLATE_NOT_FOUND
+      );
+
+      const deleted = deleteTemplate(context, template.name);
+      expect(deleted.id).toBe(template.id);
+      expect(listTemplates(context)).toEqual([]);
     } finally {
       close();
     }
@@ -1580,6 +1796,10 @@ function recordTransactionOptions(db: Db): unknown[] {
 }
 
 function expectIssueParentCycle(work: () => unknown): void {
+  expectAppError(work, AppErrorCode.ISSUE_PARENT_CYCLE);
+}
+
+function expectAppError(work: () => unknown, code: string): void {
   let error: unknown;
 
   try {
@@ -1588,5 +1808,5 @@ function expectIssueParentCycle(work: () => unknown): void {
     error = caught;
   }
 
-  expect(error).toMatchObject({ code: AppErrorCode.ISSUE_PARENT_CYCLE });
+  expect(error).toMatchObject({ code });
 }

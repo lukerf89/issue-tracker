@@ -12,7 +12,9 @@ import {
   createIssue,
   createLabel,
   createProject,
+  createSavedView,
   createTeam,
+  createTemplate,
   exportSnapshot,
   init,
   openDb,
@@ -106,6 +108,22 @@ describe("exportSnapshot", () => {
 
       db.insert(attachments).values(attachment).run();
 
+      context.clock = fixedClock("2026-05-01T00:05:00.000Z");
+      const savedView = createSavedView(context, {
+        name: "Migration bugs",
+        filters: { label: label.name, priority: 2 },
+        description: null
+      });
+      const template = createTemplate(context, {
+        name: "Migration task",
+        title: "Plan fictional migration",
+        description: "Use the export checklist.",
+        priority: 2,
+        team: "ENG",
+        project: project.name,
+        labels: [label.name]
+      });
+
       const snapshot = exportSnapshot(context);
 
       expect(Object.keys(snapshot)).toEqual([
@@ -122,7 +140,9 @@ describe("exportSnapshot", () => {
         "comments",
         "actors",
         "attachments",
-        "activity"
+        "activity",
+        "savedViews",
+        "templates"
       ]);
       expect(snapshot.workspace).toMatchObject({
         name: "Local Workspace",
@@ -223,6 +243,30 @@ describe("exportSnapshot", () => {
         { issueId: issue.id, actorId: context.actor?.id, data: { identifier: "ENG-1" } },
         { issueId: issue.id, data: { labelId: label.id, labelName: "Migration" } },
         { issueId: issue.id, data: { commentId: comment.id, parentId: null } }
+      ]);
+      expect(snapshot.savedViews).toEqual([
+        {
+          id: savedView.id,
+          name: "Migration bugs",
+          filters: { label: "Migration", priority: 2 },
+          description: null,
+          createdAt: "2026-05-01T00:05:00.000Z",
+          updatedAt: "2026-05-01T00:05:00.000Z"
+        }
+      ]);
+      expect(snapshot.templates).toEqual([
+        {
+          id: template.id,
+          name: "Migration task",
+          title: "Plan fictional migration",
+          description: "Use the export checklist.",
+          priority: 2,
+          team: "ENG",
+          project: project.id,
+          labels: ["Migration"],
+          createdAt: "2026-05-01T00:05:00.000Z",
+          updatedAt: "2026-05-01T00:05:00.000Z"
+        }
       ]);
       expect(JSON.stringify(snapshot)).not.toContain("undefined");
     } finally {

@@ -1,5 +1,7 @@
 import type { Activity, Actor, Attachment, Comment, Cycle, Issue, Label, Project, Team, WorkflowState } from "./db/schema.js";
 import type { ActivityFeedEvent } from "./services/activity.js";
+import type { SavedViewWithFilters } from "./services/savedView.js";
+import type { TemplateWithLabels } from "./services/template.js";
 
 interface IssueReference {
   id: string;
@@ -180,6 +182,32 @@ export function serializeActivityEvent(entry: ActivityFeedEvent) {
     cursor: entry.cursor,
     issueIdentifier: entry.issueIdentifier,
     ...serializeActivity(entry)
+  };
+}
+
+export function serializeSavedView(view: SavedViewWithFilters) {
+  return {
+    id: view.id,
+    name: view.name,
+    filters: view.filters,
+    description: view.description ?? null,
+    createdAt: toIso(view.createdAt),
+    updatedAt: toIso(view.updatedAt)
+  };
+}
+
+export function serializeTemplate(template: TemplateWithLabels) {
+  return {
+    id: template.id,
+    name: template.name,
+    title: template.title ?? null,
+    description: template.description ?? null,
+    priority: template.priority ?? null,
+    team: template.team ?? null,
+    project: template.project ?? null,
+    labels: template.labels,
+    createdAt: toIso(template.createdAt),
+    updatedAt: toIso(template.updatedAt)
   };
 }
 

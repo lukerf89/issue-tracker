@@ -12,7 +12,9 @@ import {
   serializeIssue,
   serializeLabel,
   serializeProject,
+  serializeSavedView,
   serializeTeam,
+  serializeTemplate,
   type Actor,
   type ActivityFeedEvent,
   type ActivityWithActor,
@@ -23,8 +25,10 @@ import {
   type IssueReference,
   type Label,
   type Project,
+  type SavedViewWithFilters,
   type ServiceContext,
-  type Team
+  type Team,
+  type TemplateWithLabels
 } from "@issue-tracker/core";
 import pc from "picocolors";
 
@@ -192,6 +196,80 @@ export function printProject(project: Project, options: OutputOptions): void {
   }
 
   process.stdout.write(`${pc.bold(project.name)}  ${project.status}\n`);
+}
+
+export function printSavedViews(
+  views: SavedViewWithFilters[],
+  options: OutputOptions
+): void {
+  if (options.json) {
+    printJson(views.map(serializeSavedView));
+    return;
+  }
+
+  for (const view of views) {
+    process.stdout.write(
+      [
+        pc.bold(view.name),
+        formatSavedViewFilters(view.filters),
+        view.description ?? ""
+      ].filter(Boolean).join("  ") + "\n"
+    );
+  }
+}
+
+export function printSavedView(
+  view: SavedViewWithFilters,
+  options: OutputOptions
+): void {
+  if (options.json) {
+    printJson(serializeSavedView(view));
+    return;
+  }
+
+  process.stdout.write(
+    [
+      pc.bold(view.name),
+      formatSavedViewFilters(view.filters),
+      view.description ?? ""
+    ].filter(Boolean).join("  ") + "\n"
+  );
+}
+
+export function printTemplates(
+  templates: TemplateWithLabels[],
+  options: OutputOptions
+): void {
+  if (options.json) {
+    printJson(templates.map(serializeTemplate));
+    return;
+  }
+
+  for (const template of templates) {
+    process.stdout.write(
+      [
+        pc.bold(template.name),
+        formatTemplatePreset(template)
+      ].filter(Boolean).join("  ") + "\n"
+    );
+  }
+}
+
+export function printTemplate(
+  template: TemplateWithLabels,
+  options: OutputOptions
+): void {
+  if (options.json) {
+    printJson(serializeTemplate(template));
+    return;
+  }
+
+  process.stdout.write(
+    [
+      pc.bold(template.name),
+      formatTemplatePreset(template)
+    ].filter(Boolean).join("  ") + "\n"
+  );
 }
 
 export function printIssue(context: ServiceContext, issue: Issue, options: OutputOptions): void {
@@ -431,6 +509,21 @@ function formatActivityValue(value: unknown): string {
   if (value === null || value === undefined) return "null";
   if (typeof value === "string") return value;
   return JSON.stringify(value);
+}
+
+function formatSavedViewFilters(filters: SavedViewWithFilters["filters"]): string {
+  return JSON.stringify(filters);
+}
+
+function formatTemplatePreset(template: TemplateWithLabels): string {
+  return JSON.stringify({
+    title: template.title ?? null,
+    description: template.description ?? null,
+    priority: template.priority ?? null,
+    team: template.team ?? null,
+    project: template.project ?? null,
+    labels: template.labels
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

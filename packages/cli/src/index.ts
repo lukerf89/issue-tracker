@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,13 +27,24 @@ import {
   createLabelInputSchema,
   createIssueInputSchema,
   createIssue,
+  createIssueFromTemplate,
+  createIssueFromTemplateOverridesSchema,
   createProjectInputSchema,
   createProject,
+  createSavedView,
+  createSavedViewInputSchema,
   createTeam,
+  createTemplate,
+  createTemplateInputSchema,
+  deleteSavedView,
+  deleteSavedViewInputSchema,
+  deleteTemplate,
+  deleteTemplateInputSchema,
   exportSnapshot,
   getConfig,
   getIssue,
   getProject,
+  importSnapshot,
   listActivity,
   listActivityInputSchema,
   listActivitySince,
@@ -46,11 +57,16 @@ import {
   listLabels,
   listLabelsInputSchema,
   listIssueFiltersSchema,
-  listIssues,
+  listIssuesWithView,
+  listIssuesWithViewInputSchema,
   listProjectsInputSchema,
   listProjects,
+  listSavedViews,
+  listSavedViewsInputSchema,
   listTeamsInputSchema,
   listTeams,
+  listTemplates,
+  listTemplatesInputSchema,
   moveIssueInputSchema,
   projectStatusSchema,
   moveIssue,
@@ -77,17 +93,23 @@ import {
   type AddAttachmentInput,
   type AssignIssueInput,
   type CreateActorInput,
+  type CreateIssueFromTemplateOverrides,
   type CreateIssueInput,
   type CreateCycleInput,
   type CreateLabelInput,
   type CreateProjectInput,
+  type CreateSavedViewInput,
+  type CreateTemplateInput,
+  type ImportSnapshotSummary,
   type ListActivitySinceInput,
+  type ListIssuesWithViewInput,
   type ListIssueFilters,
   type SearchIssuesInput,
   type UpdateIssueInput,
   type UpdateProjectInput
 } from "@issue-tracker/core";
 import { runStdioServer } from "@issue-tracker/mcp";
+import { runLinekeeperTui } from "@issue-tracker/tui";
 import { Command, InvalidArgumentError } from "commander";
 
 import { openCliContext, resolveDbPath, type CliGlobalOptions } from "./context.js";
@@ -108,8 +130,12 @@ import {
   printLabels,
   printProject,
   printProjects,
+  printSavedView,
+  printSavedViews,
   printTeam,
   printTeams,
+  printTemplate,
+  printTemplates,
   printValue,
   type OutputOptions
 } from "./output.js";
@@ -121,6 +147,8 @@ type CommandOptions = CliGlobalOptions &
     actorName?: string;
     agent?: string;
     includeArchived?: boolean;
+    input?: string;
+    force?: boolean;
     output?: string;
     teamKey?: string;
     teamName?: string;
@@ -476,16 +504,25 @@ export function createProgram(): Command {
     .option("--assignee <actor>", "assignee id or handle")
     .option("--state <state>", "workflow state")
     .option("--label <label>", "label name or id", collectValues, [])
+    .option("--template <name>", "template name")
     .option("--json", "print JSON output")
     .action((title, _options, command) =>
       withContext(command, {}, (cli) => {
         const options = optionsWithGlobals(command);
-        const issue = createIssue(cli.context, issueCreateInput(title, options, cli.defaultTeam));
+        const template = stringOption(options.template);
+        const issue = template
+          ? createIssueFromTemplate(
+              cli.context,
+              template,
+              issueCreateTemplateOverrides(title, options)
+            )
+          : createIssue(cli.context, issueCreateInput(title, options, cli.defaultTeam));
         printIssue(cli.context, issue, options);
       })
     );
   issue
     .command("list")
+    .option("--view <name>", "saved view name")
     .option("--state <state>", "workflow state")
     .option("--assignee <actor>", "assignee id or handle")
     .option("--unassigned", "only unassigned issues")
@@ -503,7 +540,7 @@ export function createProgram(): Command {
         const options = optionsWithGlobals(command);
         printIssues(
           cli.context,
-          listIssues(cli.context, issueListFilters(options, cli.defaultTeam)),
+          listIssuesWithView(cli.context, issueListInput(options, cli.defaultTeam)),
           options
         );
       })
@@ -669,6 +706,93 @@ export function createProgram(): Command {
       })
     );
 
+  const view = program.command("view").description("manage saved issue views");
+  view
+    .command("save")
+    .argument("<name>")
+    .option("--state <state>", "workflow state")
+    .option("--assignee <actor>", "assignee id or handle")
+    .option("--unassigned", "only unassigned issues")
+    .option("--project <project>", "project id or name")
+    .option("--no-project", "only issues without a project")
+    .option("--cycle <cycle>", "cycle number or id")
+    .option("--label <label>", "label name")
+    .option("--priority <number>", "priority", parseInteger)
+    .option("--team <key>", "team key")
+    .option("--include-archived", "include archived issues")
+    .option("--desc <description>", "view description")
+    .option("--description <description>", "view description")
+    .option("--json", "print JSON output")
+    .action((name, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        printSavedView(
+          createSavedView(cli.context, savedViewCreateInput(name, options, cli.defaultTeam)),
+          options
+        );
+      })
+    );
+  view
+    .command("list")
+    .option("--json", "print JSON output")
+    .action((_options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        listSavedViewsInputSchema.parse({});
+        printSavedViews(listSavedViews(cli.context), optionsWithGlobals(command));
+      })
+    );
+  view
+    .command("delete")
+    .argument("<name>")
+    .option("--json", "print JSON output")
+    .action((name, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const input = deleteSavedViewInputSchema.parse({ idOrName: name });
+        printSavedView(deleteSavedView(cli.context, input.idOrName), optionsWithGlobals(command));
+      })
+    );
+
+  const template = program.command("template").description("manage issue templates");
+  template
+    .command("create")
+    .argument("<name>")
+    .option("--title <title>", "issue title")
+    .option("--desc <description>", "issue description")
+    .option("--description <description>", "issue description")
+    .option("--priority <number>", "priority", parseInteger)
+    .option("--team <key>", "team key")
+    .option("--project <project>", "project id or name")
+    .option("--label <label>", "label name or id", collectValues, [])
+    .option("--json", "print JSON output")
+    .action((name, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        printTemplate(
+          createTemplate(cli.context, templateCreateInput(name, options, cli.defaultTeam)),
+          options
+        );
+      })
+    );
+  template
+    .command("list")
+    .option("--json", "print JSON output")
+    .action((_options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        listTemplatesInputSchema.parse({});
+        printTemplates(listTemplates(cli.context), optionsWithGlobals(command));
+      })
+    );
+  template
+    .command("delete")
+    .argument("<name>")
+    .option("--json", "print JSON output")
+    .action((name, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const input = deleteTemplateInputSchema.parse({ name });
+        printTemplate(deleteTemplate(cli.context, input.name), optionsWithGlobals(command));
+      })
+    );
+
   program
     .command("watch")
     .description("print activity feed events as JSONL")
@@ -723,6 +847,47 @@ export function createProgram(): Command {
 
         writeExportSnapshot(exportSnapshot(cli.context), stringOption(options.output));
       })
+    );
+
+  program
+    .command("import")
+    .description("import a workspace snapshot")
+    .requiredOption("--input <file>", "read JSON snapshot from a file")
+    .option("--force", "replace existing workspace data")
+    .option("--json", "print JSON summary")
+    .action((_options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        const inputPath = stringOption(options.input);
+
+        if (!inputPath) {
+          throw new InvalidArgumentError("import requires --input");
+        }
+
+        const summary = importSnapshot(cli.context, readJsonFile(inputPath), {
+          force: booleanOption(options.force) === true
+        });
+
+        if (options.json) {
+          printJson(summary);
+          return;
+        }
+
+        process.stdout.write(`Imported ${formatImportSummary(summary)}\n`);
+      })
+    );
+
+  program
+    .command("tui")
+    .description("open the Linekeeper terminal UI")
+    .action((_options, command) =>
+      withContextAsync(command, {}, (cli) =>
+        runLinekeeperTui({
+          context: cli.context,
+          dbPath: cli.dbPath,
+          defaultTeam: cli.defaultTeam
+        })
+      )
     );
 
   program
@@ -920,6 +1085,24 @@ function issueCreateInput(
   });
 }
 
+function issueCreateTemplateOverrides(
+  title: string | undefined,
+  options: Record<string, unknown>
+): CreateIssueFromTemplateOverrides {
+  return createIssueFromTemplateOverridesSchema.parse(omitUndefined({
+    title: stringOption(options.title) ?? title,
+    description: stringOption(options.description) ?? stringOption(options.desc),
+    team: stringOption(options.team),
+    state: stringOption(options.state),
+    priority: numberOption(options.priority),
+    assignee: nullableStringOption(options.assignee),
+    project: nullableStringOption(options.project),
+    cycle: cycleOption(options.cycle),
+    parent: nullableStringOption(options.parent),
+    labels: stringArrayOption(options.label)
+  }));
+}
+
 function issueListFilters(options: Record<string, unknown>, defaultTeam?: string): ListIssueFilters {
   const project = options.project === false ? null : nullableStringOption(options.project);
   const assignee = options.unassigned === true ? null : nullableStringOption(options.assignee);
@@ -934,6 +1117,44 @@ function issueListFilters(options: Record<string, unknown>, defaultTeam?: string
     priority: numberOption(options.priority),
     limit: numberOption(options.limit),
     includeArchived: booleanOption(options.includeArchived)
+  }));
+}
+
+function issueListInput(
+  options: Record<string, unknown>,
+  defaultTeam?: string
+): ListIssuesWithViewInput {
+  return listIssuesWithViewInputSchema.parse(omitUndefined({
+    view: stringOption(options.view),
+    filters: issueListFilters(options, defaultTeam)
+  }));
+}
+
+function savedViewCreateInput(
+  name: string,
+  options: Record<string, unknown>,
+  defaultTeam?: string
+): CreateSavedViewInput {
+  return createSavedViewInputSchema.parse({
+    name,
+    filters: issueListFilters(options, defaultTeam),
+    description: stringOption(options.description) ?? stringOption(options.desc) ?? null
+  });
+}
+
+function templateCreateInput(
+  name: string,
+  options: Record<string, unknown>,
+  defaultTeam?: string
+): CreateTemplateInput {
+  return createTemplateInputSchema.parse(omitUndefined({
+    name,
+    title: stringOption(options.title),
+    description: stringOption(options.description) ?? stringOption(options.desc),
+    priority: numberOption(options.priority),
+    team: stringOption(options.team) ?? defaultTeam,
+    project: nullableStringOption(options.project),
+    labels: stringArrayOption(options.label)
   }));
 }
 
@@ -1068,6 +1289,25 @@ function writeExportSnapshot(snapshot: unknown, outputPath: string | undefined):
   const destination = resolve(outputPath);
   mkdirSync(dirname(destination), { recursive: true });
   writeFileSync(destination, serialized, "utf8");
+}
+
+function readJsonFile(path: string): unknown {
+  try {
+    return JSON.parse(readFileSync(resolve(path), "utf8")) as unknown;
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new InvalidArgumentError(`input is not valid JSON: ${error.message}`);
+    }
+
+    throw error;
+  }
+}
+
+function formatImportSummary(summary: ImportSnapshotSummary): string {
+  return Object.entries(summary)
+    .filter(([, count]) => count > 0)
+    .map(([name, count]) => `${count} ${name}`)
+    .join(", ");
 }
 
 function parseInteger(value: string): number {

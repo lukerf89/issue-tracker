@@ -18,7 +18,9 @@ import {
   createIssue,
   createLabel,
   createProject,
+  createSavedView,
   createTeam,
+  createTemplate,
   getActor,
   init,
   listActors,
@@ -313,6 +315,224 @@ describe("MCP server", () => {
     }
   });
 
+  it("returns byte-identical list_saved_views JSON to CLI view list --json", async () => {
+    const dbPath = initializedDbPath();
+    const setup = openContext(dbPath);
+
+    try {
+      createSavedView(setup.context, {
+        name: "Build bugs",
+        filters: { label: "Bug", priority: 1 },
+        description: null
+      });
+    } finally {
+      setup.close();
+    }
+
+    const client = await connectClient(dbPath, { handle: "view-agent" });
+
+    try {
+      const views = (await callJsonTool(client, "list_saved_views", {})) as unknown as Array<{
+        name: string;
+        filters: Record<string, unknown>;
+      }>;
+      const cliOutput = tracker(dbPath, ["view", "list", "--json"]);
+
+      expect(views).toMatchObject([
+        {
+          name: "Build bugs",
+          filters: { label: "Bug", priority: 1 },
+          description: null
+        }
+      ]);
+      expect(`${JSON.stringify(views)}\n`).toBe(cliOutput);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("creates, applies with overrides, and deletes saved views through MCP", async () => {
+    const dbPath = initializedDbPath();
+    const setup = openContext(dbPath);
+
+    try {
+      setup.context.actor = whoami(setup.context);
+      createLabel(setup.context, { name: "Bug", color: "#EF4444" });
+      createIssue(setup.context, {
+        title: "Fix active bug",
+        priority: 1,
+        labels: ["Bug"]
+      });
+      createIssue(setup.context, {
+        title: "Fix later bug",
+        priority: 2,
+        labels: ["Bug"]
+      });
+      createIssue(setup.context, {
+        title: "Plan docs refresh",
+        priority: 1
+      });
+    } finally {
+      setup.close();
+    }
+
+    const client = await connectClient(dbPath, { handle: "view-agent" });
+
+    try {
+      const created = await callJsonTool(client, "create_saved_view", {
+        name: "Priority bugs",
+        filters: { label: "Bug", priority: 1 },
+        description: "High-priority bug queue"
+      });
+
+      expect(created).toMatchObject({
+        name: "Priority bugs",
+        filters: { label: "Bug", priority: 1 },
+        description: "High-priority bug queue"
+      });
+
+      const fromView = (await callJsonTool(client, "list_issues", {
+        view: "Priority bugs"
+      })) as unknown as Array<{ identifier: string }>;
+      expect(fromView.map((issue) => issue.identifier)).toEqual(["ENG-1"]);
+
+      const overridden = (await callJsonTool(client, "list_issues", {
+        view: "Priority bugs",
+        priority: 2
+      })) as unknown as Array<{ identifier: string }>;
+      expect(overridden.map((issue) => issue.identifier)).toEqual(["ENG-2"]);
+
+      const deleted = await callJsonTool(client, "delete_saved_view", {
+        idOrName: "Priority bugs"
+      });
+      expect(deleted).toMatchObject({
+        name: "Priority bugs",
+        filters: { label: "Bug", priority: 1 }
+      });
+
+      const afterDelete = await callJsonTool(client, "list_saved_views", {});
+      expect(afterDelete).toEqual([]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("returns byte-identical list_templates JSON to CLI template list --json", async () => {
+    const dbPath = initializedDbPath();
+    const setup = openContext(dbPath);
+
+    try {
+      createTemplate(setup.context, {
+        name: "Bug report",
+        title: "Investigate fictional bug",
+        description: "Capture reproduction steps.",
+        priority: 2,
+        team: "ENG",
+        project: null,
+        labels: ["Bug"]
+      });
+    } finally {
+      setup.close();
+    }
+
+    const client = await connectClient(dbPath, { handle: "template-agent" });
+
+    try {
+      const templates = (await callJsonTool(client, "list_templates", {})) as unknown as Array<{
+        name: string;
+        labels: string[];
+      }>;
+      const cliOutput = tracker(dbPath, ["template", "list", "--json"]);
+
+      expect(templates).toMatchObject([
+        {
+          name: "Bug report",
+          title: "Investigate fictional bug",
+          description: "Capture reproduction steps.",
+          priority: 2,
+          team: "ENG",
+          project: null,
+          labels: ["Bug"]
+        }
+      ]);
+      expect(`${JSON.stringify(templates)}\n`).toBe(cliOutput);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("creates, applies overrides, and deletes templates through MCP", async () => {
+    const dbPath = initializedDbPath();
+    const projectId = (() => {
+      const setup = openContext(dbPath);
+
+      try {
+        createLabel(setup.context, { name: "Bug", color: "#EF4444" });
+        return createProject(setup.context, {
+          name: "Platform Foundations",
+          status: "planned"
+        }).id;
+      } finally {
+        setup.close();
+      }
+    })();
+
+    const client = await connectClient(dbPath, { handle: "template-agent" });
+
+    try {
+      const created = await callJsonTool(client, "create_template", {
+        name: "Bug report",
+        title: "Investigate fictional bug",
+        description: "Capture reproduction steps.",
+        priority: 2,
+        team: "ENG",
+        project: "Platform Foundations",
+        labels: ["Bug"]
+      });
+      expect(created).toMatchObject({
+        name: "Bug report",
+        title: "Investigate fictional bug",
+        description: "Capture reproduction steps.",
+        priority: 2,
+        team: "ENG",
+        project: projectId,
+        labels: ["Bug"]
+      });
+
+      const issue = await callJsonTool(client, "create_issue_from_template", {
+        name: "Bug report",
+        overrides: {
+          title: "Investigate export bug",
+          priority: 1
+        }
+      });
+      expect(issue).toMatchObject({
+        identifier: "ENG-1",
+        title: "Investigate export bug",
+        description: "Capture reproduction steps.",
+        priority: 1,
+        projectId
+      });
+      expect((issue.labels as Array<{ name: string }>).map((label) => label.name)).toEqual([
+        "Bug"
+      ]);
+
+      const deleted = await callJsonTool(client, "delete_template", {
+        name: "Bug report"
+      });
+      expect(deleted).toMatchObject({
+        name: "Bug report",
+        project: projectId,
+        labels: ["Bug"]
+      });
+
+      const afterDelete = await callJsonTool(client, "list_templates", {});
+      expect(afterDelete).toEqual([]);
+    } finally {
+      await client.close();
+    }
+  });
+
   it("reads issue and backlog resources with byte-identical JSON to matching tools", async () => {
     const dbPath = initializedDbPath();
     const setup = openContext(dbPath);
@@ -520,6 +740,27 @@ describe("MCP server", () => {
           message: "MCP mutations require an agent actor handle."
         }
       });
+
+      for (const [name, args] of [
+        ["create_saved_view", { name: "No actor view", filters: { state: "Todo" } }],
+        ["delete_saved_view", { idOrName: "No actor view" }],
+        ["create_template", { name: "No actor template", title: "No actor issue" }],
+        ["delete_template", { name: "No actor template" }],
+        ["create_issue_from_template", { name: "No actor template" }]
+      ] as const) {
+        const result = await client.callTool({
+          name,
+          arguments: args
+        });
+
+        expect(result.isError).toBe(true);
+        expect(jsonFromToolResult(result)).toEqual({
+          error: {
+            code: "ACTOR_NOT_FOUND",
+            message: "MCP mutations require an agent actor handle."
+          }
+        });
+      }
     } finally {
       await client.close();
     }

@@ -197,6 +197,28 @@ export const activity = sqliteTable("activity", {
   createdAt: text("created_at").notNull()
 });
 
+export const savedViews = sqliteTable("saved_views", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull().unique("saved_views_name_unique"),
+  filters: text("filters", { mode: "json" }).notNull(),
+  description: text("description"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull()
+});
+
+export const templates = sqliteTable("templates", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull().unique("templates_name_unique"),
+  title: text("title"),
+  description: text("description"),
+  priority: integer("priority"),
+  team: text("team"),
+  project: text("project"),
+  labels: text("labels", { mode: "json" }).notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull()
+});
+
 export const workspaceRelations = relations(workspace, () => ({}));
 
 export const configRelations = relations(config, () => ({}));
@@ -335,6 +357,10 @@ export const activityRelations = relations(activity, ({ one }) => ({
   })
 }));
 
+export const savedViewsRelations = relations(savedViews, () => ({}));
+
+export const templatesRelations = relations(templates, () => ({}));
+
 export type Workspace = InferSelectModel<typeof workspace>;
 export type NewWorkspace = InferInsertModel<typeof workspace>;
 export type ConfigEntry = InferSelectModel<typeof config>;
@@ -363,3 +389,7 @@ export type Attachment = InferSelectModel<typeof attachments>;
 export type NewAttachment = InferInsertModel<typeof attachments>;
 export type Activity = InferSelectModel<typeof activity>;
 export type NewActivity = InferInsertModel<typeof activity>;
+export type SavedView = InferSelectModel<typeof savedViews>;
+export type NewSavedView = InferInsertModel<typeof savedViews>;
+export type Template = InferSelectModel<typeof templates>;
+export type NewTemplate = InferInsertModel<typeof templates>;
