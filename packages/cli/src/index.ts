@@ -27,13 +27,19 @@ import {
   createLabelInputSchema,
   createIssueInputSchema,
   createIssue,
+  createIssueFromTemplate,
+  createIssueFromTemplateOverridesSchema,
   createProjectInputSchema,
   createProject,
   createSavedView,
   createSavedViewInputSchema,
   createTeam,
+  createTemplate,
+  createTemplateInputSchema,
   deleteSavedView,
   deleteSavedViewInputSchema,
+  deleteTemplate,
+  deleteTemplateInputSchema,
   exportSnapshot,
   getConfig,
   getIssue,
@@ -58,6 +64,8 @@ import {
   listSavedViewsInputSchema,
   listTeamsInputSchema,
   listTeams,
+  listTemplates,
+  listTemplatesInputSchema,
   moveIssueInputSchema,
   projectStatusSchema,
   moveIssue,
@@ -84,11 +92,13 @@ import {
   type AddAttachmentInput,
   type AssignIssueInput,
   type CreateActorInput,
+  type CreateIssueFromTemplateOverrides,
   type CreateIssueInput,
   type CreateCycleInput,
   type CreateLabelInput,
   type CreateProjectInput,
   type CreateSavedViewInput,
+  type CreateTemplateInput,
   type ListActivitySinceInput,
   type ListIssuesWithViewInput,
   type ListIssueFilters,
@@ -121,6 +131,8 @@ import {
   printSavedViews,
   printTeam,
   printTeams,
+  printTemplate,
+  printTemplates,
   printValue,
   type OutputOptions
 } from "./output.js";
@@ -487,11 +499,19 @@ export function createProgram(): Command {
     .option("--assignee <actor>", "assignee id or handle")
     .option("--state <state>", "workflow state")
     .option("--label <label>", "label name or id", collectValues, [])
+    .option("--template <name>", "template name")
     .option("--json", "print JSON output")
     .action((title, _options, command) =>
       withContext(command, {}, (cli) => {
         const options = optionsWithGlobals(command);
-        const issue = createIssue(cli.context, issueCreateInput(title, options, cli.defaultTeam));
+        const template = stringOption(options.template);
+        const issue = template
+          ? createIssueFromTemplate(
+              cli.context,
+              template,
+              issueCreateTemplateOverrides(title, options)
+            )
+          : createIssue(cli.context, issueCreateInput(title, options, cli.defaultTeam));
         printIssue(cli.context, issue, options);
       })
     );
@@ -724,6 +744,47 @@ export function createProgram(): Command {
       withContext(command, { requireActor: false }, (cli) => {
         const input = deleteSavedViewInputSchema.parse({ idOrName: name });
         printSavedView(deleteSavedView(cli.context, input.idOrName), optionsWithGlobals(command));
+      })
+    );
+
+  const template = program.command("template").description("manage issue templates");
+  template
+    .command("create")
+    .argument("<name>")
+    .option("--title <title>", "issue title")
+    .option("--desc <description>", "issue description")
+    .option("--description <description>", "issue description")
+    .option("--priority <number>", "priority", parseInteger)
+    .option("--team <key>", "team key")
+    .option("--project <project>", "project id or name")
+    .option("--label <label>", "label name or id", collectValues, [])
+    .option("--json", "print JSON output")
+    .action((name, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        printTemplate(
+          createTemplate(cli.context, templateCreateInput(name, options, cli.defaultTeam)),
+          options
+        );
+      })
+    );
+  template
+    .command("list")
+    .option("--json", "print JSON output")
+    .action((_options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        listTemplatesInputSchema.parse({});
+        printTemplates(listTemplates(cli.context), optionsWithGlobals(command));
+      })
+    );
+  template
+    .command("delete")
+    .argument("<name>")
+    .option("--json", "print JSON output")
+    .action((name, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const input = deleteTemplateInputSchema.parse({ name });
+        printTemplate(deleteTemplate(cli.context, input.name), optionsWithGlobals(command));
       })
     );
 
@@ -978,6 +1039,24 @@ function issueCreateInput(
   });
 }
 
+function issueCreateTemplateOverrides(
+  title: string | undefined,
+  options: Record<string, unknown>
+): CreateIssueFromTemplateOverrides {
+  return createIssueFromTemplateOverridesSchema.parse(omitUndefined({
+    title: stringOption(options.title) ?? title,
+    description: stringOption(options.description) ?? stringOption(options.desc),
+    team: stringOption(options.team),
+    state: stringOption(options.state),
+    priority: numberOption(options.priority),
+    assignee: nullableStringOption(options.assignee),
+    project: nullableStringOption(options.project),
+    cycle: cycleOption(options.cycle),
+    parent: nullableStringOption(options.parent),
+    labels: stringArrayOption(options.label)
+  }));
+}
+
 function issueListFilters(options: Record<string, unknown>, defaultTeam?: string): ListIssueFilters {
   const project = options.project === false ? null : nullableStringOption(options.project);
   const assignee = options.unassigned === true ? null : nullableStringOption(options.assignee);
@@ -1015,6 +1094,22 @@ function savedViewCreateInput(
     filters: issueListFilters(options, defaultTeam),
     description: stringOption(options.description) ?? stringOption(options.desc) ?? null
   });
+}
+
+function templateCreateInput(
+  name: string,
+  options: Record<string, unknown>,
+  defaultTeam?: string
+): CreateTemplateInput {
+  return createTemplateInputSchema.parse(omitUndefined({
+    name,
+    title: stringOption(options.title),
+    description: stringOption(options.description) ?? stringOption(options.desc),
+    priority: numberOption(options.priority),
+    team: stringOption(options.team) ?? defaultTeam,
+    project: nullableStringOption(options.project),
+    labels: stringArrayOption(options.label)
+  }));
 }
 
 function issueSearchInput(

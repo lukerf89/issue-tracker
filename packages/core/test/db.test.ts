@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { applyMigrations, openDb } from "../src/index.js";
-import { actors, issues, savedViews, teams, workflowStates } from "../src/db/schema.js";
+import { actors, issues, savedViews, teams, templates, workflowStates } from "../src/db/schema.js";
 
 const tableNames = [
   "workspace",
@@ -22,7 +22,8 @@ const tableNames = [
   "actors",
   "attachments",
   "activity",
-  "saved_views"
+  "saved_views",
+  "templates"
 ] as const;
 
 const tempDirs: string[] = [];
@@ -85,18 +86,20 @@ describe("core database foundation", () => {
       expect(uniqueColumnSets(db, "cycles")).toContainEqual(["team_id", "number"]);
       expect(uniqueColumnSets(db, "labels")).toContainEqual(["name", "group_key"]);
       expect(uniqueColumnSets(db, "saved_views")).toContainEqual(["name"]);
+      expect(uniqueColumnSets(db, "templates")).toContainEqual(["name"]);
     } finally {
       db.$client.close();
     }
   });
 
-  it("enforces duplicate team keys, issue numbers, and saved view names at the DB layer", () => {
+  it("enforces duplicate team keys, issue numbers, saved view names, and template names at the DB layer", () => {
     const db = openTempDb();
 
     try {
       applyMigrations(db);
       insertIssueFixture(db);
       insertSavedViewFixture(db);
+      insertTemplateFixture(db);
 
       expect(() =>
         db.insert(teams).values({
@@ -126,6 +129,21 @@ describe("core database foundation", () => {
           name: "My active work",
           filters: { state: "Todo" },
           description: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z"
+        }).run()
+      ).toThrow();
+
+      expect(() =>
+        db.insert(templates).values({
+          id: "template-duplicate",
+          name: "Bug report",
+          title: "Duplicate template",
+          description: null,
+          priority: null,
+          team: null,
+          project: null,
+          labels: [],
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z"
         }).run()
@@ -191,6 +209,23 @@ function insertSavedViewFixture(db: ReturnType<typeof openDb>): void {
       name: "My active work",
       filters: { state: "Todo", priority: 1 },
       description: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    })
+    .run();
+}
+
+function insertTemplateFixture(db: ReturnType<typeof openDb>): void {
+  db.insert(templates)
+    .values({
+      id: "template-bug-report",
+      name: "Bug report",
+      title: "Investigate fictional bug",
+      description: "Capture reproduction steps.",
+      priority: 2,
+      team: "ENG",
+      project: null,
+      labels: ["Bug"],
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z"
     })

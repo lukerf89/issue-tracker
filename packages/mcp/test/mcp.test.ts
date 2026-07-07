@@ -20,6 +20,7 @@ import {
   createProject,
   createSavedView,
   createTeam,
+  createTemplate,
   getActor,
   init,
   listActors,
@@ -345,6 +346,50 @@ describe("MCP server", () => {
         }
       ]);
       expect(`${JSON.stringify(views)}\n`).toBe(cliOutput);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("returns byte-identical list_templates JSON to CLI template list --json", async () => {
+    const dbPath = initializedDbPath();
+    const setup = openContext(dbPath);
+
+    try {
+      createTemplate(setup.context, {
+        name: "Bug report",
+        title: "Investigate fictional bug",
+        description: "Capture reproduction steps.",
+        priority: 2,
+        team: "ENG",
+        project: null,
+        labels: ["Bug"]
+      });
+    } finally {
+      setup.close();
+    }
+
+    const client = await connectClient(dbPath, { handle: "template-agent" });
+
+    try {
+      const templates = (await callJsonTool(client, "list_templates", {})) as unknown as Array<{
+        name: string;
+        labels: string[];
+      }>;
+      const cliOutput = tracker(dbPath, ["template", "list", "--json"]);
+
+      expect(templates).toMatchObject([
+        {
+          name: "Bug report",
+          title: "Investigate fictional bug",
+          description: "Capture reproduction steps.",
+          priority: 2,
+          team: "ENG",
+          project: null,
+          labels: ["Bug"]
+        }
+      ]);
+      expect(`${JSON.stringify(templates)}\n`).toBe(cliOutput);
     } finally {
       await client.close();
     }

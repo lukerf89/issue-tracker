@@ -15,6 +15,13 @@
       "when": 1783381587430,
       "tag": "0001_nebulous_medusa",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1783382275114,
+      "tag": "0002_puzzling_red_skull",
+      "breakpoints": true
     }
   ]
 }

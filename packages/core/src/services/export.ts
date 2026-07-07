@@ -20,6 +20,7 @@ import {
   projects,
   savedViews,
   teams,
+  templates,
   workflowStates,
   workspace,
   type Activity,
@@ -30,6 +31,7 @@ import {
   type IssueLabel,
   type Milestone,
   type SavedView,
+  type Template,
   type Workspace
 } from "../db/schema.js";
 import {
@@ -39,9 +41,11 @@ import {
   serializeProject,
   serializeSavedView,
   serializeTeam,
+  serializeTemplate,
   serializeWorkflowState
 } from "../serialize.js";
 import { listIssueFiltersSchema } from "../schemas/issue.js";
+import { templateLabelsSchema } from "../schemas/template.js";
 import type { ListIssueFilters } from "./issue.js";
 
 export interface ExportSnapshot {
@@ -60,6 +64,7 @@ export interface ExportSnapshot {
   attachments: SerializedAttachment[];
   activity: SerializedActivity[];
   savedViews: ReturnType<typeof serializeSavedView>[];
+  templates: ReturnType<typeof serializeTemplate>[];
 }
 
 export interface ResolveBackupPathInput {
@@ -210,6 +215,12 @@ export function exportSnapshot(context: ServiceContext): ExportSnapshot {
     }).sync().map((view) => serializeSavedView({
       ...view,
       filters: parseSavedViewFilters(view)
+    })),
+    templates: context.db.query.templates.findMany({
+      orderBy: [asc(templates.name), asc(templates.id)]
+    }).sync().map((template) => serializeTemplate({
+      ...template,
+      labels: parseTemplateLabels(template)
     }))
   };
 }
@@ -351,6 +362,11 @@ function parseActivityData(data: unknown): Record<string, unknown> {
 function parseSavedViewFilters(view: SavedView): ListIssueFilters {
   const parsed = typeof view.filters === "string" ? JSON.parse(view.filters) as unknown : view.filters;
   return listIssueFiltersSchema.parse(parsed);
+}
+
+function parseTemplateLabels(template: Template): string[] {
+  const parsed = typeof template.labels === "string" ? JSON.parse(template.labels) as unknown : template.labels;
+  return templateLabelsSchema.parse(parsed);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -14,6 +14,7 @@ import {
   serializeProject,
   serializeSavedView,
   serializeTeam,
+  serializeTemplate,
   type Actor,
   type ActivityFeedEvent,
   type ActivityWithActor,
@@ -26,7 +27,8 @@ import {
   type Project,
   type SavedViewWithFilters,
   type ServiceContext,
-  type Team
+  type Team,
+  type TemplateWithLabels
 } from "@issue-tracker/core";
 import pc from "picocolors";
 
@@ -230,6 +232,42 @@ export function printSavedView(
       pc.bold(view.name),
       formatSavedViewFilters(view.filters),
       view.description ?? ""
+    ].filter(Boolean).join("  ") + "\n"
+  );
+}
+
+export function printTemplates(
+  templates: TemplateWithLabels[],
+  options: OutputOptions
+): void {
+  if (options.json) {
+    printJson(templates.map(serializeTemplate));
+    return;
+  }
+
+  for (const template of templates) {
+    process.stdout.write(
+      [
+        pc.bold(template.name),
+        formatTemplatePreset(template)
+      ].filter(Boolean).join("  ") + "\n"
+    );
+  }
+}
+
+export function printTemplate(
+  template: TemplateWithLabels,
+  options: OutputOptions
+): void {
+  if (options.json) {
+    printJson(serializeTemplate(template));
+    return;
+  }
+
+  process.stdout.write(
+    [
+      pc.bold(template.name),
+      formatTemplatePreset(template)
     ].filter(Boolean).join("  ") + "\n"
   );
 }
@@ -475,6 +513,17 @@ function formatActivityValue(value: unknown): string {
 
 function formatSavedViewFilters(filters: SavedViewWithFilters["filters"]): string {
   return JSON.stringify(filters);
+}
+
+function formatTemplatePreset(template: TemplateWithLabels): string {
+  return JSON.stringify({
+    title: template.title ?? null,
+    description: template.description ?? null,
+    priority: template.priority ?? null,
+    team: template.team ?? null,
+    project: template.project ?? null,
+    labels: template.labels
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

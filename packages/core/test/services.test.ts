@@ -22,16 +22,21 @@ import {
   createActor,
   createCycle,
   createIssue,
+  createIssueFromTemplate,
   createIssueInputSchema,
   createLabel,
   createProject,
   createSavedView,
   createSavedViewInputSchema,
   createTeam,
+  createTemplate,
+  createTemplateInputSchema,
   deleteSavedView,
+  deleteTemplate,
   detachLabel,
   getIssue,
   getProject,
+  getState,
   getTeam,
   getTeamByKey,
   init,
@@ -48,6 +53,7 @@ import {
   listIssues,
   listProjects,
   listSavedViews,
+  listTemplates,
   listTeams,
   moveIssue,
   openDb,
@@ -60,6 +66,7 @@ import {
   serializeActivityEvent,
   serializeCycle,
   serializeSavedView,
+  serializeTemplate,
   setConfig,
   unarchiveIssue,
   unarchiveLabel,
@@ -790,6 +797,114 @@ describe("core services", () => {
         () => resolveSavedView(context, "Priority bugs"),
         AppErrorCode.SAVED_VIEW_NOT_FOUND
       );
+    } finally {
+      close();
+    }
+  });
+
+  it("creates, lists, deletes, and creates issues from templates through createIssue", () => {
+    const { context, db, close } = initializedContext("2026-07-02T00:00:00.000Z");
+
+    try {
+      createTeam(context, { key: "OPS", name: "Operations" });
+      const project = createProject(context, {
+        name: "Platform Foundations",
+        status: "planned"
+      });
+      createLabel(context, { name: "Bug", color: "#EF4444" });
+
+      const template = createTemplate(context, {
+        name: "Bug report",
+        title: "Investigate fictional bug",
+        description: "Capture reproduction steps.",
+        priority: 2,
+        team: "ENG",
+        project: project.name,
+        labels: ["Bug"]
+      });
+
+      expect(template).toMatchObject({
+        name: "Bug report",
+        title: "Investigate fictional bug",
+        description: "Capture reproduction steps.",
+        priority: 2,
+        team: "ENG",
+        project: "Platform Foundations",
+        labels: ["Bug"],
+        createdAt: "2026-07-02T00:00:00.000Z",
+        updatedAt: "2026-07-02T00:00:00.000Z"
+      });
+      expect(serializeTemplate(template)).toMatchObject({
+        name: "Bug report",
+        title: "Investigate fictional bug",
+        priority: 2,
+        labels: ["Bug"],
+        createdAt: "2026-07-02T00:00:00.000Z"
+      });
+      expect(listTemplates(context).map((saved) => saved.name)).toEqual(["Bug report"]);
+
+      context.clock = fixedClock("2026-07-02T00:10:00.000Z");
+      const issue = createIssueFromTemplate(context, "Bug report", {
+        title: "Investigate export bug",
+        priority: 1
+      });
+      const state = getState(context, issue.stateId, issue.teamId);
+
+      expect(issue).toMatchObject({
+        identifier: "ENG-1",
+        number: 1,
+        title: "Investigate export bug",
+        description: "Capture reproduction steps.",
+        priority: 1,
+        projectId: project.id,
+        startedAt: null,
+        completedAt: null,
+        canceledAt: null
+      });
+      expect(state).toMatchObject({ name: "Todo", type: "unstarted" });
+      expect(issue.labels.map((label) => label.name)).toEqual(["Bug"]);
+      expect(readActivityEntries(db)).toMatchObject([
+        { action: "created", data: { identifier: "ENG-1" } },
+        { action: "label_added", data: { labelName: "Bug" } }
+      ]);
+      expect(getTeamByKey(context, "ENG").issueCounter).toBe(1);
+
+      context.clock = fixedClock("2026-07-02T00:20:00.000Z");
+      const operationsIssue = createIssueFromTemplate(context, "Bug report", {
+        title: "Route operations bug",
+        team: "OPS",
+        labels: []
+      });
+
+      expect(operationsIssue).toMatchObject({
+        identifier: "OPS-1",
+        number: 1,
+        title: "Route operations bug",
+        labels: []
+      });
+      expect(getTeamByKey(context, "OPS").issueCounter).toBe(1);
+      expectAppError(
+        () =>
+          createTemplate(context, {
+            name: "Bug report",
+            title: "Duplicate template"
+          }),
+        AppErrorCode.TEMPLATE_NAME_TAKEN
+      );
+      expect(
+        createTemplateInputSchema.safeParse({
+          name: "Invalid priority",
+          priority: 99
+        }).success
+      ).toBe(false);
+      expectAppError(
+        () => createIssueFromTemplate(context, "Missing template", { title: "No template" }),
+        AppErrorCode.TEMPLATE_NOT_FOUND
+      );
+
+      const deleted = deleteTemplate(context, template.name);
+      expect(deleted.id).toBe(template.id);
+      expect(listTemplates(context)).toEqual([]);
     } finally {
       close();
     }

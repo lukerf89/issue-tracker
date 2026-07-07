@@ -14,6 +14,7 @@ import {
   createProject,
   createSavedView,
   createTeam,
+  createTemplate,
   exportSnapshot,
   init,
   openDb,
@@ -113,6 +114,15 @@ describe("exportSnapshot", () => {
         filters: { label: label.name, priority: 2 },
         description: null
       });
+      const template = createTemplate(context, {
+        name: "Migration task",
+        title: "Plan fictional migration",
+        description: "Use the export checklist.",
+        priority: 2,
+        team: "ENG",
+        project: project.name,
+        labels: [label.name]
+      });
 
       const snapshot = exportSnapshot(context);
 
@@ -131,7 +141,8 @@ describe("exportSnapshot", () => {
         "actors",
         "attachments",
         "activity",
-        "savedViews"
+        "savedViews",
+        "templates"
       ]);
       expect(snapshot.workspace).toMatchObject({
         name: "Local Workspace",
@@ -239,6 +250,20 @@ describe("exportSnapshot", () => {
           name: "Migration bugs",
           filters: { label: "Migration", priority: 2 },
           description: null,
+          createdAt: "2026-05-01T00:05:00.000Z",
+          updatedAt: "2026-05-01T00:05:00.000Z"
+        }
+      ]);
+      expect(snapshot.templates).toEqual([
+        {
+          id: template.id,
+          name: "Migration task",
+          title: "Plan fictional migration",
+          description: "Use the export checklist.",
+          priority: 2,
+          team: "ENG",
+          project: "Platform Foundations",
+          labels: ["Migration"],
           createdAt: "2026-05-01T00:05:00.000Z",
           updatedAt: "2026-05-01T00:05:00.000Z"
         }

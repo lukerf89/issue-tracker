@@ -27,6 +27,7 @@ export {
   serializeProject,
   serializeSavedView,
   serializeTeam,
+  serializeTemplate,
   serializeWorkflowState
 } from "./serialize.js";
 export {
@@ -92,6 +93,17 @@ export {
   type ResolveSavedViewInput,
   type SavedViewWithFilters
 } from "./services/savedView.js";
+export {
+  createIssueFromTemplate,
+  createTemplate,
+  deleteTemplate,
+  listTemplates,
+  type CreateIssueFromTemplateInput,
+  type CreateIssueFromTemplateOverrides,
+  type CreateTemplateInput,
+  type DeleteTemplateInput,
+  type TemplateWithLabels
+} from "./services/template.js";
 export {
   archiveLabel,
   attachLabel,
@@ -194,6 +206,14 @@ export {
   resolveSavedViewInputSchema
 } from "./schemas/savedView.js";
 export {
+  createIssueFromTemplateInputSchema,
+  createIssueFromTemplateOverridesSchema,
+  createTemplateInputSchema,
+  deleteTemplateInputSchema,
+  listTemplatesInputSchema,
+  templateLabelsSchema
+} from "./schemas/template.js";
+export {
   archiveLabelInputSchema,
   createLabelInputSchema,
   listLabelsInputSchema,
@@ -239,11 +259,13 @@ export type {
   NewMilestone,
   NewProject,
   NewSavedView,
+  NewTemplate,
   NewTeam,
   NewWorkflowState,
   NewWorkspace,
   Project,
   SavedView,
+  Template,
   Team,
   WorkflowState,
   Workspace
