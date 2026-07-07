@@ -33,7 +33,7 @@ describe("tracker CLI", () => {
       encoding: "utf8"
     });
 
-    expect(stdout).toBe("0.1.0\n");
+    expect(stdout).toBe("0.1.1\n");
   });
 
   it("prints the package version cleanly for long and short flags", async () => {
@@ -44,7 +44,7 @@ describe("tracker CLI", () => {
 
       expect(result).toEqual({
         status: 0,
-        stdout: "0.1.0\n",
+        stdout: "0.1.1\n",
         stderr: ""
       });
     }
