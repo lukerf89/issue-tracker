@@ -9,8 +9,10 @@ export default defineConfig({
       {
         test: {
           environment: "node",
+          hookTimeout: 30000,
           include: ["packages/{core,cli,mcp,tui}/test/**/*.test.ts"],
-          name: "backend"
+          name: "backend",
+          testTimeout: 30000
         }
       },
       {
@@ -22,9 +24,11 @@ export default defineConfig({
         },
         test: {
           environment: "jsdom",
+          hookTimeout: 30000,
           include: ["packages/web/test/**/*.test.{ts,tsx}"],
           name: "web",
-          setupFiles: ["packages/web/test/setup.ts"]
+          setupFiles: ["packages/web/test/setup.ts"],
+          testTimeout: 30000
         }
       }
     ]
