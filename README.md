@@ -60,6 +60,29 @@ The key rule is simple: if a rule changes issue behavior, it belongs in `package
 
 Requirements: Node.js 22 or newer and npm.
 
+### Getting started on a new machine
+
+From a fresh checkout, run the setup script:
+
+```sh
+./scripts/setup.sh
+```
+
+The script installs dependencies, builds the workspaces, links the `tracker` CLI, and runs `tracker init` only when the default database does not already exist.
+
+Manual equivalent:
+
+```sh
+git clone <repo-url>
+cd issue-tracker
+npm install
+npm run build
+npm link --workspace @issue-tracker/cli
+tracker init
+```
+
+By default, tracker data lives outside the repository at `${XDG_DATA_HOME:-$HOME/.local/share}/issue-tracker/tracker.db`, or at `ISSUE_TRACKER_DB` when that environment variable is set. Because the SQLite database is separate from the repo, `git pull` updates never touch your issue data.
+
 From a checkout:
 
 ```sh
