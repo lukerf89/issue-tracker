@@ -297,7 +297,7 @@ export function printIssues(
 }
 
 export function handleCliError(error: unknown): number {
-  if (isCommanderHelp(error)) {
+  if (isCommanderCleanExit(error)) {
     return 0;
   }
 
@@ -544,6 +544,11 @@ function isCommanderError(error: unknown): error is { code: string; message: str
   );
 }
 
-function isCommanderHelp(error: unknown): boolean {
-  return isCommanderError(error) && error.code === "commander.helpDisplayed";
+function isCommanderCleanExit(error: unknown): boolean {
+  return (
+    isCommanderError(error) &&
+    (error.code === "commander.version" ||
+      error.code === "commander.helpDisplayed" ||
+      error.code === "commander.help")
+  );
 }

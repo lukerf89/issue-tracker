@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -155,11 +155,17 @@ type CommandOptions = CliGlobalOptions &
     workspace?: string;
   };
 
+const cliPackageJson = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8")
+) as { version: string };
+
+export const cliVersion = cliPackageJson.version;
+
 export function createProgram(): Command {
   const program = new Command()
     .name("tracker")
     .description("Local-first issue tracker CLI")
-    .version("0.0.0")
+    .version(cliVersion)
     .option("--db <path>", "SQLite database path")
     .option("--json", "print JSON output")
     .option("--team <key>", "default team key")
@@ -1394,7 +1400,18 @@ function omitUndefined<T extends Record<string, unknown>>(object: T): T {
   ) as T;
 }
 
-const entrypoint = process.argv[1] ? fileURLToPath(import.meta.url) === process.argv[1] : false;
+function pathForEntrypointCheck(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+const entrypoint = process.argv[1]
+  ? pathForEntrypointCheck(fileURLToPath(import.meta.url)) ===
+    pathForEntrypointCheck(process.argv[1])
+  : false;
 
 if (entrypoint) {
   void run();

@@ -1,6 +1,8 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -9,6 +11,8 @@ import { openDb } from "@issue-tracker/core";
 import { createProgram, resolveWatchOptions, run } from "../src/index.js";
 
 const tempDirs: string[] = [];
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+const builtCliPath = join(repoRoot, "packages/cli/dist/index.js");
 
 afterEach(() => {
   for (const tempDir of tempDirs.splice(0)) {
@@ -17,6 +21,46 @@ afterEach(() => {
 });
 
 describe("tracker CLI", () => {
+  it("runs the built CLI when invoked through a symlinked bin path", () => {
+    buildCliPackage();
+
+    const tempDir = mkdtempSync(join(tmpdir(), "issue-tracker-cli-bin-"));
+    tempDirs.push(tempDir);
+    const linkedBinPath = join(tempDir, "tracker-linked");
+    symlinkSync(builtCliPath, linkedBinPath);
+
+    const stdout = execFileSync(process.execPath, [linkedBinPath, "--version"], {
+      encoding: "utf8"
+    });
+
+    expect(stdout).toBe("0.1.0\n");
+  });
+
+  it("prints the package version cleanly for long and short flags", async () => {
+    const dbPath = tempDbPath();
+
+    for (const flag of ["--version", "-V"]) {
+      const result = await tracker(dbPath, [flag]);
+
+      expect(result).toEqual({
+        status: 0,
+        stdout: "0.1.0\n",
+        stderr: ""
+      });
+    }
+  });
+
+  it("prints top-level help cleanly", async () => {
+    const dbPath = tempDbPath();
+    const result = await tracker(dbPath, ["--help"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Usage: tracker [options] [command]");
+    expect(result.stdout).toContain("issue");
+    expect(result.stdout).not.toContain("\"error\"");
+  });
+
   it("prints the LF-57 command surface in help", () => {
     const help = createProgram().helpInformation();
 
@@ -1653,6 +1697,13 @@ function tempDbPath(): string {
   const tempDir = mkdtempSync(join(tmpdir(), "issue-tracker-cli-"));
   tempDirs.push(tempDir);
   return join(tempDir, "tracker.db");
+}
+
+function buildCliPackage(): void {
+  execFileSync("npm", ["run", "build", "-w", "@issue-tracker/cli"], {
+    cwd: repoRoot,
+    stdio: "pipe"
+  });
 }
 
 function stripAnsi(value: string): string {
