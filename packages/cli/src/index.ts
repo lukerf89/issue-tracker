@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -44,6 +44,7 @@ import {
   getConfig,
   getIssue,
   getProject,
+  importSnapshot,
   listActivity,
   listActivityInputSchema,
   listActivitySince,
@@ -99,6 +100,7 @@ import {
   type CreateProjectInput,
   type CreateSavedViewInput,
   type CreateTemplateInput,
+  type ImportSnapshotSummary,
   type ListActivitySinceInput,
   type ListIssuesWithViewInput,
   type ListIssueFilters,
@@ -144,6 +146,8 @@ type CommandOptions = CliGlobalOptions &
     actorName?: string;
     agent?: string;
     includeArchived?: boolean;
+    input?: string;
+    force?: boolean;
     output?: string;
     teamKey?: string;
     teamName?: string;
@@ -845,6 +849,34 @@ export function createProgram(): Command {
     );
 
   program
+    .command("import")
+    .description("import a workspace snapshot")
+    .requiredOption("--input <file>", "read JSON snapshot from a file")
+    .option("--force", "replace existing workspace data")
+    .option("--json", "print JSON summary")
+    .action((_options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        const inputPath = stringOption(options.input);
+
+        if (!inputPath) {
+          throw new InvalidArgumentError("import requires --input");
+        }
+
+        const summary = importSnapshot(cli.context, readJsonFile(inputPath), {
+          force: booleanOption(options.force) === true
+        });
+
+        if (options.json) {
+          printJson(summary);
+          return;
+        }
+
+        process.stdout.write(`Imported ${formatImportSummary(summary)}\n`);
+      })
+    );
+
+  program
     .command("mcp")
     .description("run the MCP server on stdio")
     .option("--agent <handle>", "agent actor handle")
@@ -1243,6 +1275,25 @@ function writeExportSnapshot(snapshot: unknown, outputPath: string | undefined):
   const destination = resolve(outputPath);
   mkdirSync(dirname(destination), { recursive: true });
   writeFileSync(destination, serialized, "utf8");
+}
+
+function readJsonFile(path: string): unknown {
+  try {
+    return JSON.parse(readFileSync(resolve(path), "utf8")) as unknown;
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new InvalidArgumentError(`input is not valid JSON: ${error.message}`);
+    }
+
+    throw error;
+  }
+}
+
+function formatImportSummary(summary: ImportSnapshotSummary): string {
+  return Object.entries(summary)
+    .filter(([, count]) => count > 0)
+    .map(([name, count]) => `${count} ${name}`)
+    .join(", ");
 }
 
 function parseInteger(value: string): number {

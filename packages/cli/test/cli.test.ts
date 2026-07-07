@@ -208,6 +208,172 @@ describe("tracker CLI", () => {
     });
   });
 
+  it("imports an exported snapshot into a fresh DB and guards non-empty DBs", async () => {
+    const sourceDbPath = tempDbPath();
+    const destinationDbPath = tempDbPath();
+    const outputPath = join(dirname(sourceDbPath), "snapshot-import.json");
+
+    expect((await tracker(sourceDbPath, ["init"])).status).toBe(0);
+
+    const agentResult = await tracker(sourceDbPath, [
+      "actor",
+      "create",
+      "build-agent",
+      "Build Agent",
+      "--type",
+      "agent",
+      "--json"
+    ]);
+    expect(agentResult.status).toBe(0);
+    const agent = JSON.parse(agentResult.stdout) as { id: string };
+
+    expect(
+      (
+        await tracker(sourceDbPath, [
+          "project",
+          "create",
+          "Platform Foundations",
+          "--status",
+          "planned",
+          "--lead-id",
+          agent.id
+        ])
+      ).status
+    ).toBe(0);
+    expect((await tracker(sourceDbPath, ["label", "create", "Bug", "--color", "#EF4444"])).status)
+      .toBe(0);
+    expect(
+      (
+        await tracker(sourceDbPath, [
+          "issue",
+          "create",
+          "--title",
+          "Import parent issue",
+          "--project",
+          "Platform Foundations"
+        ])
+      ).status
+    ).toBe(0);
+    expect(
+      (
+        await tracker(sourceDbPath, [
+          "issue",
+          "create",
+          "--title",
+          "Import child issue",
+          "--parent",
+          "ENG-1",
+          "--assignee",
+          "build-agent",
+          "--project",
+          "Platform Foundations",
+          "--label",
+          "Bug"
+        ])
+      ).status
+    ).toBe(0);
+
+    const comment = await tracker(sourceDbPath, [
+      "issue",
+      "comment",
+      "ENG-2",
+      "Import keeps comments.",
+      "--json"
+    ]);
+    expect(comment.status).toBe(0);
+    const commentId = (JSON.parse(comment.stdout) as { id: string }).id;
+
+    expect(
+      (
+        await tracker(sourceDbPath, [
+          "issue",
+          "comment",
+          "ENG-2",
+          "Import keeps replies.",
+          "--parent",
+          commentId
+        ])
+      ).status
+    ).toBe(0);
+    expect(
+      (
+        await tracker(sourceDbPath, [
+          "issue",
+          "link",
+          "ENG-2",
+          "--kind",
+          "pr",
+          "--repo",
+          "/fictional/repo",
+          "--url",
+          "https://example.invalid/pr/89",
+          "--title",
+          "Import PR"
+        ])
+      ).status
+    ).toBe(0);
+    expect(
+      (
+        await tracker(sourceDbPath, [
+          "view",
+          "save",
+          "Import bugs",
+          "--label",
+          "Bug",
+          "--priority",
+          "0"
+        ])
+      ).status
+    ).toBe(0);
+    expect(
+      (
+        await tracker(sourceDbPath, [
+          "template",
+          "create",
+          "Import task",
+          "--title",
+          "Plan import",
+          "--project",
+          "Platform Foundations",
+          "--label",
+          "Bug"
+        ])
+      ).status
+    ).toBe(0);
+
+    const written = await tracker(sourceDbPath, ["export", "--json", "--output", outputPath]);
+    expect(written.status).toBe(0);
+    const snapshot = JSON.parse(readFileSync(outputPath, "utf8"));
+
+    const imported = await tracker(destinationDbPath, ["import", "--input", outputPath]);
+    expect(imported.status).toBe(0);
+    expect(imported.stdout).toContain("Imported 1 workspace");
+    expect(imported.stdout).toContain("2 issues");
+
+    const reexported = await tracker(destinationDbPath, ["export", "--json"]);
+    expect(reexported.status).toBe(0);
+    expect(JSON.parse(reexported.stdout)).toEqual(snapshot);
+
+    const refused = await tracker(destinationDbPath, ["import", "--input", outputPath]);
+    expect(refused.status).not.toBe(0);
+    expect(JSON.parse(refused.stderr)).toMatchObject({
+      error: {
+        code: "CONSTRAINT_VIOLATION",
+        details: { force: true }
+      }
+    });
+
+    const forced = await tracker(destinationDbPath, [
+      "import",
+      "--input",
+      outputPath,
+      "--force",
+      "--json"
+    ]);
+    expect(forced.status).toBe(0);
+    expect(JSON.parse(forced.stdout)).toMatchObject({ issues: 2, comments: 2 });
+  });
+
   it("creates and lists actors, assigns by handle, clears with --none, and assigns --me", async () => {
     const dbPath = tempDbPath();
 

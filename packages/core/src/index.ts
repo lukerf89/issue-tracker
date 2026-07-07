@@ -79,6 +79,13 @@ export {
   type ExportSnapshot,
   type ResolveBackupPathInput
 } from "./services/export.js";
+export {
+  importSnapshot,
+  importSnapshotSchema,
+  type ImportSnapshot,
+  type ImportSnapshotOptions,
+  type ImportSnapshotSummary
+} from "./services/import.js";
 export { init, type InitInput } from "./services/init.js";
 export {
   createSavedView,
