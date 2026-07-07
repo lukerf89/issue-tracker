@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 
 import { Box, Text, useApp, useInput } from "ink";
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useMemo, useReducer, useState } from "react";
 
 import type { IssueWithDetails, ListIssueFilters, ServiceContext } from "@issue-tracker/core";
 
@@ -70,10 +70,6 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
     return nextData;
   }
 
-  useEffect(() => {
-    reload(loadOptions);
-  }, [loadOptions]);
-
   useInput((input, key) => {
     const action = mapKeyToLinekeeperAction(input, key, uiState);
 
@@ -83,10 +79,14 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
       return;
     }
     if (action.type === "copyIdentifier") {
-      copyIdentifier(selectedIssue?.identifier ?? "");
+      const copied = copyIdentifierToClipboard(selectedIssue?.identifier ?? "");
       dispatchBase({
         type: "setStatus",
-        message: selectedIssue ? `Copied ${selectedIssue.identifier}.` : "No issue selected."
+        message: selectedIssue
+          ? copied
+            ? `Copied ${selectedIssue.identifier}.`
+            : "Clipboard unavailable."
+          : "No issue selected."
       });
       return;
     }
@@ -111,14 +111,14 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
 
       if (command.kind === "search") {
         const nextOptions = { ...loadOptions, search: command.input || null, view: null };
-        setLoadOptions(nextOptions);
+        reloadAndCommit(nextOptions);
         dispatchBase({
           type: "setStatus",
           message: command.input ? `Searching "${command.input}".` : "Search cleared."
         });
       } else if (command.kind === "view") {
         const nextOptions = { ...loadOptions, view: command.input || null, search: null };
-        setLoadOptions(nextOptions);
+        reloadAndCommit(nextOptions);
         dispatchBase({
           type: "setStatus",
           message: command.input ? `Loaded view ${command.input}.` : "View cleared."
@@ -130,7 +130,7 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
           filters: mergeFilters(loadOptions.filters, filters),
           search: null
         };
-        setLoadOptions(nextOptions);
+        reloadAndCommit(nextOptions);
         dispatchBase({
           type: "setStatus",
           message: command.input ? `Applied filters ${command.input}.` : "Filters cleared."
@@ -148,6 +148,12 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
     } finally {
       dispatchBase({ type: "submitMode" });
     }
+  }
+
+  function reloadAndCommit(nextOptions: LinekeeperLoadOptions): LinekeeperData {
+    const nextData = reload(nextOptions);
+    setLoadOptions(nextOptions);
+    return nextData;
   }
 
   return (
@@ -394,7 +400,26 @@ function mergeFilters(
   return Object.keys(next).length === 0 ? {} : { ...(current ?? {}), ...next };
 }
 
-function copyIdentifier(identifier: string): void {
-  if (!identifier) return;
-  spawnSync("pbcopy", { input: identifier, stdio: ["pipe", "ignore", "ignore"] });
+export function copyIdentifierToClipboard(identifier: string): boolean {
+  if (!identifier) return false;
+
+  for (const candidate of clipboardCandidates) {
+    const result = spawnSync(candidate.command, candidate.args, {
+      input: identifier,
+      stdio: ["pipe", "ignore", "ignore"]
+    });
+
+    if (!result.error && result.status === 0) {
+      return true;
+    }
+  }
+
+  return false;
 }
+
+const clipboardCandidates = [
+  { command: "pbcopy", args: [] },
+  { command: "wl-copy", args: [] },
+  { command: "xclip", args: ["-selection", "clipboard"] },
+  { command: "clip", args: [] }
+];

@@ -655,17 +655,16 @@ describe("tracker CLI", () => {
     expect((await tracker(dbPath, ["label", "create", "Bug", "--color", "#EF4444"])).status).toBe(
       0
     );
-    expect(
-      (
-        await tracker(dbPath, [
-          "project",
-          "create",
-          "Platform Foundations",
-          "--status",
-          "planned"
-        ])
-      ).status
-    ).toBe(0);
+    const projectResult = await tracker(dbPath, [
+      "project",
+      "create",
+      "Platform Foundations",
+      "--status",
+      "planned",
+      "--json"
+    ]);
+    expect(projectResult.status).toBe(0);
+    const project = JSON.parse(projectResult.stdout) as { id: string };
 
     const createdTemplate = await tracker(dbPath, [
       "template",
@@ -692,7 +691,7 @@ describe("tracker CLI", () => {
       description: "Capture reproduction steps.",
       priority: 2,
       team: "ENG",
-      project: "Platform Foundations",
+      project: project.id,
       labels: ["Bug"],
       createdAt: expect.any(String),
       updatedAt: expect.any(String)

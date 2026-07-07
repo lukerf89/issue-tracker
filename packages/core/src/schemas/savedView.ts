@@ -29,3 +29,7 @@ export const listIssuesWithViewInputSchema = z.object({
   view: nonEmptyStringSchema.optional(),
   filters: listIssueFiltersSchema.optional()
 }) satisfies z.ZodType<ListIssuesWithViewInput>;
+
+export const listIssuesWithViewToolInputSchema = listIssueFiltersSchema.extend({
+  view: nonEmptyStringSchema.optional()
+});

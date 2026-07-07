@@ -209,6 +209,7 @@ export {
   createSavedViewInputSchema,
   deleteSavedViewInputSchema,
   listIssuesWithViewInputSchema,
+  listIssuesWithViewToolInputSchema,
   listSavedViewsInputSchema,
   resolveSavedViewInputSchema
 } from "./schemas/savedView.js";

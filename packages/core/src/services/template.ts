@@ -11,6 +11,7 @@ import {
   templateLabelsSchema
 } from "../schemas/template.js";
 import { createIssue, type CreateIssueInput, type IssueWithDetails } from "./issue.js";
+import { getProject } from "./project.js";
 
 export interface CreateTemplateInput {
   name: string;
@@ -62,7 +63,7 @@ export function createTemplate(
       description: parsed.description ?? null,
       priority: parsed.priority ?? null,
       team: parsed.team ?? null,
-      project: parsed.project ?? null,
+      project: resolveTemplateProject(txContext, parsed.project),
       labels: parsed.labels ?? [],
       createdAt: now,
       updatedAt: now
@@ -138,6 +139,13 @@ function templateWithParsedLabels(template: Template): TemplateWithLabels {
 function parseStoredLabels(labels: unknown): string[] {
   const parsed = typeof labels === "string" ? JSON.parse(labels) as unknown : labels;
   return templateLabelsSchema.parse(parsed);
+}
+
+function resolveTemplateProject(
+  context: ServiceContext,
+  projectRef: string | null | undefined
+): string | null {
+  return projectRef == null ? null : getProject(context, projectRef).id;
 }
 
 function applyTemplateField<K extends keyof CreateIssueInput>(

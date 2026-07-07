@@ -14,8 +14,8 @@ import {
   listActivityInputSchema,
   linkIssueInputSchema,
   linkIssueToolInputSchema,
-  listIssueFiltersSchema,
-  listIssues,
+  listIssuesWithView,
+  listIssuesWithViewToolInputSchema,
   moveIssue,
   moveIssueInputSchema,
   searchInputSchema,
@@ -43,12 +43,12 @@ export function registerIssueTools(
     {
       title: "List issues",
       description: "Query issues with optional filters.",
-      inputSchema: listIssueFiltersSchema.shape
+      inputSchema: listIssuesWithViewToolInputSchema.shape
     },
     (input) => mcpToolResult(() => {
-      const parsed = listIssueFiltersSchema.parse(input);
+      const { view, ...filters } = listIssuesWithViewToolInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(listIssues(context, parsed).map(serializeIssue))
+        jsonResult(listIssuesWithView(context, { view, filters }).map(serializeIssue))
       );
     })
   );

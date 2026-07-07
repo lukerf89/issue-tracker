@@ -95,6 +95,42 @@ describe("LinekeeperApp render", () => {
       setup.close();
     }
   });
+
+  it("shows an error status instead of crashing when a submitted view is missing", async () => {
+    const setup = initializedContext();
+
+    try {
+      createIssue(setup.context, {
+        title: "Keep current issue visible"
+      });
+
+      const view = render(
+        createElement(LinekeeperApp, {
+          context: setup.context,
+          dbPath: setup.dbPath,
+          defaultTeam: "ENG"
+        })
+      );
+
+      await tick();
+      view.stdin.write("v");
+      await tick(25);
+      view.stdin.write("Missing view");
+      await tick(25);
+      view.stdin.write("\r");
+      await tick();
+      await tick();
+
+      const frame = stripAnsi(view.lastFrame() ?? "");
+
+      expect(frame).toContain("Saved view Missing view was not found.");
+      expect(frame).toContain("ENG-1 Keep current issue visible");
+
+      view.unmount();
+    } finally {
+      setup.close();
+    }
+  });
 });
 
 function initializedContext(timestamp = "2026-07-01T00:00:00.000Z"): {
@@ -128,8 +164,8 @@ function fixedClock(timestamp: string): Clock {
   return { now: () => new Date(timestamp) };
 }
 
-async function tick(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 0));
+async function tick(delay = 0): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, delay));
 }
 
 function stripAnsi(value: string): string {

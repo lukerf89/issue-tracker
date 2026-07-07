@@ -74,6 +74,7 @@ import {
   unarchiveTeam,
   updateIssue,
   updateIssueInputSchema,
+  updateProject,
   whoami,
   resolveIssueListFilters,
   resolveSavedView,
@@ -829,7 +830,7 @@ describe("core services", () => {
         description: "Capture reproduction steps.",
         priority: 2,
         team: "ENG",
-        project: "Platform Foundations",
+        project: project.id,
         labels: ["Bug"],
         createdAt: "2026-07-02T00:00:00.000Z",
         updatedAt: "2026-07-02T00:00:00.000Z"
@@ -842,6 +843,8 @@ describe("core services", () => {
         createdAt: "2026-07-02T00:00:00.000Z"
       });
       expect(listTemplates(context).map((saved) => saved.name)).toEqual(["Bug report"]);
+
+      updateProject(context, project.id, { name: "Platform Reliability" });
 
       context.clock = fixedClock("2026-07-02T00:10:00.000Z");
       const issue = createIssueFromTemplate(context, "Bug report", {

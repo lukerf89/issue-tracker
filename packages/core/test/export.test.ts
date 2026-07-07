@@ -262,7 +262,7 @@ describe("exportSnapshot", () => {
           description: "Use the export checklist.",
           priority: 2,
           team: "ENG",
-          project: "Platform Foundations",
+          project: project.id,
           labels: ["Migration"],
           createdAt: "2026-05-01T00:05:00.000Z",
           updatedAt: "2026-05-01T00:05:00.000Z"
