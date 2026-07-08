@@ -844,6 +844,7 @@ describe("MCP server", () => {
       });
 
       for (const [name, args] of [
+        ["create_team", { key: "OPS", name: "Operations" }],
         ["create_saved_view", { name: "No actor view", filters: { state: "Todo" } }],
         ["delete_saved_view", { idOrName: "No actor view" }],
         ["create_template", { name: "No actor template", title: "No actor issue" }],

@@ -27,7 +27,7 @@ export function registerTeamTools(
     },
     (input) => mcpToolResult(() => {
       const parsed = createTeamInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
+      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
         jsonResult(serializeTeam(createTeam(context, parsed)))
       );
     })
