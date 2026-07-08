@@ -315,6 +315,108 @@ describe("MCP server", () => {
     }
   });
 
+  it("manages actors, teams, labels, cycles, and projects through MCP with CLI-equivalent JSON", async () => {
+    const dbPath = initializedDbPath();
+    const client = await connectClient(dbPath, { handle: "manage-agent" });
+
+    try {
+      await callJsonTool(client, "create_actor", {
+        type: "agent",
+        handle: "qa-agent",
+        name: "QA Agent"
+      });
+      const actors = await callJsonTool(client, "list_actors", {});
+      expect(`${JSON.stringify(actors)}\n`).toBe(tracker(dbPath, ["actor", "list", "--json"]));
+
+      await callJsonTool(client, "create_team", {
+        key: "OPS",
+        name: "Operations"
+      });
+      let teams = await callJsonTool(client, "list_teams", {});
+      expect(`${JSON.stringify(teams)}\n`).toBe(tracker(dbPath, ["team", "list", "--json"]));
+
+      await callJsonTool(client, "archive_team", { team: "OPS" });
+      teams = await callJsonTool(client, "list_teams", {});
+      expect((teams as unknown as Array<{ key: string }>).map((team) => team.key)).toEqual(["ENG"]);
+      teams = await callJsonTool(client, "list_teams", { includeArchived: true });
+      expect(`${JSON.stringify(teams)}\n`).toBe(
+        tracker(dbPath, ["team", "list", "--include-archived", "--json"])
+      );
+
+      await callJsonTool(client, "unarchive_team", { team: "OPS" });
+      teams = await callJsonTool(client, "list_teams", {});
+      expect((teams as unknown as Array<{ key: string }>).map((team) => team.key)).toEqual([
+        "ENG",
+        "OPS"
+      ]);
+
+      await callJsonTool(client, "create_label", {
+        name: "Bug",
+        color: "#EF4444"
+      });
+      let labels = await callJsonTool(client, "list_labels", {});
+      expect(`${JSON.stringify(labels)}\n`).toBe(tracker(dbPath, ["label", "list", "--json"]));
+
+      await callJsonTool(client, "archive_label", { label: "Bug" });
+      labels = await callJsonTool(client, "list_labels", {});
+      expect(labels).toEqual([]);
+      labels = await callJsonTool(client, "list_labels", { includeArchived: true });
+      expect(`${JSON.stringify(labels)}\n`).toBe(
+        tracker(dbPath, ["label", "list", "--include-archived", "--json"])
+      );
+
+      await callJsonTool(client, "unarchive_label", { label: "Bug" });
+      labels = await callJsonTool(client, "list_labels", {});
+      expect((labels as unknown as Array<{ name: string }>).map((label) => label.name)).toEqual([
+        "Bug"
+      ]);
+
+      await callJsonTool(client, "create_cycle", {
+        team: "OPS",
+        name: "Cycle 1",
+        startsAt: "2026-04-01T00:00:00.000Z",
+        endsAt: "2026-04-15T00:00:00.000Z"
+      });
+      const cycles = await callJsonTool(client, "list_cycles", { team: "OPS" });
+      expect(`${JSON.stringify(cycles)}\n`).toBe(
+        tracker(dbPath, ["cycle", "list", "--team", "OPS", "--json"])
+      );
+
+      await callJsonTool(client, "create_project", {
+        name: "Launch",
+        status: "planned",
+        startDate: "2026-08-01"
+      });
+      const updatedProject = await callJsonTool(client, "update_project", {
+        project: "Launch",
+        status: "started",
+        targetDate: "2026-08-31"
+      });
+      expect(updatedProject).toMatchObject({
+        name: "Launch",
+        status: "started",
+        startDate: "2026-08-01",
+        targetDate: "2026-08-31"
+      });
+
+      await callJsonTool(client, "archive_project", { project: "Launch" });
+      let projects = await callJsonTool(client, "list_projects", {});
+      expect(projects).toEqual([]);
+      projects = await callJsonTool(client, "list_projects", { includeArchived: true });
+      expect(`${JSON.stringify(projects)}\n`).toBe(
+        tracker(dbPath, ["project", "list", "--include-archived", "--json"])
+      );
+
+      await callJsonTool(client, "unarchive_project", { project: "Launch" });
+      projects = await callJsonTool(client, "list_projects", {});
+      expect((projects as unknown as Array<{ name: string }>).map((project) => project.name)).toEqual([
+        "Launch"
+      ]);
+    } finally {
+      await client.close();
+    }
+  });
+
   it("returns byte-identical list_saved_views JSON to CLI view list --json", async () => {
     const dbPath = initializedDbPath();
     const setup = openContext(dbPath);

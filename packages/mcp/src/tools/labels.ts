@@ -1,7 +1,13 @@
 import {
+  archiveLabel,
+  archiveLabelInputSchema,
+  createLabel,
+  createLabelInputSchema,
   listLabels,
   listLabelsInputSchema,
-  serializeLabel
+  serializeLabel,
+  unarchiveLabel,
+  unarchiveLabelInputSchema
 } from "@issue-tracker/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -13,6 +19,21 @@ export function registerLabelTools(
   options: Omit<OpenMcpContextOptions, "requireActor">
 ): void {
   server.registerTool(
+    "create_label",
+    {
+      title: "Create label",
+      description: "Create a label.",
+      inputSchema: createLabelInputSchema.shape
+    },
+    (input) => mcpToolResult(() => {
+      const parsed = createLabelInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
+        jsonResult(serializeLabel(createLabel(context, parsed)))
+      );
+    })
+  );
+
+  server.registerTool(
     "list_labels",
     {
       title: "List labels",
@@ -23,6 +44,36 @@ export function registerLabelTools(
       const parsed = listLabelsInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
         jsonResult(listLabels(context, parsed).map(serializeLabel))
+      );
+    })
+  );
+
+  server.registerTool(
+    "archive_label",
+    {
+      title: "Archive label",
+      description: "Archive a label without deleting it.",
+      inputSchema: archiveLabelInputSchema.shape
+    },
+    (input) => mcpToolResult(() => {
+      const parsed = archiveLabelInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
+        jsonResult(serializeLabel(archiveLabel(context, parsed.label)))
+      );
+    })
+  );
+
+  server.registerTool(
+    "unarchive_label",
+    {
+      title: "Unarchive label",
+      description: "Restore an archived label.",
+      inputSchema: unarchiveLabelInputSchema.shape
+    },
+    (input) => mcpToolResult(() => {
+      const parsed = unarchiveLabelInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
+        jsonResult(serializeLabel(unarchiveLabel(context, parsed.label)))
       );
     })
   );

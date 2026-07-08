@@ -22,6 +22,7 @@ import {
 import { AppError, AppErrorCode } from "../errors.js";
 import { attachmentKindSchema } from "../schemas/attachment.js";
 import { actorTypeSchema } from "../schemas/actor.js";
+import { dateOnlyStringSchema } from "../schemas/common.js";
 import { listIssueFiltersSchema, prioritySchema } from "../schemas/issue.js";
 import { projectStatusSchema } from "../schemas/project.js";
 import { templateLabelsSchema } from "../schemas/template.js";
@@ -59,6 +60,7 @@ const workflowStateTypeSchema = z.enum([
 const isoTimestampSchema = z.string().datetime({ offset: true });
 const nullableIsoTimestampSchema = isoTimestampSchema.nullable();
 const nullableStringSchema = z.string().nullable();
+const nullableDateOnlyStringSchema = dateOnlyStringSchema.nullable();
 const jsonRecordSchema = z.record(z.string(), z.unknown());
 
 const workspaceSnapshotSchema = z.strictObject({
@@ -97,8 +99,8 @@ const projectSnapshotSchema = z.strictObject({
   description: nullableStringSchema,
   status: projectStatusSchema,
   leadId: nullableStringSchema,
-  startDate: nullableStringSchema,
-  targetDate: nullableStringSchema,
+  startDate: nullableDateOnlyStringSchema,
+  targetDate: nullableDateOnlyStringSchema,
   archivedAt: nullableIsoTimestampSchema
 });
 
@@ -134,7 +136,7 @@ const issueSnapshotSchema = z.strictObject({
   cycleId: nullableStringSchema,
   parentId: nullableStringSchema,
   estimate: z.number().int().nullable(),
-  dueDate: nullableStringSchema,
+  dueDate: nullableDateOnlyStringSchema,
   sortOrder: z.number(),
   createdAt: isoTimestampSchema,
   updatedAt: isoTimestampSchema,

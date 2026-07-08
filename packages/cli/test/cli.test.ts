@@ -110,6 +110,46 @@ describe("tracker CLI", () => {
     expect(records[0]?.projectId).toEqual(expect.any(String));
   });
 
+  it("sets default actor and team config from friendly handles and keys", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect(
+      (
+        await tracker(dbPath, [
+          "actor",
+          "create",
+          "build-agent",
+          "Build Agent",
+          "--type",
+          "agent"
+        ])
+      ).status
+    ).toBe(0);
+    expect((await tracker(dbPath, ["team", "create", "OPS", "Operations"])).status).toBe(0);
+
+    const actorConfig = await tracker(dbPath, ["config", "set", "actor", "build-agent", "--json"]);
+    expect(actorConfig.status).toBe(0);
+    const actorConfigJson = JSON.parse(actorConfig.stdout) as Record<string, unknown>;
+    expect(actorConfigJson).toMatchObject({ key: "default_actor" });
+    expect(actorConfigJson.value).not.toBe("build-agent");
+
+    const who = await tracker(dbPath, ["whoami", "--json"]);
+    expect(JSON.parse(who.stdout)).toMatchObject({ handle: "build-agent" });
+
+    const teamConfig = await tracker(dbPath, ["config", "set", "team", "ops", "--json"]);
+    expect(teamConfig.status).toBe(0);
+    const teamConfigJson = JSON.parse(teamConfig.stdout) as Record<string, unknown>;
+    expect(teamConfigJson).toMatchObject({ key: "default_team" });
+    expect(teamConfigJson.value).not.toBe("ops");
+
+    const issue = await tracker(dbPath, ["issue", "create", "--title", "Route ops work", "--json"]);
+    expect(JSON.parse(issue.stdout)).toMatchObject({
+      identifier: "OPS-1",
+      creatorId: actorConfigJson.value
+    });
+  });
+
   it("backs up a live database with a restorable copy", async () => {
     const dbPath = tempDbPath();
     const backupPath = join(dirname(dbPath), "tracker-backup-test.db");
@@ -520,6 +560,51 @@ describe("tracker CLI", () => {
 
     const records = JSON.parse(started.stdout) as Array<Record<string, unknown>>;
     expect(records.map((record) => record.identifier)).toEqual(["ENG-1"]);
+  });
+
+  it("clears nullable issue fields with no-option flags", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["cycle", "create", "Sprint 1"])).status).toBe(0);
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Clear issue fields"])).status).toBe(
+      0
+    );
+
+    const populated = await tracker(dbPath, [
+      "issue",
+      "update",
+      "ENG-1",
+      "--cycle",
+      "1",
+      "--estimate",
+      "3",
+      "--due-date",
+      "2026-08-01",
+      "--json"
+    ]);
+    expect(populated.status).toBe(0);
+    expect(JSON.parse(populated.stdout)).toMatchObject({
+      cycleId: expect.any(String),
+      estimate: 3,
+      dueDate: "2026-08-01"
+    });
+
+    const cleared = await tracker(dbPath, [
+      "issue",
+      "update",
+      "ENG-1",
+      "--no-cycle",
+      "--no-estimate",
+      "--no-due-date",
+      "--json"
+    ]);
+    expect(cleared.status).toBe(0);
+    expect(JSON.parse(cleared.stdout)).toMatchObject({
+      cycleId: null,
+      estimate: null,
+      dueDate: null
+    });
   });
 
   it("filters issue list JSON by priority", async () => {
@@ -1672,6 +1757,44 @@ describe("tracker CLI", () => {
         code: "VALIDATION_FAILED",
         message: "Input validation failed."
       }
+    });
+  });
+
+  it("rejects invalid issue and project date values", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Validate dates"])).status).toBe(
+      0
+    );
+    expect((await tracker(dbPath, ["project", "create", "Launch"])).status).toBe(0);
+
+    const issueResult = await tracker(dbPath, [
+      "issue",
+      "update",
+      "ENG-1",
+      "--due-date",
+      "not-a-date",
+      "--json"
+    ]);
+    expect(issueResult.status).not.toBe(0);
+    expect(issueResult.stdout).toBe("");
+    expect(JSON.parse(issueResult.stderr)).toMatchObject({
+      error: { code: "VALIDATION_FAILED" }
+    });
+
+    const projectResult = await tracker(dbPath, [
+      "project",
+      "update",
+      "Launch",
+      "--start-date",
+      "2026-02-30",
+      "--json"
+    ]);
+    expect(projectResult.status).not.toBe(0);
+    expect(projectResult.stdout).toBe("");
+    expect(JSON.parse(projectResult.stderr)).toMatchObject({
+      error: { code: "VALIDATION_FAILED" }
     });
   });
 

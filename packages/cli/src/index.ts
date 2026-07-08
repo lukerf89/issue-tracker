@@ -243,13 +243,14 @@ export function createProgram(): Command {
       withContext(command, { requireActor: false }, (cli) => {
         const normalizedKey = normalizeConfigKey(key);
         setConfig(cli.context, normalizedKey, value);
+        const storedValue = getConfig(cli.context, normalizedKey);
 
         if (optionsWithGlobals(command).json) {
-          printJson({ key: normalizedKey, value });
+          printJson({ key: normalizedKey, value: storedValue });
           return;
         }
 
-        printValue(value);
+        printValue(storedValue);
       })
     );
 
@@ -598,11 +599,14 @@ export function createProgram(): Command {
     .option("--project <project>", "project id or name")
     .option("--no-project", "clear project")
     .option("--cycle <cycle>", "cycle number or id")
+    .option("--no-cycle", "clear cycle")
     .option("--parent <issue>", "parent issue identifier or id; use 'none' to clear")
     .option("--label <label>", "add label by name or id", collectValues, [])
     .option("--remove-label <label>", "remove label by name or id", collectValues, [])
     .option("--estimate <number>", "estimate", parseInteger)
+    .option("--no-estimate", "clear estimate")
     .option("--due-date <date>", "due date")
+    .option("--no-due-date", "clear due date")
     .option("--json", "print JSON output")
     .action((identifier, _options, command) =>
       withContext(command, {}, (cli) => {
@@ -1179,6 +1183,9 @@ function issueSearchInput(
 function issueUpdateInput(options: Record<string, unknown>): UpdateIssueInput {
   const assignee = options.unassigned === true ? null : nullableStringOption(options.assignee);
   const project = options.project === false ? null : nullableStringOption(options.project);
+  const cycle = options.cycle === false ? null : cycleOption(options.cycle);
+  const estimate = options.estimate === false ? null : numberOption(options.estimate);
+  const dueDate = options.dueDate === false ? null : nullableStringOption(options.dueDate);
 
   return updateIssueInputSchema.parse(omitUndefined({
     title: stringOption(options.title),
@@ -1186,12 +1193,12 @@ function issueUpdateInput(options: Record<string, unknown>): UpdateIssueInput {
     priority: numberOption(options.priority),
     assignee,
     project,
-    cycle: cycleOption(options.cycle),
+    cycle,
     parent: parentOption(options.parent),
     labels: stringArrayOption(options.label),
     removeLabels: stringArrayOption(options.removeLabel),
-    estimate: numberOption(options.estimate),
-    dueDate: nullableStringOption(options.dueDate)
+    estimate,
+    dueDate
   }));
 }
 

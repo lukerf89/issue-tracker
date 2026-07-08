@@ -10,6 +10,7 @@ import type {
   UpdateIssueInput
 } from "../services/issue.js";
 import {
+  optionalNullableDateOnlyStringSchema,
   nonEmptyStringSchema,
   optionalIntegerSchema,
   optionalNullableStringSchema
@@ -41,7 +42,7 @@ export const createIssueInputSchema = z.object({
   parent: optionalNullableStringSchema,
   parentId: optionalNullableStringSchema,
   estimate: z.number().int().nullable().optional(),
-  dueDate: optionalNullableStringSchema,
+  dueDate: optionalNullableDateOnlyStringSchema,
   sortOrder: optionalIntegerSchema,
   labels: z.array(nonEmptyStringSchema).optional()
 }) satisfies z.ZodType<CreateIssueInput>;
@@ -75,7 +76,7 @@ export const updateIssueInputSchema = z.object({
   parent: optionalNullableStringSchema,
   parentId: optionalNullableStringSchema,
   estimate: z.number().int().nullable().optional(),
-  dueDate: optionalNullableStringSchema,
+  dueDate: optionalNullableDateOnlyStringSchema,
   sortOrder: optionalIntegerSchema,
   labels: z.array(nonEmptyStringSchema).optional(),
   removeLabels: z.array(nonEmptyStringSchema).optional()

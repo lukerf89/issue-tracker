@@ -1,6 +1,8 @@
 import {
   AppError,
   AppErrorCode,
+  createActor,
+  createActorInputSchema,
   listActors,
   listActorsInputSchema,
   serializeActor
@@ -16,6 +18,21 @@ export function registerActorTools(
 ): void {
   registerCurrentActorTool(server, options, "whoami");
   registerCurrentActorTool(server, options, "get_current_actor");
+
+  server.registerTool(
+    "create_actor",
+    {
+      title: "Create actor",
+      description: "Create a human or agent actor.",
+      inputSchema: createActorInputSchema.shape
+    },
+    (input) => mcpToolResult(() => {
+      const parsed = createActorInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
+        jsonResult(serializeActor(createActor(context, parsed)))
+      );
+    })
+  );
 
   server.registerTool(
     "list_actors",

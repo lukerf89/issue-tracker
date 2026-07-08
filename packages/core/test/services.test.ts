@@ -19,6 +19,7 @@ import {
   assignIssueInputSchema,
   AppErrorCode,
   attachLabel,
+  ConfigKey,
   createActor,
   createCycle,
   createIssue,
@@ -26,6 +27,7 @@ import {
   createIssueInputSchema,
   createLabel,
   createProject,
+  createProjectInputSchema,
   createSavedView,
   createSavedViewInputSchema,
   createTeam,
@@ -75,6 +77,7 @@ import {
   updateIssue,
   updateIssueInputSchema,
   updateProject,
+  updateProjectInputSchema,
   whoami,
   resolveIssueListFilters,
   resolveSavedView,
@@ -197,6 +200,64 @@ describe("core services", () => {
     } finally {
       close();
     }
+  });
+
+  it("normalizes default actor and team config values from handles and keys", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      const agent = createActor(context, {
+        type: "agent",
+        name: "Build Agent",
+        handle: "build-agent"
+      });
+      const ops = createTeam(context, {
+        key: "OPS",
+        name: "Operations"
+      });
+
+      setConfig(context, ConfigKey.DEFAULT_ACTOR, agent.handle);
+      expect(whoami(context).id).toBe(agent.id);
+
+      setConfig(context, ConfigKey.DEFAULT_TEAM, ops.key.toLowerCase());
+      context.actor = whoami(context);
+      const issue = createIssue(context, { title: "Route operational work" });
+      expect(issue.identifier).toBe("OPS-1");
+
+      expectAppError(
+        () => setConfig(context, ConfigKey.DEFAULT_ACTOR, "missing-agent"),
+        AppErrorCode.ACTOR_NOT_FOUND
+      );
+      expectAppError(
+        () => setConfig(context, ConfigKey.DEFAULT_TEAM, "missing-team"),
+        AppErrorCode.TEAM_NOT_FOUND
+      );
+    } finally {
+      close();
+    }
+  });
+
+  it("rejects invalid date-only values through shared input schemas", () => {
+    expect(createIssueInputSchema.safeParse({
+      title: "Reject impossible due date",
+      dueDate: "2026-02-30"
+    }).success).toBe(false);
+    expect(updateIssueInputSchema.safeParse({ dueDate: "not-a-date" }).success).toBe(false);
+    expect(createProjectInputSchema.safeParse({
+      name: "Reject impossible project date",
+      startDate: "2026-02-30"
+    }).success).toBe(false);
+    expect(updateProjectInputSchema.safeParse({ targetDate: "not-a-date" }).success).toBe(false);
+
+    expect(createIssueInputSchema.safeParse({
+      title: "Accept due date",
+      dueDate: "2026-02-28"
+    }).success).toBe(true);
+    expect(createProjectInputSchema.safeParse({
+      name: "Accept project dates",
+      startDate: "2026-02-01",
+      targetDate: "2026-02-28"
+    }).success).toBe(true);
   });
 
   it("creates, lists, archives, and enforces grouped label uniqueness", () => {
@@ -1257,7 +1318,7 @@ describe("core services", () => {
   });
 
   it("applies lifecycle timestamps with an injected clock", () => {
-    const { context, close } = initializedContext("2026-02-01T00:00:00.000Z");
+    const { context, db, close } = initializedContext("2026-02-01T00:00:00.000Z");
 
     try {
       createIssue(context, { title: "Implement lifecycle states" });
@@ -1267,6 +1328,11 @@ describe("core services", () => {
       expect(started.startedAt).toBe("2026-02-01T01:00:00.000Z");
       expect(started.completedAt).toBeNull();
       expect(started.canceledAt).toBeNull();
+
+      context.clock = fixedClock("2026-02-01T01:30:00.000Z");
+      const stillStarted = moveIssue(context, "ENG-1", "In Progress");
+      expect(stillStarted.updatedAt).toBe(started.updatedAt);
+      expect(readActivityActions(db)).toEqual(["created", "state_changed"]);
 
       context.clock = fixedClock("2026-02-01T02:00:00.000Z");
       const completed = moveIssue(context, "ENG-1", "Done");
