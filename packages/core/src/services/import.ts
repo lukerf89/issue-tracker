@@ -54,6 +54,7 @@ const workflowStateTypeSchema = z.enum([
   "backlog",
   "unstarted",
   "started",
+  "blocked",
   "completed",
   "canceled"
 ]);

@@ -154,7 +154,7 @@ describe("exportSnapshot", () => {
         "default_team"
       ]);
       expect(snapshot.teams.map((team) => team.key)).toEqual(["ENG", "OPS"]);
-      expect(snapshot.workflowStates).toHaveLength(10);
+      expect(snapshot.workflowStates).toHaveLength(12);
       expect(snapshot.workflowStates.map((state) => [state.teamId, state.name])).toContainEqual([
         issue.teamId,
         "Todo"

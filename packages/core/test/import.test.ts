@@ -56,7 +56,7 @@ describe("importSnapshot", () => {
         workspace: 1,
         config: 2,
         teams: 2,
-        workflowStates: 10,
+        workflowStates: 12,
         projects: 1,
         milestones: 1,
         cycles: 1,

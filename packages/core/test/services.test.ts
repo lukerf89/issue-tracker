@@ -1365,6 +1365,39 @@ describe("core services", () => {
     }
   });
 
+  it("seeds a Blocked state and treats it as a non-terminal type", () => {
+    const { context, close } = initializedContext("2026-03-01T00:00:00.000Z");
+
+    try {
+      const issue = createIssue(context, { title: "Waiting on infra" });
+
+      // "Blocked" is seeded by default and categorized as the new `blocked` type.
+      const blockedState = getState(context, "Blocked", issue.teamId);
+      expect(blockedState.type).toBe("blocked");
+
+      // Todo -> Blocked: non-terminal, so no lifecycle timestamps are set.
+      context.clock = fixedClock("2026-03-01T01:00:00.000Z");
+      const blockedFromTodo = moveIssue(context, "ENG-1", "Blocked");
+      expect(blockedFromTodo.startedAt).toBeNull();
+      expect(blockedFromTodo.completedAt).toBeNull();
+      expect(blockedFromTodo.canceledAt).toBeNull();
+
+      // Start, complete, then block again: leaving a terminal state clears
+      // completedAt while startedAt is preserved (blocked adds no side effects).
+      context.clock = fixedClock("2026-03-01T02:00:00.000Z");
+      moveIssue(context, "ENG-1", "In Progress");
+      context.clock = fixedClock("2026-03-01T03:00:00.000Z");
+      moveIssue(context, "ENG-1", "Done");
+      context.clock = fixedClock("2026-03-01T04:00:00.000Z");
+      const blockedFromDone = moveIssue(context, "ENG-1", "Blocked");
+      expect(blockedFromDone.startedAt).toBe("2026-03-01T02:00:00.000Z");
+      expect(blockedFromDone.completedAt).toBeNull();
+      expect(blockedFromDone.canceledAt).toBeNull();
+    } finally {
+      close();
+    }
+  });
+
   it("allocates distinct gapless issue numbers in the team transaction", () => {
     const { context, db, close } = initializedContext();
 

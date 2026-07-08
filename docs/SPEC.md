@@ -172,15 +172,19 @@ workflow states and cycles.
 | `issueCounter` | monotonic counter for `KEY-N` numbering |
 
 **Workflow State (Status)** — a named state an issue can be in, categorized by
-Linear's five **types**:
+six **types** (Linear's five plus `blocked`):
 
 | Type         | Example names                    |
 | ------------ | -------------------------------- |
 | `backlog`    | Backlog                          |
 | `unstarted`  | Todo                             |
 | `started`    | In Progress, In Review           |
+| `blocked`    | Blocked                          |
 | `completed`  | Done                             |
 | `canceled`   | Canceled, Duplicate              |
+
+`blocked` is a non-terminal type for work that is stuck waiting on something;
+moving an issue into a `blocked` state sets no lifecycle timestamps of its own.
 
 Fields: `id`, `teamId`, `name`, `type`, `color`, `position`. A default set is
 seeded per team on creation.

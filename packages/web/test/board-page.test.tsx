@@ -51,6 +51,7 @@ describe("board page", () => {
       "Backlog",
       "Todo",
       "In Progress",
+      "Blocked",
       "Done",
       "Canceled"
     ]);
