@@ -1,7 +1,12 @@
 import { z } from "zod";
 
 import type { ArchiveProjectInput, CreateProjectInput, UpdateProjectInput } from "../services/project.js";
-import { includeArchivedSchema, nonEmptyStringSchema, optionalNullableStringSchema } from "./common.js";
+import {
+  includeArchivedSchema,
+  nonEmptyStringSchema,
+  optionalNullableDateOnlyStringSchema,
+  optionalNullableStringSchema
+} from "./common.js";
 
 export const projectStatusSchema = z.enum([
   "backlog",
@@ -21,8 +26,8 @@ export const createProjectInputSchema = z.object({
   description: z.string().nullable().optional(),
   status: projectStatusSchema.optional(),
   leadId: optionalNullableStringSchema,
-  startDate: optionalNullableStringSchema,
-  targetDate: optionalNullableStringSchema
+  startDate: optionalNullableDateOnlyStringSchema,
+  targetDate: optionalNullableDateOnlyStringSchema
 }) satisfies z.ZodType<CreateProjectInput>;
 
 export const updateProjectInputSchema = createProjectInputSchema.partial() satisfies z.ZodType<UpdateProjectInput>;

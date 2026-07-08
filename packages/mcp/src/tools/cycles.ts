@@ -1,4 +1,6 @@
 import {
+  createCycle,
+  createCycleInputSchema,
   listCycles,
   listCyclesInputSchema,
   serializeCycle
@@ -12,6 +14,21 @@ export function registerCycleTools(
   server: McpServer,
   options: Omit<OpenMcpContextOptions, "requireActor">
 ): void {
+  server.registerTool(
+    "create_cycle",
+    {
+      title: "Create cycle",
+      description: "Create a cycle.",
+      inputSchema: createCycleInputSchema.shape
+    },
+    (input) => mcpToolResult(() => {
+      const parsed = createCycleInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
+        jsonResult(serializeCycle(createCycle(context, parsed)))
+      );
+    })
+  );
+
   server.registerTool(
     "list_cycles",
     {

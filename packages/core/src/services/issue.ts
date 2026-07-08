@@ -487,6 +487,11 @@ export function moveIssue(context: ServiceContext, issueIdentifier: string, stat
     const issue = getIssue(txContext, issueIdentifier);
     const previousState = getState(txContext, issue.stateId, issue.teamId);
     const nextState = getState(txContext, stateIdOrName, issue.teamId);
+
+    if (previousState.id === nextState.id) {
+      return issue;
+    }
+
     const changes = lifecycleTimestampChanges(issue, previousState.type, nextState.type, txContext.clock.now());
 
     txContext.db
