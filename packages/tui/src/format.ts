@@ -12,8 +12,8 @@ import type { LinekeeperData } from "./data.js";
 export function truncate(value: string, width: number): string {
   if (width <= 0) return "";
   if (value.length <= width) return value;
-  if (width === 1) return "…";
-  return `${value.slice(0, width - 1)}…`;
+  if (width <= 3) return ".".repeat(width);
+  return `${value.slice(0, width - 3)}...`;
 }
 
 export function padColumn(value: string, width: number): string {

@@ -74,8 +74,11 @@ describe("LinekeeperApp render", () => {
       const listFrame = stripAnsi(view.lastFrame() ?? "");
 
       expect(listFrame).toContain("Linekeeper");
+      expect(listFrame).toContain("Linekeeper | ENG | My Open | 3 issues");
+      expect(listFrame).toContain("up/down move | enter open");
       expect(listFrame).toContain("My Open");
       expect(listFrame).toContain("ENG-1");
+      expect(listFrame).toContain("> * ENG-1");
       expect(listFrame).toContain("Set up CI");
       expect(listFrame).toContain("In Progress");
       expect(listFrame).toContain("Urgent");
@@ -101,6 +104,7 @@ describe("LinekeeperApp render", () => {
       await tick();
       const activityFrame = stripAnsi(view.lastFrame() ?? "");
       expect(activityFrame).toContain("ACTIVITY");
+      expect(activityFrame).toContain("ACTIVITY (expanded - A to collapse)");
       expect(activityFrame).toContain("claude-code ENG-1 state_changed Todo -> In Progress");
       expect(activityFrame).toContain("claude-code ENG-1 commented");
 
@@ -140,6 +144,32 @@ describe("LinekeeperApp render", () => {
       expect(frame).toContain("Saved view Missing view was not found.");
       expect(frame).toContain("ENG-1");
       expect(frame).toContain("Keep current issue visible");
+
+      view.unmount();
+    } finally {
+      setup.close();
+    }
+  });
+
+  it("renders the expanded activity strip without activity", async () => {
+    const setup = initializedContext();
+
+    try {
+      const view = render(
+        createElement(LinekeeperApp, {
+          context: setup.context,
+          dbPath: setup.dbPath,
+          defaultTeam: "ENG"
+        })
+      );
+
+      await tick();
+      view.stdin.write("A");
+      await tick();
+
+      const frame = stripAnsi(view.lastFrame() ?? "");
+      expect(frame).toContain("ACTIVITY (expanded - A to collapse)");
+      expect(frame).toContain("No activity yet.");
 
       view.unmount();
     } finally {

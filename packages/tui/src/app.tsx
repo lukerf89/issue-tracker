@@ -79,7 +79,7 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
 
   const rows = typeof stdout?.rows === "number" && stdout.rows > 0 ? stdout.rows : 24;
   const columns = typeof stdout?.columns === "number" && stdout.columns > 0 ? stdout.columns : 80;
-  const activityLines = uiState.activityExpanded ? Math.min(6, data.activity.length) + 1 : 1;
+  const activityLines = uiState.activityExpanded ? Math.max(1, Math.min(6, data.activity.length)) + 1 : 1;
   // Chrome = header (2) + body border (2) + activity + command line (1).
   const bodyCapacity = Math.max(3, rows - (2 + 2 + activityLines + 1));
 
@@ -230,10 +230,10 @@ function Header({ data }: { data: LinekeeperData }) {
     <Box flexDirection="column" paddingX={1}>
       <Text wrap="truncate">
         <Text bold>Linekeeper</Text>
-        <Text color="gray"> · {teamLabel} · {viewLabel} · {count} issues</Text>
+        <Text color="gray"> | {teamLabel} | {viewLabel} | {count} issues</Text>
       </Text>
       <Text color="gray" wrap="truncate">
-        ↑↓ move · enter open · / search · f filter · v views · ? help · q quit
+        up/down move | enter open | / search | f filter | v views | ? help | q quit
       </Text>
     </Box>
   );
@@ -250,9 +250,9 @@ function HelpOverlay({
 }) {
   const lines: string[] = [
     "Navigation",
-    "  ↑/↓ or j/k   move selection      PgUp/PgDn   jump a page",
-    "  gg / G       top / bottom        enter       open issue detail",
-    "  esc / ←      back to list        [ / ]       prev / next section",
+    "  up/down or j/k   move selection      PgUp/PgDn   jump a page",
+    "  gg / G           top / bottom        enter       open issue detail",
+    "  esc / left       back to list        [ / ]       prev / next section",
     "  A            toggle activity     y           copy identifier",
     "",
     "Commands",
@@ -321,7 +321,7 @@ function IssueList({
           const agentActive = lastAgentActivity(data, issue) !== null;
           const color = selected ? "cyan" : agentActive ? "magenta" : undefined;
           const row =
-            `${selected ? ">" : " "} ${agentActive ? "•" : " "} ` +
+            `${selected ? ">" : " "} ${agentActive ? "*" : " "} ` +
             `${padColumn(issue.identifier, 7)} ${padColumn(state?.name ?? "Unknown", 12)} ` +
             `${padColumn(priorityLabel(issue.priority), 11)} ${padColumn(shortActor(assignee), 14)} ` +
             issue.title;
@@ -336,8 +336,8 @@ function IssueList({
       <Text color="gray" wrap="truncate">
         {total === 0
           ? "0 issues"
-          : `${above > 0 ? `▲ ${above}  ` : ""}${uiState.selectedIndex + 1}/${total}${
-              below > 0 ? `  ▼ ${below}` : ""
+          : `${above > 0 ? `^ ${above}  ` : ""}${uiState.selectedIndex + 1}/${total}${
+              below > 0 ? `  v ${below}` : ""
             }`}
       </Text>
     </Box>
@@ -448,9 +448,9 @@ function IssueDetail({
         </Text>
       ))}
       <Text color="gray" wrap="truncate">
-        {`Section ${linekeeperSections.indexOf(section) + 1}/${linekeeperSections.length} · [ ] section · ↑↓ scroll · esc back`}
-        {scroll > 0 ? `  ▲ ${scroll}` : ""}
-        {below > 0 ? `  ▼ ${below}` : ""}
+        {`Section ${linekeeperSections.indexOf(section) + 1}/${linekeeperSections.length} | [ ] section | up/down scroll | esc back`}
+        {scroll > 0 ? `  ^ ${scroll}` : ""}
+        {below > 0 ? `  v ${below}` : ""}
       </Text>
     </Box>
   );
@@ -504,7 +504,7 @@ function ActivityStrip({
   const events = data.activity.slice(-6);
   return (
     <Box flexDirection="column" paddingX={1} width={columns}>
-      <Text bold>ACTIVITY (expanded — A to collapse)</Text>
+      <Text bold>ACTIVITY (expanded - A to collapse)</Text>
       {events.length === 0 ? (
         <Text color="gray">No activity yet.</Text>
       ) : (
