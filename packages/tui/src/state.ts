@@ -31,6 +31,7 @@ export interface LinekeeperUiState {
   selectedIndex: number;
   focus: LinekeeperFocus;
   sectionIndex: number;
+  detailScroll: number;
   activityExpanded: boolean;
   pendingG: boolean;
   mode: LinekeeperCommandMode | null;
@@ -45,6 +46,8 @@ export type LinekeeperAction =
   | { type: "focusPrevious" }
   | { type: "sectionNext" }
   | { type: "sectionPrevious" }
+  | { type: "scrollDetail"; delta: number }
+  | { type: "resetDetailScroll" }
   | { type: "toggleActivity" }
   | { type: "enterMode"; kind: LinekeeperCommandKind; seed?: string }
   | { type: "appendModeInput"; value: string }
@@ -60,6 +63,7 @@ export function initialLinekeeperState(): LinekeeperUiState {
     selectedIndex: 0,
     focus: "list",
     sectionIndex: 0,
+    detailScroll: 0,
     activityExpanded: false,
     pendingG: false,
     mode: null,
@@ -79,22 +83,25 @@ export function reduceLinekeeperState(
       return {
         ...state,
         selectedIndex: clamp(state.selectedIndex + action.delta, 0, maxIndex),
+        detailScroll: 0,
         pendingG: false
       };
     case "selectTop":
-      return { ...state, selectedIndex: 0, pendingG: false };
+      return { ...state, selectedIndex: 0, detailScroll: 0, pendingG: false };
     case "selectBottom":
-      return { ...state, selectedIndex: maxIndex, pendingG: false };
+      return { ...state, selectedIndex: maxIndex, detailScroll: 0, pendingG: false };
     case "focusNext":
       return {
         ...state,
         focus: state.focus === "list" ? "detail" : "list",
+        detailScroll: 0,
         pendingG: false
       };
     case "focusPrevious":
       return {
         ...state,
         focus: state.focus === "detail" ? "list" : "detail",
+        detailScroll: 0,
         pendingG: false
       };
     case "sectionNext":
@@ -111,6 +118,15 @@ export function reduceLinekeeperState(
         sectionIndex: clamp(state.sectionIndex - 1, 0, linekeeperSections.length - 1),
         pendingG: false
       };
+    case "scrollDetail":
+      return {
+        ...state,
+        focus: "detail",
+        detailScroll: Math.max(0, state.detailScroll + action.delta),
+        pendingG: false
+      };
+    case "resetDetailScroll":
+      return { ...state, detailScroll: 0, pendingG: false };
     case "toggleActivity":
       return {
         ...state,
@@ -152,6 +168,7 @@ export function reduceLinekeeperState(
       return {
         ...state,
         selectedIndex: clamp(state.selectedIndex, 0, maxIndex),
+        detailScroll: 0,
         pendingG: false
       };
   }

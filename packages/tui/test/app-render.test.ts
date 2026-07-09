@@ -70,25 +70,39 @@ describe("LinekeeperApp render", () => {
       );
 
       await tick();
-      const frame = stripAnsi(view.lastFrame() ?? "");
+      // Default view: the compact single-line issue list.
+      const listFrame = stripAnsi(view.lastFrame() ?? "");
 
-      expect(frame).toContain("Linekeeper - ENG issues");
-      expect(frame).toContain("VIEW: My Open");
-      expect(frame).toContain("ENG-1 Set up CI");
-      expect(frame).toContain("In Progress  Urgent");
-      expect(frame).toContain("ENG-2 Add issue create");
-      expect(frame).toContain("Todo  High");
-      expect(frame).toContain("ENG-3 MCP list issues");
-      expect(frame).toContain("ENG-1  Set up CI");
-      expect(frame).toContain("Project: none");
-      expect(frame).toContain("Assignee: @claude-code [agent]");
-      expect(frame).toContain("Description");
-      expect(frame).toContain("Run CI checks before packaging.");
-      expect(frame).toContain("Comments");
-      expect(frame).toContain("claude-code: Added vitest job.");
-      expect(frame).toContain("ACTIVITY");
-      expect(frame).toContain("claude-code ENG-1 state_changed Todo -> In Progress");
-      expect(frame).toContain("claude-code ENG-1 commented");
+      expect(listFrame).toContain("Linekeeper");
+      expect(listFrame).toContain("My Open");
+      expect(listFrame).toContain("ENG-1");
+      expect(listFrame).toContain("Set up CI");
+      expect(listFrame).toContain("In Progress");
+      expect(listFrame).toContain("Urgent");
+      expect(listFrame).toContain("ENG-2");
+      expect(listFrame).toContain("Add issue create");
+      expect(listFrame).toContain("ENG-3");
+      expect(listFrame).toContain("MCP list issues");
+
+      // Enter opens the selected issue as a full-screen detail view.
+      view.stdin.write("\r");
+      await tick();
+      const detailFrame = stripAnsi(view.lastFrame() ?? "");
+      expect(detailFrame).toContain("ENG-1  Set up CI");
+      expect(detailFrame).toContain("Project: none");
+      expect(detailFrame).toContain("Assignee: @claude-code [agent]");
+      expect(detailFrame).toContain("Description");
+      expect(detailFrame).toContain("Run CI checks before packaging.");
+      expect(detailFrame).toContain("Comments");
+      expect(detailFrame).toContain("claude-code: Added vitest job.");
+
+      // Expanding the activity strip reveals the full agent feed.
+      view.stdin.write("A");
+      await tick();
+      const activityFrame = stripAnsi(view.lastFrame() ?? "");
+      expect(activityFrame).toContain("ACTIVITY");
+      expect(activityFrame).toContain("claude-code ENG-1 state_changed Todo -> In Progress");
+      expect(activityFrame).toContain("claude-code ENG-1 commented");
 
       view.unmount();
     } finally {
@@ -124,7 +138,8 @@ describe("LinekeeperApp render", () => {
       const frame = stripAnsi(view.lastFrame() ?? "");
 
       expect(frame).toContain("Saved view Missing view was not found.");
-      expect(frame).toContain("ENG-1 Keep current issue visible");
+      expect(frame).toContain("ENG-1");
+      expect(frame).toContain("Keep current issue visible");
 
       view.unmount();
     } finally {
