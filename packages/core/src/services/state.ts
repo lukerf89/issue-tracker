@@ -9,8 +9,9 @@ export const defaultWorkflowStates = [
   { name: "Backlog", type: "backlog", color: "#9CA3AF", position: 0 },
   { name: "Todo", type: "unstarted", color: "#6B7280", position: 1 },
   { name: "In Progress", type: "started", color: "#2563EB", position: 2 },
-  { name: "Done", type: "completed", color: "#16A34A", position: 3 },
-  { name: "Canceled", type: "canceled", color: "#DC2626", position: 4 }
+  { name: "Blocked", type: "blocked", color: "#F59E0B", position: 3 },
+  { name: "Done", type: "completed", color: "#16A34A", position: 4 },
+  { name: "Canceled", type: "canceled", color: "#DC2626", position: 5 }
 ] as const;
 
 export function seedDefaultWorkflowStates(context: ServiceContext, teamId: string) {

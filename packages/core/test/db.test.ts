@@ -1,6 +1,14 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -152,6 +160,34 @@ describe("core database foundation", () => {
       db.$client.close();
     }
   });
+
+  it("backfills Blocked into teams created before the blocked-state migration", () => {
+    const db = openTempDb();
+
+    try {
+      applyMigrations(db, { migrationsFolder: preBlockedMigrationsFolder() });
+      insertPreBlockedTeamFixture(db);
+
+      applyMigrations(db);
+
+      const states = db.$client
+        .prepare(
+          "select name, type, position from workflow_states where team_id = ? order by position, name"
+        )
+        .all("team-eng");
+
+      expect(states).toEqual([
+        { name: "Backlog", type: "backlog", position: 0 },
+        { name: "Todo", type: "unstarted", position: 1 },
+        { name: "In Progress", type: "started", position: 2 },
+        { name: "Blocked", type: "blocked", position: 3 },
+        { name: "Done", type: "completed", position: 4 },
+        { name: "Canceled", type: "canceled", position: 5 }
+      ]);
+    } finally {
+      db.$client.close();
+    }
+  });
 });
 
 function openTempDb() {
@@ -199,6 +235,60 @@ function insertIssueFixture(db: ReturnType<typeof openDb>): void {
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z"
     })
+    .run();
+}
+
+function insertPreBlockedTeamFixture(db: ReturnType<typeof openDb>): void {
+  db.insert(teams)
+    .values({
+      id: "team-eng",
+      key: "ENG",
+      name: "Engineering"
+    })
+    .run();
+  db.insert(workflowStates)
+    .values([
+      {
+        id: "state-backlog",
+        teamId: "team-eng",
+        name: "Backlog",
+        type: "backlog",
+        color: "#9CA3AF",
+        position: 0
+      },
+      {
+        id: "state-todo",
+        teamId: "team-eng",
+        name: "Todo",
+        type: "unstarted",
+        color: "#6B7280",
+        position: 1
+      },
+      {
+        id: "state-in-progress",
+        teamId: "team-eng",
+        name: "In Progress",
+        type: "started",
+        color: "#2563EB",
+        position: 2
+      },
+      {
+        id: "state-done",
+        teamId: "team-eng",
+        name: "Done",
+        type: "completed",
+        color: "#16A34A",
+        position: 3
+      },
+      {
+        id: "state-canceled",
+        teamId: "team-eng",
+        name: "Canceled",
+        type: "canceled",
+        color: "#DC2626",
+        position: 4
+      }
+    ])
     .run();
 }
 
@@ -262,4 +352,37 @@ function uniqueColumnSets(db: ReturnType<typeof openDb>, table: string): string[
 
       return columns.sort((a, b) => a.seqno - b.seqno).map((column) => column.name);
     });
+}
+
+function preBlockedMigrationsFolder(): string {
+  const tempDir = mkdtempSync(join(tmpdir(), "issue-tracker-core-migrations-"));
+  tempDirs.push(tempDir);
+
+  const source = join(dirname(fileURLToPath(import.meta.url)), "../src/migrations");
+  const target = join(tempDir, "migrations");
+  const targetMeta = join(target, "meta");
+  const tags = ["0000_initial", "0001_nebulous_medusa", "0002_puzzling_red_skull"];
+
+  mkdirSync(targetMeta, { recursive: true });
+
+  for (const tag of tags) {
+    copyFileSync(join(source, `${tag}.sql`), join(target, `${tag}.sql`));
+    copyFileSync(
+      join(source, "meta", `${tag.split("_")[0]}_snapshot.json`),
+      join(targetMeta, `${tag.split("_")[0]}_snapshot.json`)
+    );
+  }
+
+  const journal = JSON.parse(readFileSync(join(source, "meta", "_journal.json"), "utf8")) as {
+    version: string;
+    dialect: string;
+    entries: unknown[];
+  };
+
+  writeFileSync(
+    join(targetMeta, "_journal.json"),
+    `${JSON.stringify({ ...journal, entries: journal.entries.slice(0, tags.length) }, null, 2)}\n`
+  );
+
+  return target;
 }

@@ -39,7 +39,7 @@ export const workflowStates = sqliteTable(
       .references(() => teams.id),
     name: text("name").notNull(),
     type: text("type", {
-      enum: ["backlog", "unstarted", "started", "completed", "canceled"]
+      enum: ["backlog", "unstarted", "started", "blocked", "completed", "canceled"]
     }).notNull(),
     color: text("color").notNull(),
     position: real("position").notNull()
