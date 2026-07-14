@@ -375,6 +375,8 @@ function printIssueRelations(issue: Issue): void {
   const detail = issue as Issue & {
     parent?: IssueReference | null;
     children?: IssueReference[];
+    blockedBy?: IssueReference[];
+    blocks?: IssueReference[];
     comments?: CommentWithAuthor[];
     attachments?: Attachment[];
   };
@@ -389,6 +391,22 @@ function printIssueRelations(issue: Issue): void {
 
     for (const child of detail.children) {
       lines.push(`  ${pc.bold(child.identifier)}  ${child.title}`);
+    }
+  }
+
+  if (hasOwn(detail, "blockedBy") && detail.blockedBy && detail.blockedBy.length > 0) {
+    lines.push("Blocked by");
+
+    for (const blocker of detail.blockedBy) {
+      lines.push(`  ${pc.bold(blocker.identifier)}  ${blocker.title}`);
+    }
+  }
+
+  if (hasOwn(detail, "blocks") && detail.blocks && detail.blocks.length > 0) {
+    lines.push("Blocks");
+
+    for (const blocked of detail.blocks) {
+      lines.push(`  ${pc.bold(blocked.identifier)}  ${blocked.title}`);
     }
   }
 

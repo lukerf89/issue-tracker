@@ -68,6 +68,38 @@ describe("MCP server", () => {
     }
   });
 
+  it("sets blockedBy/blocks dependencies through create_issue and update_issue", async () => {
+    const dbPath = initializedDbPath();
+    const client = await connectClient(dbPath, { handle: "build-agent" });
+
+    try {
+      await callJsonTool(client, "create_issue", { title: "Design" });
+      const build = await callJsonTool(client, "create_issue", {
+        title: "Build",
+        blockedBy: ["ENG-1"]
+      });
+
+      expect(build).toMatchObject({
+        identifier: "ENG-2",
+        blockedBy: [{ identifier: "ENG-1", title: "Design" }],
+        blocks: []
+      });
+
+      const design = await callJsonTool(client, "get_issue", { identifier: "ENG-1" });
+      expect(design).toMatchObject({
+        blocks: [{ identifier: "ENG-2", title: "Build" }]
+      });
+
+      const unblocked = await callJsonTool(client, "update_issue", {
+        identifier: "ENG-2",
+        removeBlockedBy: ["ENG-1"]
+      });
+      expect(unblocked).toMatchObject({ identifier: "ENG-2", blockedBy: [] });
+    } finally {
+      await client.close();
+    }
+  });
+
   it("returns byte-identical get_issue JSON to CLI issue view --json", async () => {
     const dbPath = initializedDbPath();
     const client = await connectClient(dbPath, { handle: "review-agent" });

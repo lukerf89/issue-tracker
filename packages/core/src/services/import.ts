@@ -8,6 +8,7 @@ import {
   comments,
   config,
   cycles,
+  issueDependencies,
   issueLabels,
   issues,
   labels,
@@ -42,6 +43,7 @@ export interface ImportSnapshotSummary {
   issues: number;
   labels: number;
   issueLabels: number;
+  issueDependencies: number;
   comments: number;
   actors: number;
   attachments: number;
@@ -160,6 +162,12 @@ const issueLabelSnapshotSchema = z.strictObject({
   labelId: z.string()
 });
 
+const issueDependencySnapshotSchema = z.strictObject({
+  blockingIssueId: z.string(),
+  blockedIssueId: z.string(),
+  createdAt: isoTimestampSchema
+});
+
 const commentSnapshotSchema = z.strictObject({
   id: z.string(),
   issueId: z.string(),
@@ -232,6 +240,7 @@ export const importSnapshotSchema = z.strictObject({
   issues: z.array(issueSnapshotSchema),
   labels: z.array(labelSnapshotSchema),
   issueLabels: z.array(issueLabelSnapshotSchema),
+  issueDependencies: z.array(issueDependencySnapshotSchema).default([]),
   comments: z.array(commentSnapshotSchema),
   actors: z.array(actorSnapshotSchema),
   attachments: z.array(attachmentSnapshotSchema),
@@ -283,6 +292,9 @@ export function importSnapshot(
     if (parsed.issueLabels.length > 0) {
       txContext.db.insert(issueLabels).values(parsed.issueLabels).run();
     }
+    if (parsed.issueDependencies.length > 0) {
+      txContext.db.insert(issueDependencies).values(parsed.issueDependencies).run();
+    }
 
     const orderedComments = orderByParent(parsed.comments, "comment");
     if (orderedComments.length > 0) txContext.db.insert(comments).values(orderedComments).run();
@@ -321,6 +333,7 @@ function existingWorkspaceTables(context: ServiceContext & { db: ServiceTransact
     ["issues", context.db.query.issues.findFirst().sync()],
     ["labels", context.db.query.labels.findFirst().sync()],
     ["issue_labels", context.db.query.issueLabels.findFirst().sync()],
+    ["issue_dependencies", context.db.query.issueDependencies.findFirst().sync()],
     ["comments", context.db.query.comments.findFirst().sync()],
     ["actors", context.db.query.actors.findFirst().sync()],
     ["attachments", context.db.query.attachments.findFirst().sync()],
@@ -337,6 +350,7 @@ function clearWorkspace(context: ServiceContext & { db: ServiceTransaction }): v
   context.db.delete(attachments).run();
   context.db.delete(comments).run();
   context.db.delete(issueLabels).run();
+  context.db.delete(issueDependencies).run();
   context.db.delete(issues).run();
   context.db.delete(templates).run();
   context.db.delete(savedViews).run();
@@ -411,6 +425,7 @@ function summarizeSnapshot(snapshot: ImportSnapshot): ImportSnapshotSummary {
     issues: snapshot.issues.length,
     labels: snapshot.labels.length,
     issueLabels: snapshot.issueLabels.length,
+    issueDependencies: snapshot.issueDependencies.length,
     comments: snapshot.comments.length,
     actors: snapshot.actors.length,
     attachments: snapshot.attachments.length,

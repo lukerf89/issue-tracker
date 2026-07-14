@@ -66,6 +66,8 @@ export default async function IssueDetailPage({ params }: IssueDetailPageProps) 
   const comments = issue.comments ?? [];
   const attachments = issue.attachments ?? [];
   const childIssues = issue.children ?? [];
+  const blockedByIssues = issue.blockedBy ?? [];
+  const blocksIssues = issue.blocks ?? [];
   const currentLabelIds = new Set(issue.labels.map((label) => label.id));
   const availableLabels = data.labels.filter((label) => !currentLabelIds.has(label.id));
 
@@ -164,6 +166,40 @@ export default async function IssueDetailPage({ params }: IssueDetailPageProps) 
                   </ul>
                 ) : (
                   <p className="text-sm text-zinc-500">No sub-issues.</p>
+                )}
+              </RelationPanel>
+            </div>
+          </section>
+
+          <section aria-labelledby="dependencies-heading" className="border-b border-zinc-800 pb-5">
+            <h2 className="text-base font-semibold text-zinc-100" id="dependencies-heading">
+              Dependencies
+            </h2>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <RelationPanel title="Blocked by">
+                {blockedByIssues.length > 0 ? (
+                  <ul className="space-y-2">
+                    {blockedByIssues.map((blocker) => (
+                      <li key={blocker.id}>
+                        <IssueReferenceLink issue={blocker} />
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-zinc-500">Not blocked by any issues.</p>
+                )}
+              </RelationPanel>
+              <RelationPanel title="Blocks">
+                {blocksIssues.length > 0 ? (
+                  <ul className="space-y-2">
+                    {blocksIssues.map((blocked) => (
+                      <li key={blocked.id}>
+                        <IssueReferenceLink issue={blocked} />
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-zinc-500">Does not block any issues.</p>
                 )}
               </RelationPanel>
             </div>

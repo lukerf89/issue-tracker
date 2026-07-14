@@ -22,6 +22,7 @@ import {
   init,
   listActivity,
   openDb,
+  updateIssue,
   uuid,
   whoami,
   type Clock,
@@ -63,6 +64,7 @@ describe("importSnapshot", () => {
         issues: 2,
         labels: 2,
         issueLabels: 2,
+        issueDependencies: 1,
         comments: 2,
         actors: 2,
         attachments: 1,
@@ -74,6 +76,9 @@ describe("importSnapshot", () => {
 
       const importedChild = getIssue(destination.context, child?.identifier ?? "");
       expect(importedChild.parent?.id).toBe(child?.parentId);
+      expect(importedChild.blockedBy.map((blocker) => blocker.id)).toEqual([child?.parentId]);
+      const importedParent = getIssue(destination.context, importedChild.parent?.identifier ?? "");
+      expect(importedParent.blocks.map((blocked) => blocked.id)).toEqual([importedChild.id]);
       expect(importedChild.comments.map((comment) => [comment.body, comment.parentId])).toEqual([
         ["Snapshot includes parent comments.", null],
         ["Snapshot includes replies.", parentComment?.id]
@@ -124,6 +129,7 @@ describe("importSnapshot", () => {
         issues: [],
         labels: [],
         issueLabels: [],
+        issueDependencies: [],
         comments: [],
         actors: [],
         attachments: [],
@@ -197,6 +203,9 @@ function populatedContext() {
     priority: 1,
     labels: ["Bug"]
   });
+
+  context.context.clock = fixedClock("2026-05-01T00:03:30.000Z");
+  updateIssue(context.context, child.identifier, { blockedBy: [parent.identifier] });
 
   context.context.clock = fixedClock("2026-05-01T00:04:00.000Z");
   const comment = addComment(context.context, {

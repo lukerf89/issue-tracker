@@ -507,6 +507,8 @@ export function createProgram(): Command {
     .option("--project <project>", "project id or name")
     .option("--cycle <cycle>", "cycle number or id")
     .option("--parent <issue>", "parent issue identifier or id")
+    .option("--blocked-by <issue>", "issue that blocks this one (repeatable)", collectValues, [])
+    .option("--blocks <issue>", "issue that this one blocks (repeatable)", collectValues, [])
     .option("--priority <number>", "priority", parseInteger)
     .option("--assignee <actor>", "assignee id or handle")
     .option("--state <state>", "workflow state")
@@ -601,6 +603,10 @@ export function createProgram(): Command {
     .option("--cycle <cycle>", "cycle number or id")
     .option("--no-cycle", "clear cycle")
     .option("--parent <issue>", "parent issue identifier or id; use 'none' to clear")
+    .option("--blocked-by <issue>", "add a blocking issue (repeatable)", collectValues, [])
+    .option("--remove-blocked-by <issue>", "remove a blocking issue (repeatable)", collectValues, [])
+    .option("--blocks <issue>", "add an issue this one blocks (repeatable)", collectValues, [])
+    .option("--remove-blocks <issue>", "remove an issue this one blocks (repeatable)", collectValues, [])
     .option("--label <label>", "add label by name or id", collectValues, [])
     .option("--remove-label <label>", "remove label by name or id", collectValues, [])
     .option("--estimate <number>", "estimate", parseInteger)
@@ -1091,7 +1097,9 @@ function issueCreateInput(
     project: nullableStringOption(options.project),
     cycle: cycleOption(options.cycle),
     parent: nullableStringOption(options.parent),
-    labels: stringArrayOption(options.label)
+    labels: stringArrayOption(options.label),
+    blockedBy: stringArrayOption(options.blockedBy),
+    blocks: stringArrayOption(options.blocks)
   });
 }
 
@@ -1197,6 +1205,10 @@ function issueUpdateInput(options: Record<string, unknown>): UpdateIssueInput {
     parent: parentOption(options.parent),
     labels: stringArrayOption(options.label),
     removeLabels: stringArrayOption(options.removeLabel),
+    blockedBy: stringArrayOption(options.blockedBy),
+    removeBlockedBy: stringArrayOption(options.removeBlockedBy),
+    blocks: stringArrayOption(options.blocks),
+    removeBlocks: stringArrayOption(options.removeBlocks),
     estimate,
     dueDate
   }));

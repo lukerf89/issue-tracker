@@ -81,6 +81,8 @@ export function serializeIssue(
     labels?: Label[];
     parent?: IssueReference | null;
     children?: IssueReference[];
+    blockedBy?: IssueReference[];
+    blocks?: IssueReference[];
     comments?: Array<Comment & { author: Actor }>;
     attachments?: Attachment[];
   }
@@ -91,6 +93,12 @@ export function serializeIssue(
       : {}),
     ...(hasOwn(issue, "children")
       ? { children: (issue.children ?? []).map(serializeIssueReference) }
+      : {}),
+    ...(hasOwn(issue, "blockedBy")
+      ? { blockedBy: (issue.blockedBy ?? []).map(serializeIssueReference) }
+      : {}),
+    ...(hasOwn(issue, "blocks")
+      ? { blocks: (issue.blocks ?? []).map(serializeIssueReference) }
       : {}),
     ...(hasOwn(issue, "comments")
       ? { comments: (issue.comments ?? []).map(serializeComment) }

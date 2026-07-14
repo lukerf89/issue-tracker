@@ -13,6 +13,7 @@ import {
   comments,
   config,
   cycles,
+  issueDependencies,
   issueLabels,
   issues,
   labels,
@@ -28,6 +29,7 @@ import {
   type Comment,
   type ConfigEntry,
   type Issue,
+  type IssueDependency,
   type IssueLabel,
   type Milestone,
   type SavedView,
@@ -59,6 +61,7 @@ export interface ExportSnapshot {
   issues: SerializedIssue[];
   labels: ReturnType<typeof serializeLabel>[];
   issueLabels: SerializedIssueLabel[];
+  issueDependencies: SerializedIssueDependency[];
   comments: SerializedComment[];
   actors: ReturnType<typeof serializeActor>[];
   attachments: SerializedAttachment[];
@@ -122,6 +125,12 @@ interface SerializedIssue {
 interface SerializedIssueLabel {
   issueId: string;
   labelId: string;
+}
+
+interface SerializedIssueDependency {
+  blockingIssueId: string;
+  blockedIssueId: string;
+  createdAt: string;
 }
 
 interface SerializedComment {
@@ -198,6 +207,9 @@ export function exportSnapshot(context: ServiceContext): ExportSnapshot {
     issueLabels: context.db.query.issueLabels.findMany({
       orderBy: [asc(issueLabels.issueId), asc(issueLabels.labelId)]
     }).sync().map(serializeIssueLabel),
+    issueDependencies: context.db.query.issueDependencies.findMany({
+      orderBy: [asc(issueDependencies.blockingIssueId), asc(issueDependencies.blockedIssueId)]
+    }).sync().map(serializeIssueDependency),
     comments: context.db.query.comments.findMany({
       orderBy: [asc(comments.issueId), asc(comments.createdAt), asc(comments.id)]
     }).sync().map(serializeCommentRow),
@@ -301,6 +313,14 @@ function serializeIssueLabel(row: IssueLabel): SerializedIssueLabel {
   return {
     issueId: row.issueId,
     labelId: row.labelId
+  };
+}
+
+function serializeIssueDependency(row: IssueDependency): SerializedIssueDependency {
+  return {
+    blockingIssueId: row.blockingIssueId,
+    blockedIssueId: row.blockedIssueId,
+    createdAt: toIso(row.createdAt)
   };
 }
 
