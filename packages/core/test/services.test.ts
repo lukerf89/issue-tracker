@@ -613,6 +613,98 @@ describe("core services", () => {
     }
   });
 
+  it("tracks blockedBy/blocks dependencies from both directions and records activity", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      const design = createIssue(context, { title: "Design API" });
+      const build = createIssue(context, {
+        title: "Build API",
+        blockedBy: [design.identifier]
+      });
+
+      expect(build.blockedBy.map((issue) => issue.identifier)).toEqual(["ENG-1"]);
+      expect(build.blocks).toEqual([]);
+
+      const designView = getIssue(context, design.identifier);
+      expect(designView.blocks.map((issue) => issue.identifier)).toEqual(["ENG-2"]);
+      expect(designView.blockedBy).toEqual([]);
+
+      const ship = createIssue(context, { title: "Ship API" });
+
+      context.clock = fixedClock("2026-01-01T00:05:00.000Z");
+      const linked = updateIssue(context, design.identifier, { blocks: [ship.identifier] });
+      expect(linked.blocks.map((issue) => issue.identifier)).toEqual(["ENG-2", "ENG-3"]);
+      expect(linked.updatedAt).toBe("2026-01-01T00:05:00.000Z");
+
+      // Re-adding an existing edge is idempotent.
+      const reAdded = updateIssue(context, design.identifier, { blocks: [ship.identifier] });
+      expect(reAdded.blocks.map((issue) => issue.identifier)).toEqual(["ENG-2", "ENG-3"]);
+
+      const unlinked = updateIssue(context, design.identifier, { removeBlocks: [build.identifier] });
+      expect(unlinked.blocks.map((issue) => issue.identifier)).toEqual(["ENG-3"]);
+      expect(getIssue(context, build.identifier).blockedBy).toEqual([]);
+
+      const buildActivity = listActivity(context, { issue: build.identifier });
+      expect(buildActivity.map((entry) => entry.action)).toEqual(["created", "dependency_added"]);
+      expect(buildActivity[1].data).toMatchObject({
+        direction: "blockedBy",
+        blockingIdentifier: "ENG-1",
+        blockedIdentifier: "ENG-2"
+      });
+
+      const serialized = serializeIssue(getIssue(context, ship.identifier));
+      expect(serialized.blockedBy).toEqual([
+        expect.objectContaining({ identifier: "ENG-1", title: "Design API" })
+      ]);
+      expect(serialized.blocks).toEqual([]);
+    } finally {
+      close();
+    }
+  });
+
+  it("rejects self dependencies and cycles, and adding an edge and its removal together", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      const first = createIssue(context, { title: "First" });
+      const second = createIssue(context, { title: "Second", blockedBy: [first.identifier] });
+      const third = createIssue(context, { title: "Third", blockedBy: [second.identifier] });
+
+      // first -> second -> third; closing the loop must be rejected either way it is expressed.
+      expectAppError(
+        () => updateIssue(context, first.identifier, { blockedBy: [third.identifier] }),
+        AppErrorCode.ISSUE_DEPENDENCY_CYCLE
+      );
+      expectAppError(
+        () => updateIssue(context, third.identifier, { blocks: [first.identifier] }),
+        AppErrorCode.ISSUE_DEPENDENCY_CYCLE
+      );
+      expectAppError(
+        () => updateIssue(context, first.identifier, { blockedBy: [first.identifier] }),
+        AppErrorCode.ISSUE_DEPENDENCY_CYCLE
+      );
+      expectAppError(
+        () => updateIssue(context, first.identifier, { blocks: [first.identifier] }),
+        AppErrorCode.ISSUE_DEPENDENCY_CYCLE
+      );
+      expectAppError(
+        () =>
+          updateIssue(context, first.identifier, {
+            blocks: [third.identifier],
+            removeBlocks: [third.identifier]
+          }),
+        AppErrorCode.CONSTRAINT_VIOLATION
+      );
+
+      // No failed mutation left a partial edge behind.
+      expect(getIssue(context, first.identifier).blockedBy).toEqual([]);
+      expect(getIssue(context, third.identifier).blocks).toEqual([]);
+    } finally {
+      close();
+    }
+  });
+
   it("matches state names across teams when no team filter is supplied", () => {
     const { context, close } = initializedContext();
 
@@ -1791,6 +1883,8 @@ describe("core services", () => {
         "parentId",
         "parent",
         "children",
+        "blockedBy",
+        "blocks",
         "comments",
         "attachments",
         "estimate",

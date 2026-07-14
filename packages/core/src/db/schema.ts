@@ -156,6 +156,20 @@ export const issueLabels = sqliteTable(
   (table) => [primaryKey({ columns: [table.issueId, table.labelId] })]
 );
 
+export const issueDependencies = sqliteTable(
+  "issue_dependencies",
+  {
+    blockingIssueId: text("blocking_issue_id")
+      .notNull()
+      .references(() => issues.id),
+    blockedIssueId: text("blocked_issue_id")
+      .notNull()
+      .references(() => issues.id),
+    createdAt: text("created_at").notNull()
+  },
+  (table) => [primaryKey({ columns: [table.blockingIssueId, table.blockedIssueId] })]
+);
+
 export const comments = sqliteTable("comments", {
   id: text("id").primaryKey(),
   issueId: text("issue_id")
@@ -301,6 +315,8 @@ export const issuesRelations = relations(issues, ({ one, many }) => ({
     relationName: "subIssues"
   }),
   children: many(issues, { relationName: "subIssues" }),
+  blocks: many(issueDependencies, { relationName: "issueBlocks" }),
+  blockedBy: many(issueDependencies, { relationName: "issueBlockedBy" }),
   labels: many(issueLabels),
   comments: many(comments),
   attachments: many(attachments),
@@ -319,6 +335,19 @@ export const issueLabelsRelations = relations(issueLabels, ({ one }) => ({
   label: one(labels, {
     fields: [issueLabels.labelId],
     references: [labels.id]
+  })
+}));
+
+export const issueDependenciesRelations = relations(issueDependencies, ({ one }) => ({
+  blockingIssue: one(issues, {
+    fields: [issueDependencies.blockingIssueId],
+    references: [issues.id],
+    relationName: "issueBlocks"
+  }),
+  blockedIssue: one(issues, {
+    fields: [issueDependencies.blockedIssueId],
+    references: [issues.id],
+    relationName: "issueBlockedBy"
   })
 }));
 
@@ -381,6 +410,8 @@ export type Label = InferSelectModel<typeof labels>;
 export type NewLabel = InferInsertModel<typeof labels>;
 export type IssueLabel = InferSelectModel<typeof issueLabels>;
 export type NewIssueLabel = InferInsertModel<typeof issueLabels>;
+export type IssueDependency = InferSelectModel<typeof issueDependencies>;
+export type NewIssueDependency = InferInsertModel<typeof issueDependencies>;
 export type Comment = InferSelectModel<typeof comments>;
 export type NewComment = InferInsertModel<typeof comments>;
 export type Actor = InferSelectModel<typeof actors>;

@@ -44,7 +44,9 @@ export const createIssueInputSchema = z.object({
   estimate: z.number().int().nullable().optional(),
   dueDate: optionalNullableDateOnlyStringSchema,
   sortOrder: optionalIntegerSchema,
-  labels: z.array(nonEmptyStringSchema).optional()
+  labels: z.array(nonEmptyStringSchema).optional(),
+  blockedBy: z.array(nonEmptyStringSchema).optional(),
+  blocks: z.array(nonEmptyStringSchema).optional()
 }) satisfies z.ZodType<CreateIssueInput>;
 
 export const listIssueFiltersSchema = z.object({
@@ -79,7 +81,11 @@ export const updateIssueInputSchema = z.object({
   dueDate: optionalNullableDateOnlyStringSchema,
   sortOrder: optionalIntegerSchema,
   labels: z.array(nonEmptyStringSchema).optional(),
-  removeLabels: z.array(nonEmptyStringSchema).optional()
+  removeLabels: z.array(nonEmptyStringSchema).optional(),
+  blockedBy: z.array(nonEmptyStringSchema).optional(),
+  removeBlockedBy: z.array(nonEmptyStringSchema).optional(),
+  blocks: z.array(nonEmptyStringSchema).optional(),
+  removeBlocks: z.array(nonEmptyStringSchema).optional()
 }) satisfies z.ZodType<UpdateIssueInput>;
 
 export const updateIssueToolInputSchema = updateIssueInputSchema.extend({

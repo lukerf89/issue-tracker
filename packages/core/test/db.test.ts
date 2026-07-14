@@ -26,6 +26,7 @@ const tableNames = [
   "issues",
   "labels",
   "issue_labels",
+  "issue_dependencies",
   "comments",
   "actors",
   "attachments",
@@ -76,6 +77,16 @@ describe("core database foundation", () => {
           expect.objectContaining({ table: "issues", from: "issue_id", to: "id" })
         ])
       );
+      expect(foreignKeys(db, "issue_dependencies")).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ table: "issues", from: "blocking_issue_id", to: "id" }),
+          expect.objectContaining({ table: "issues", from: "blocked_issue_id", to: "id" })
+        ])
+      );
+      expect(uniqueColumnSets(db, "issue_dependencies")).toContainEqual([
+        "blocking_issue_id",
+        "blocked_issue_id"
+      ]);
       expect(foreignKeys(db, "activity")).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ table: "issues", from: "issue_id", to: "id" }),

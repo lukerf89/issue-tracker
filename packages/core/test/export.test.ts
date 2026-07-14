@@ -137,6 +137,7 @@ describe("exportSnapshot", () => {
         "issues",
         "labels",
         "issueLabels",
+        "issueDependencies",
         "comments",
         "actors",
         "attachments",
@@ -209,6 +210,7 @@ describe("exportSnapshot", () => {
         }
       ]);
       expect(snapshot.issueLabels).toEqual([{ issueId: issue.id, labelId: label.id }]);
+      expect(snapshot.issueDependencies).toEqual([]);
       expect(snapshot.comments).toEqual([
         {
           id: comment.id,

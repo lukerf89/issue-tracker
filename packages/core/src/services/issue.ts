@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 
-import { inTransaction, type ServiceContext } from "../context.js";
-import { actors, issueLabels, issues, labels, projects, teams, workflowStates, type Actor, type Attachment, type Issue } from "../db/schema.js";
+import { inTransaction, type ServiceContext, type ServiceTransaction } from "../context.js";
+import { actors, issueDependencies, issueLabels, issues, labels, projects, teams, workflowStates, type Actor, type Attachment, type Issue } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { identifier, uuid } from "../ids.js";
 import { appendActivityInTransaction } from "./activity.js";
@@ -43,6 +43,8 @@ export interface CreateIssueInput {
   dueDate?: string | null;
   sortOrder?: number;
   labels?: string[];
+  blockedBy?: string[];
+  blocks?: string[];
 }
 
 export interface ListIssueFilters {
@@ -78,6 +80,10 @@ export interface UpdateIssueInput {
   sortOrder?: number;
   labels?: string[];
   removeLabels?: string[];
+  blockedBy?: string[];
+  removeBlockedBy?: string[];
+  blocks?: string[];
+  removeBlocks?: string[];
 }
 
 export interface AssignIssueInput {
@@ -104,6 +110,8 @@ export interface IssueReference {
 export type IssueWithDetails = IssueWithLabels & {
   parent: IssueReference | null;
   children: IssueReference[];
+  blockedBy: IssueReference[];
+  blocks: IssueReference[];
   comments: CommentWithAuthor[];
   attachments: Attachment[];
 };
@@ -170,6 +178,14 @@ export function createIssue(context: ServiceContext, input: CreateIssueInput) {
 
     for (const label of labelRows) {
       attachLabelInTransaction(txContext, row.id, label.id);
+    }
+
+    for (const blocking of resolveDependencyIssues(txContext, input.blockedBy)) {
+      applyDependencyEdge(txContext, row, blocking, "blockedBy", "add");
+    }
+
+    for (const blocked of resolveDependencyIssues(txContext, input.blocks)) {
+      applyDependencyEdge(txContext, row, blocked, "blocks", "add");
     }
 
     return getIssue(txContext, row.identifier);
@@ -302,6 +318,12 @@ export function updateIssue(context: ServiceContext, issueIdentifier: string, in
     const addLabels = resolveIssueLabels(txContext, input.labels);
     const removeLabels = resolveIssueLabels(txContext, input.removeLabels);
     assertNoLabelOverlap(addLabels, removeLabels);
+    const addBlockedBy = resolveDependencyIssues(txContext, input.blockedBy);
+    const removeBlockedBy = resolveDependencyIssues(txContext, input.removeBlockedBy);
+    const addBlocks = resolveDependencyIssues(txContext, input.blocks);
+    const removeBlocks = resolveDependencyIssues(txContext, input.removeBlocks);
+    assertNoDependencyOverlap(addBlockedBy, removeBlockedBy, "blockedBy");
+    assertNoDependencyOverlap(addBlocks, removeBlocks, "blocks");
 
     if (has(input, "title")) addChange(changes, changedFields, "title", input.title!);
     if (has(input, "description")) {
@@ -364,6 +386,22 @@ export function updateIssue(context: ServiceContext, issueIdentifier: string, in
 
     for (const label of addLabels) {
       attachLabelInTransaction(txContext, issue.id, label.id);
+    }
+
+    for (const blocking of removeBlockedBy) {
+      applyDependencyEdge(txContext, issue, blocking, "blockedBy", "remove");
+    }
+
+    for (const blocked of removeBlocks) {
+      applyDependencyEdge(txContext, issue, blocked, "blocks", "remove");
+    }
+
+    for (const blocking of addBlockedBy) {
+      applyDependencyEdge(txContext, issue, blocking, "blockedBy", "add");
+    }
+
+    for (const blocked of addBlocks) {
+      applyDependencyEdge(txContext, issue, blocked, "blocks", "add");
     }
 
     return getIssue(txContext, issueIdentifier);
@@ -561,6 +599,8 @@ function withIssueDetails(context: ServiceContext, issue: Issue): IssueWithDetai
     ...withIssueLabels(context, issue),
     parent: issue.parentId ? issueReference(getIssueById(context, issue.parentId)) : null,
     children: listChildIssueReferences(context, issue.id),
+    blockedBy: listBlockedByReferences(context, issue.id),
+    blocks: listBlocksReferences(context, issue.id),
     comments: listComments(context, { issue: issue.id }),
     attachments: listAttachments(context, { issue: issue.id })
   };
@@ -571,6 +611,28 @@ function listChildIssueReferences(context: ServiceContext, parentId: string): Is
     where: eq(issues.parentId, parentId),
     orderBy: [asc(issues.teamId), asc(issues.number), asc(issues.id)]
   }).sync().map(issueReference);
+}
+
+function listBlockedByReferences(context: ServiceContext, issueId: string): IssueReference[] {
+  return context.db
+    .select({ issue: issues })
+    .from(issueDependencies)
+    .innerJoin(issues, eq(issues.id, issueDependencies.blockingIssueId))
+    .where(eq(issueDependencies.blockedIssueId, issueId))
+    .orderBy(asc(issues.teamId), asc(issues.number), asc(issues.id))
+    .all()
+    .map(({ issue }) => issueReference(issue));
+}
+
+function listBlocksReferences(context: ServiceContext, issueId: string): IssueReference[] {
+  return context.db
+    .select({ issue: issues })
+    .from(issueDependencies)
+    .innerJoin(issues, eq(issues.id, issueDependencies.blockedIssueId))
+    .where(eq(issueDependencies.blockingIssueId, issueId))
+    .orderBy(asc(issues.teamId), asc(issues.number), asc(issues.id))
+    .all()
+    .map(({ issue }) => issueReference(issue));
 }
 
 function resolveOptionalParentId(
@@ -622,6 +684,128 @@ function assertValidParent(
     seen.add(current.id);
     current = getIssueById(context, current.parentId);
   }
+}
+
+function resolveDependencyIssues(context: ServiceContext, refs: string[] | undefined): Issue[] {
+  if (!refs || refs.length === 0) {
+    return [];
+  }
+
+  const resolved: Issue[] = [];
+  const seen = new Set<string>();
+
+  for (const ref of refs) {
+    const issue = getIssueByIdOrIdentifier(context, ref);
+
+    if (!seen.has(issue.id)) {
+      seen.add(issue.id);
+      resolved.push(issue);
+    }
+  }
+
+  return resolved;
+}
+
+/**
+ * Adds or removes a single dependency edge from the perspective of `subject`.
+ * A `blockedBy` edge means `other` blocks `subject`; a `blocks` edge means
+ * `subject` blocks `other`. Both edges are stored as the same
+ * (blockingIssueId → blockedIssueId) row, so creating either side is idempotent.
+ */
+function applyDependencyEdge(
+  context: ServiceContext & { db: ServiceTransaction },
+  subject: Issue,
+  other: Issue,
+  direction: "blockedBy" | "blocks",
+  mode: "add" | "remove"
+): void {
+  const actor = requireActor(context);
+  const blocking = direction === "blockedBy" ? other : subject;
+  const blocked = direction === "blockedBy" ? subject : other;
+
+  if (blocking.id === blocked.id) {
+    throw new AppError(
+      AppErrorCode.ISSUE_DEPENDENCY_CYCLE,
+      `Issue ${subject.identifier} cannot block itself.`,
+      { issueId: subject.id, issueIdentifier: subject.identifier }
+    );
+  }
+
+  const edgeCondition = and(
+    eq(issueDependencies.blockingIssueId, blocking.id),
+    eq(issueDependencies.blockedIssueId, blocked.id)
+  );
+  const existing = context.db.query.issueDependencies.findFirst({ where: edgeCondition }).sync();
+
+  if (mode === "add") {
+    if (existing) return;
+    assertAcyclicDependency(context, blocking, blocked);
+    context.db
+      .insert(issueDependencies)
+      .values({
+        blockingIssueId: blocking.id,
+        blockedIssueId: blocked.id,
+        createdAt: context.clock.now().toISOString()
+      })
+      .run();
+  } else {
+    if (!existing) return;
+    context.db.delete(issueDependencies).where(edgeCondition).run();
+  }
+
+  touchIssue(context, subject.id);
+  appendActivityInTransaction(context, {
+    issueId: subject.id,
+    actorId: actor.id,
+    action: mode === "add" ? "dependency_added" : "dependency_removed",
+    data: {
+      direction,
+      blockingId: blocking.id,
+      blockedId: blocked.id,
+      blockingIdentifier: blocking.identifier,
+      blockedIdentifier: blocked.identifier
+    }
+  });
+}
+
+/**
+ * Rejects an edge that would introduce a dependency cycle: adding
+ * "blocking blocks blocked" is invalid when `blocked` already (transitively)
+ * blocks `blocking`.
+ */
+function assertAcyclicDependency(context: ServiceContext, blocking: Issue, blocked: Issue): void {
+  const stack: string[] = [blocked.id];
+  const seen = new Set<string>();
+
+  while (stack.length > 0) {
+    const currentId = stack.pop()!;
+
+    if (currentId === blocking.id) {
+      throw new AppError(
+        AppErrorCode.ISSUE_DEPENDENCY_CYCLE,
+        `Adding ${blocking.identifier} as a blocker of ${blocked.identifier} would create a dependency cycle.`,
+        {
+          blockingId: blocking.id,
+          blockingIdentifier: blocking.identifier,
+          blockedId: blocked.id,
+          blockedIdentifier: blocked.identifier
+        }
+      );
+    }
+
+    if (seen.has(currentId)) continue;
+    seen.add(currentId);
+    stack.push(...blockedIssueIdsFor(context, currentId));
+  }
+}
+
+function blockedIssueIdsFor(context: ServiceContext, blockingId: string): string[] {
+  return context.db
+    .select({ id: issueDependencies.blockedIssueId })
+    .from(issueDependencies)
+    .where(eq(issueDependencies.blockingIssueId, blockingId))
+    .all()
+    .map((row) => row.id);
 }
 
 function getIssueByIdOrIdentifier(context: ServiceContext, idOrIdentifier: string): Issue {
@@ -844,6 +1028,31 @@ function assertNoLabelOverlap(addLabels: Array<{ id: string }>, removeLabels: Ar
       { labelId: overlap.id }
     );
   }
+}
+
+function assertNoDependencyOverlap(
+  addIssues: Issue[],
+  removeIssues: Issue[],
+  direction: "blockedBy" | "blocks"
+): void {
+  const addedIds = new Set(addIssues.map((issue) => issue.id));
+  const overlap = removeIssues.find((issue) => addedIds.has(issue.id));
+
+  if (overlap) {
+    throw new AppError(
+      AppErrorCode.CONSTRAINT_VIOLATION,
+      `Issue ${overlap.identifier} cannot be added to and removed from ${direction} in the same update.`,
+      { issueId: overlap.id, direction }
+    );
+  }
+}
+
+function touchIssue(context: ServiceContext, issueId: string): void {
+  context.db
+    .update(issues)
+    .set({ updatedAt: context.clock.now().toISOString() })
+    .where(eq(issues.id, issueId))
+    .run();
 }
 
 function has<T extends object>(object: T, key: keyof T): boolean {

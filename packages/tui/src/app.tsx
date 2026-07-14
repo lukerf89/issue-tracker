@@ -413,6 +413,22 @@ function IssueDetail({
     }
   }
 
+  if (issue.blockedBy.length > 0) {
+    lines.push({ text: "" });
+    lines.push({ text: "Blocked by:", color: metaColor });
+    for (const blocker of issue.blockedBy) {
+      lines.push({ text: `  ${blocker.identifier} ${blocker.title}` });
+    }
+  }
+
+  if (issue.blocks.length > 0) {
+    lines.push({ text: "" });
+    lines.push({ text: "Blocks:", color: metaColor });
+    for (const blocked of issue.blocks) {
+      lines.push({ text: `  ${blocked.identifier} ${blocked.title}` });
+    }
+  }
+
   lines.push({ text: "" });
   lines.push({ text: "Description", color: section === "description" ? "cyan" : undefined });
   for (const line of wrapText(issue.description ?? "none", contentWidth)) {

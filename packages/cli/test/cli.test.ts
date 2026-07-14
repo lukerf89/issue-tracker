@@ -246,6 +246,7 @@ describe("tracker CLI", () => {
       "issues",
       "labels",
       "issueLabels",
+      "issueDependencies",
       "comments",
       "actors",
       "attachments",
@@ -834,6 +835,10 @@ describe("tracker CLI", () => {
       )
     ).toEqual(["Bug report"]);
 
+    expect(
+      (await tracker(dbPath, ["issue", "create", "--title", "Design export flow"])).status
+    ).toBe(0);
+
     const issue = await tracker(dbPath, [
       "issue",
       "create",
@@ -843,6 +848,8 @@ describe("tracker CLI", () => {
       "Investigate export bug",
       "--priority",
       "1",
+      "--blocked-by",
+      "ENG-1",
       "--json"
     ]);
     expect(issue.status).toBe(0);
@@ -854,18 +861,19 @@ describe("tracker CLI", () => {
       labels: Array<{ name: string }>;
     };
     expect(createdIssue).toMatchObject({
-      identifier: "ENG-1",
+      identifier: "ENG-2",
       title: "Investigate export bug",
       description: "Capture reproduction steps.",
-      priority: 1
+      priority: 1,
+      blockedBy: [{ identifier: "ENG-1", title: "Design export flow" }]
     });
     expect(createdIssue.labels.map((label) => label.name)).toEqual(["Bug"]);
 
-    const activity = await tracker(dbPath, ["issue", "history", "ENG-1", "--json"]);
+    const activity = await tracker(dbPath, ["issue", "history", "ENG-2", "--json"]);
     expect(activity.status).toBe(0);
     expect(
       (JSON.parse(activity.stdout) as Array<{ action: string }>).map((entry) => entry.action)
-    ).toEqual(["created", "label_added"]);
+    ).toEqual(["created", "label_added", "dependency_added"]);
 
     const duplicate = await tracker(dbPath, [
       "template",
@@ -1201,6 +1209,62 @@ describe("tracker CLI", () => {
       identifier: "ENG-2",
       parentId: null,
       parent: null
+    });
+  });
+
+  it("adds and removes blockedBy/blocks dependencies through CLI flags", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Design"])).status).toBe(0);
+
+    const build = await tracker(dbPath, [
+      "issue",
+      "create",
+      "--title",
+      "Build",
+      "--blocked-by",
+      "ENG-1",
+      "--json"
+    ]);
+    expect(build.status).toBe(0);
+    expect(JSON.parse(build.stdout)).toMatchObject({
+      identifier: "ENG-2",
+      blockedBy: [{ identifier: "ENG-1", title: "Design" }],
+      blocks: []
+    });
+
+    const designView = await tracker(dbPath, ["issue", "view", "ENG-1", "--json"]);
+    expect(JSON.parse(designView.stdout)).toMatchObject({
+      identifier: "ENG-1",
+      blocks: [{ identifier: "ENG-2", title: "Build" }],
+      blockedBy: []
+    });
+
+    const cleared = await tracker(dbPath, [
+      "issue",
+      "update",
+      "ENG-1",
+      "--remove-blocks",
+      "ENG-2",
+      "--json"
+    ]);
+    expect(cleared.status).toBe(0);
+    expect(JSON.parse(cleared.stdout)).toMatchObject({ identifier: "ENG-1", blocks: [] });
+    const buildAfter = await tracker(dbPath, ["issue", "view", "ENG-2", "--json"]);
+    expect(JSON.parse(buildAfter.stdout)).toMatchObject({ identifier: "ENG-2", blockedBy: [] });
+
+    const cycle = await tracker(dbPath, [
+      "issue",
+      "update",
+      "ENG-1",
+      "--blocked-by",
+      "ENG-1",
+      "--json"
+    ]);
+    expect(cycle.status).toBe(1);
+    expect(JSON.parse(cycle.stderr)).toMatchObject({
+      error: { code: "ISSUE_DEPENDENCY_CYCLE" }
     });
   });
 
