@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   addAttachment,
   addComment,
+  AppErrorCode,
   applyMigrations,
   createActor,
   createCycle,
@@ -141,6 +142,40 @@ describe("importSnapshot", () => {
       destination.close();
     }
   });
+
+  it.each(["self dependency", "dependency cycle"])(
+    "rejects an imported %s before writing rows",
+    (invalidGraph) => {
+      const source = populatedContext();
+      const destination = emptyContext();
+
+      try {
+        const snapshot = exportSnapshot(source.context);
+        const dependency = snapshot.issueDependencies[0];
+        expect(dependency).toBeDefined();
+
+        snapshot.issueDependencies = invalidGraph === "self dependency"
+          ? [{ ...dependency!, blockedIssueId: dependency!.blockingIssueId }]
+          : [
+              dependency!,
+              {
+                blockingIssueId: dependency!.blockedIssueId,
+                blockedIssueId: dependency!.blockingIssueId,
+                createdAt: dependency!.createdAt
+              }
+            ];
+
+        expect(() => importSnapshot(destination.context, snapshot)).toThrowError(
+          expect.objectContaining({ code: AppErrorCode.ISSUE_DEPENDENCY_CYCLE })
+        );
+        expect(exportSnapshot(destination.context).issues).toEqual([]);
+        expect(exportSnapshot(destination.context).issueDependencies).toEqual([]);
+      } finally {
+        source.close();
+        destination.close();
+      }
+    }
+  );
 });
 
 function populatedContext() {

@@ -1117,7 +1117,9 @@ function issueCreateTemplateOverrides(
     project: nullableStringOption(options.project),
     cycle: cycleOption(options.cycle),
     parent: nullableStringOption(options.parent),
-    labels: stringArrayOption(options.label)
+    labels: stringArrayOption(options.label),
+    blockedBy: stringArrayOption(options.blockedBy),
+    blocks: stringArrayOption(options.blocks)
   }));
 }
 

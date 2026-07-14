@@ -835,6 +835,10 @@ describe("tracker CLI", () => {
       )
     ).toEqual(["Bug report"]);
 
+    expect(
+      (await tracker(dbPath, ["issue", "create", "--title", "Design export flow"])).status
+    ).toBe(0);
+
     const issue = await tracker(dbPath, [
       "issue",
       "create",
@@ -844,6 +848,8 @@ describe("tracker CLI", () => {
       "Investigate export bug",
       "--priority",
       "1",
+      "--blocked-by",
+      "ENG-1",
       "--json"
     ]);
     expect(issue.status).toBe(0);
@@ -855,18 +861,19 @@ describe("tracker CLI", () => {
       labels: Array<{ name: string }>;
     };
     expect(createdIssue).toMatchObject({
-      identifier: "ENG-1",
+      identifier: "ENG-2",
       title: "Investigate export bug",
       description: "Capture reproduction steps.",
-      priority: 1
+      priority: 1,
+      blockedBy: [{ identifier: "ENG-1", title: "Design export flow" }]
     });
     expect(createdIssue.labels.map((label) => label.name)).toEqual(["Bug"]);
 
-    const activity = await tracker(dbPath, ["issue", "history", "ENG-1", "--json"]);
+    const activity = await tracker(dbPath, ["issue", "history", "ENG-2", "--json"]);
     expect(activity.status).toBe(0);
     expect(
       (JSON.parse(activity.stdout) as Array<{ action: string }>).map((entry) => entry.action)
-    ).toEqual(["created", "label_added"]);
+    ).toEqual(["created", "label_added", "dependency_added"]);
 
     const duplicate = await tracker(dbPath, [
       "template",

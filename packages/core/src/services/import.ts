@@ -257,6 +257,7 @@ export function importSnapshot(
   options: ImportSnapshotOptions = {}
 ): ImportSnapshotSummary {
   const parsed = importSnapshotSchema.parse(snapshot);
+  assertAcyclicIssueDependencies(parsed.issueDependencies);
 
   return inTransaction(context, (txContext) => {
     if (options.force) {
@@ -305,6 +306,59 @@ export function importSnapshot(
 
     return summarizeSnapshot(parsed);
   });
+}
+
+function assertAcyclicIssueDependencies(dependencies: ImportSnapshot["issueDependencies"]): void {
+  const blockedIssueIdsByBlocker = new Map<string, string[]>();
+  const inDegree = new Map<string, number>();
+
+  for (const dependency of dependencies) {
+    const { blockingIssueId, blockedIssueId } = dependency;
+
+    if (blockingIssueId === blockedIssueId) {
+      throw new AppError(
+        AppErrorCode.ISSUE_DEPENDENCY_CYCLE,
+        "Import snapshot contains a self-blocking issue dependency.",
+        { issueId: blockingIssueId }
+      );
+    }
+
+    const blockedIssueIds = blockedIssueIdsByBlocker.get(blockingIssueId) ?? [];
+    blockedIssueIds.push(blockedIssueId);
+    blockedIssueIdsByBlocker.set(blockingIssueId, blockedIssueIds);
+    inDegree.set(blockingIssueId, inDegree.get(blockingIssueId) ?? 0);
+    inDegree.set(blockedIssueId, (inDegree.get(blockedIssueId) ?? 0) + 1);
+  }
+
+  const ready = [...inDegree.entries()]
+    .filter(([, degree]) => degree === 0)
+    .map(([issueId]) => issueId)
+    .sort();
+  let visited = 0;
+
+  while (ready.length > 0) {
+    const issueId = ready.shift()!;
+    visited += 1;
+
+    for (const blockedIssueId of blockedIssueIdsByBlocker.get(issueId) ?? []) {
+      const nextDegree = inDegree.get(blockedIssueId)! - 1;
+      inDegree.set(blockedIssueId, nextDegree);
+      if (nextDegree === 0) ready.push(blockedIssueId);
+    }
+  }
+
+  if (visited !== inDegree.size) {
+    throw new AppError(
+      AppErrorCode.ISSUE_DEPENDENCY_CYCLE,
+      "Import snapshot contains an issue dependency cycle.",
+      {
+        issueIds: [...inDegree.entries()]
+          .filter(([, degree]) => degree > 0)
+          .map(([issueId]) => issueId)
+          .sort()
+      }
+    );
+  }
 }
 
 function assertWorkspaceEmpty(context: ServiceContext & { db: ServiceTransaction }): void {
