@@ -126,6 +126,16 @@ describe("tracker CLI", () => {
     }).issues;
     expect(projectedRecords[0]).toMatchObject({ identifier: "ENG-1", description: null });
     expect(projectedRecords[0]?.projectId).toEqual(expect.any(String));
+
+    // Pagination/projection flags only shape the --json envelope; without --json
+    // the human path is full/unpaged, so they must fail loudly rather than be ignored.
+    const fieldsNoJson = await tracker(dbPath, ["issue", "list", "--fields", "description"]);
+    expect(fieldsNoJson.status).toBe(1);
+    expect(fieldsNoJson.stderr).toContain("--fields requires --json");
+
+    const cursorNoJson = await tracker(dbPath, ["issue", "list", "--cursor", "0"]);
+    expect(cursorNoJson.status).toBe(1);
+    expect(cursorNoJson.stderr).toContain("--cursor requires --json");
   });
 
   it("sets default actor and team config from friendly handles and keys", async () => {

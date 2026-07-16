@@ -563,6 +563,7 @@ export function createProgram(): Command {
           );
           return;
         }
+        requireJsonForPagination(options);
         printIssues(
           cli.context,
           listIssuesWithView(cli.context, issueListInput(options, cli.defaultTeam)),
@@ -590,6 +591,7 @@ export function createProgram(): Command {
           );
           return;
         }
+        requireJsonForPagination(options);
         printIssues(
           cli.context,
           searchIssues(cli.context, issueSearchInput(query, options, cli.defaultTeam)),
@@ -1165,6 +1167,18 @@ function issueListFilters(options: Record<string, unknown>, defaultTeam?: string
     limit: numberOption(options.limit),
     includeArchived: booleanOption(options.includeArchived)
   }));
+}
+
+// --cursor/--fields only shape the --json page envelope; the human table path
+// is full and unpaged, so silently ignoring them would mislead. Fail loudly,
+// mirroring the existing `export requires --json` guard.
+function requireJsonForPagination(options: Record<string, unknown>): void {
+  if (stringOption(options.cursor) !== undefined) {
+    throw new InvalidArgumentError("--cursor requires --json");
+  }
+  if (stringOption(options.fields) !== undefined) {
+    throw new InvalidArgumentError("--fields requires --json");
+  }
 }
 
 function issueListInput(
