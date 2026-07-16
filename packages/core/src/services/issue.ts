@@ -125,6 +125,8 @@ export interface IssuePageOptions {
 export interface IssuePageRow {
   issue: Issue | IssueWithDetails;
   fields?: IssueProjectionField[];
+  // Populated only for search results: a bm25-selected excerpt of the match.
+  snippet?: string;
 }
 
 export interface IssuePage {
@@ -297,23 +299,16 @@ export function listIssues(context: ServiceContext, filters: ListIssueFilters = 
 }
 
 export function searchIssues(context: ServiceContext, input: SearchIssuesInput) {
-  const filterConditions = issueFilterConditions(context, input);
+  const results = orderedSearchResults(context, input);
 
-  if (filterConditions === null) {
+  if (results === null) {
     return [];
   }
 
-  const conditions: SQL[] = [...filterConditions, textSearchCondition(input.query)];
+  const limited =
+    input.limit !== undefined && input.limit >= 0 ? results.slice(0, input.limit) : results;
 
-  return context.db
-    .select({ issue: issues })
-    .from(issues)
-    .innerJoin(teams, eq(teams.id, issues.teamId))
-    .where(and(...conditions))
-    .orderBy(asc(teams.key), asc(issues.number), asc(issues.id))
-    .limit(input.limit ?? -1)
-    .all()
-    .map(({ issue }) => withIssueDetails(context, issue));
+  return limited.map(({ issue }) => withIssueDetails(context, issue));
 }
 
 export function decodeIssueCursor(cursor: string | number | undefined): number {
@@ -390,15 +385,29 @@ export function searchIssuesPage(
   input: SearchIssuesInput,
   options: IssuePageOptions = {}
 ): IssuePage {
-  const filterConditions = issueFilterConditions(context, input);
+  const results = orderedSearchResults(context, input);
 
-  if (filterConditions === null) {
+  if (results === null) {
     return { rows: [], nextCursor: null, fields: options.fields };
   }
 
-  const conditions: SQL[] = [...filterConditions, textSearchCondition(input.query)];
+  const offset = decodeIssueCursor(options.cursor);
+  const pageSize = resolvePageSize(input.limit);
+  const detailed = needsIssueDetails(options.fields);
 
-  return paginateIssueRows(context, conditions, { ...options, limit: input.limit });
+  const window = results.slice(offset, offset + pageSize + 1);
+  const hasMore = window.length > pageSize;
+  const pageResults = hasMore ? window.slice(0, pageSize) : window;
+
+  return {
+    rows: pageResults.map(({ issue, snippet }) => ({
+      issue: detailed ? withIssueDetails(context, issue) : issue,
+      fields: options.fields,
+      snippet
+    })),
+    nextCursor: hasMore ? String(offset + pageSize) : null,
+    fields: options.fields
+  };
 }
 
 function issueFilterConditions(
@@ -1011,17 +1020,73 @@ function issueIdsForLabelName(context: ServiceContext, labelName: string): strin
     .map((row) => row.issueId);
 }
 
-function textSearchCondition(query: string): SQL {
-  const pattern = `%${escapeLike(query.toLowerCase())}%`;
-
-  return sql`(
-    lower(${issues.title}) like ${pattern} escape '\\'
-    or lower(coalesce(${issues.description}, '')) like ${pattern} escape '\\'
-  )`;
+interface OrderedSearchResult {
+  issue: Issue;
+  snippet: string;
 }
 
-function escapeLike(value: string): string {
-  return value.replace(/[\\%_]/g, (character) => `\\${character}`);
+// Build an FTS5 MATCH expression from free-text user input. Each run of
+// letters/digits becomes a quoted prefix term; terms are ANDed together.
+// Quoting neutralizes FTS operators and SQL wildcards, and a query with no
+// alphanumeric tokens yields no match expression (→ no results).
+function buildFtsMatch(query: string): string | null {
+  const tokens = query.match(/[\p{L}\p{N}]+/gu);
+
+  if (!tokens || tokens.length === 0) {
+    return null;
+  }
+
+  return tokens.map((token) => `"${token}"*`).join(" ");
+}
+
+// Run the FTS index, apply the standard list filters, and return matches in
+// bm25 rank order (best first) each carrying a snippet excerpt. Returns null
+// when a filter (e.g. an unknown label) can produce no rows at all.
+function orderedSearchResults(
+  context: ServiceContext,
+  input: SearchIssuesInput
+): OrderedSearchResult[] | null {
+  const filterConditions = issueFilterConditions(context, input);
+
+  if (filterConditions === null) {
+    return null;
+  }
+
+  const matchExpr = buildFtsMatch(input.query);
+
+  if (matchExpr === null) {
+    return [];
+  }
+
+  const ftsRows = context.db.all<{ issueId: string; snippet: string; rank: number }>(sql`
+    select
+      ${sql.raw("issue_id")} as "issueId",
+      snippet(issues_fts, -1, '', '', '\u2026', 12) as "snippet",
+      bm25(issues_fts, 10.0, 5.0, 1.0, 0.0) as "rank"
+    from issues_fts
+    where issues_fts match ${matchExpr}
+    order by "rank"
+  `);
+
+  if (ftsRows.length === 0) {
+    return [];
+  }
+
+  const metaByIssueId = new Map<string, { snippet: string; order: number }>();
+  ftsRows.forEach((row, index) => {
+    metaByIssueId.set(row.issueId, { snippet: row.snippet, order: index });
+  });
+
+  const conditions: SQL[] = [...filterConditions, inArray(issues.id, ftsRows.map((row) => row.issueId))];
+
+  return context.db
+    .select({ issue: issues })
+    .from(issues)
+    .where(and(...conditions))
+    .all()
+    .map(({ issue }) => ({ issue, meta: metaByIssueId.get(issue.id)! }))
+    .sort((a, b) => a.meta.order - b.meta.order)
+    .map(({ issue, meta }) => ({ issue, snippet: meta.snippet }));
 }
 
 function resolveTeam(context: ServiceContext, idOrKey?: string) {

@@ -305,7 +305,7 @@ export function printIssuePage(
 ): void {
   if (options.json) {
     printJson({
-      issues: page.rows.map((row) => serializeIssueSummary(row.issue, row.fields)),
+      issues: page.rows.map((row) => serializeIssueSummary(row.issue, row.fields, row.snippet)),
       nextCursor: page.nextCursor
     });
     return;

@@ -173,7 +173,8 @@ const ISSUE_PROJECTION_KEY_ORDER = [
 
 export function serializeIssueSummary(
   issue: Parameters<typeof serializeIssue>[0],
-  fields?: readonly string[]
+  fields?: readonly string[],
+  snippet?: string
 ) {
   const full = serializeIssue(issue) as Record<string, unknown>;
   const summary: Record<string, unknown> = {};
@@ -190,6 +191,10 @@ export function serializeIssueSummary(
       }
     }
     // Any summary key explicitly requested is already present; nothing else to do.
+  }
+
+  if (snippet !== undefined) {
+    summary.snippet = snippet;
   }
 
   return summary;

@@ -61,6 +61,7 @@ import {
   openDb,
   searchInputSchema,
   searchIssues,
+  searchIssuesPage,
   seedDefaultWorkflowStates,
   serializeIssue,
   serializeAttachment,
@@ -1091,18 +1092,17 @@ describe("core services", () => {
       });
       archiveIssue(context, "ENG-3");
 
-      expect(searchIssues(context, { query: "LOGIN" }).map((issue) => issue.identifier)).toEqual([
-        "ENG-1",
-        "ENG-2",
-        "OPS-1"
-      ]);
+      // FTS returns bm25-ranked results (best first), not identifier order.
+      // A title-only "login" match (OPS-1) outranks title+body matches.
+      const matched = searchIssues(context, { query: "LOGIN" }).map((issue) => issue.identifier);
+      expect(matched.sort()).toEqual(["ENG-1", "ENG-2", "OPS-1"]);
+      expect(matched).toContain("OPS-1");
+      // Archived issues stay hidden.
+      expect(matched).not.toContain("ENG-3");
       expect(
         searchIssues(context, { query: "oauth", team: "ENG" }).map((issue) => issue.identifier)
       ).toEqual(["ENG-1"]);
-      expect(searchIssues(context, { query: "login", limit: 2 }).map((issue) => issue.identifier)).toEqual([
-        "ENG-1",
-        "ENG-2"
-      ]);
+      expect(searchIssues(context, { query: "login", limit: 2 })).toHaveLength(2);
       expect(searchInputSchema.safeParse({ query: "login", team: "ENG", limit: 2 }).success).toBe(
         true
       );
@@ -1112,7 +1112,90 @@ describe("core services", () => {
     }
   });
 
-  it("treats SQL LIKE wildcard characters in search queries literally", () => {
+  it("ranks title matches above description matches and returns snippet excerpts", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      createIssue(context, {
+        title: "Unrelated body reference",
+        description: "We should improve keyword coverage here"
+      });
+      createIssue(context, { title: "Keyword handling rewrite" });
+
+      const page = searchIssuesPage(context, { query: "keyword" });
+      // ENG-2 (title match) outranks ENG-1 (description-only match).
+      expect(page.rows.map((row) => (row.issue as { identifier: string }).identifier)).toEqual([
+        "ENG-2",
+        "ENG-1"
+      ]);
+      // Every search row carries a snippet excerpt of the match.
+      expect(page.rows.every((row) => typeof row.snippet === "string" && row.snippet.length > 0)).toBe(
+        true
+      );
+      expect(page.rows[0]?.snippet?.toLowerCase()).toContain("keyword");
+    } finally {
+      close();
+    }
+  });
+
+  it("supports prefix and multi-token queries and honors filters", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      createTeam(context, { key: "OPS", name: "Operations" });
+      createIssue(context, {
+        title: "Authentication redirect bug",
+        description: "login redirect loops",
+        team: "ENG"
+      });
+      createIssue(context, { title: "Authorization audit", team: "ENG" });
+      createIssue(context, { title: "Authentication runbook", team: "OPS" });
+
+      // Prefix: "auth*" matches authentication + authorization.
+      const prefix = searchIssues(context, { query: "auth" }).map((issue) => issue.identifier);
+      expect(prefix.sort()).toEqual(["ENG-1", "ENG-2", "OPS-1"]);
+
+      // Multi-token is ANDed: both terms must match.
+      const multi = searchIssues(context, { query: "authentication redirect" }).map(
+        (issue) => issue.identifier
+      );
+      expect(multi).toEqual(["ENG-1"]);
+
+      // Standard filters still compose with search.
+      const scoped = searchIssues(context, { query: "authentication", team: "OPS" }).map(
+        (issue) => issue.identifier
+      );
+      expect(scoped).toEqual(["OPS-1"]);
+    } finally {
+      close();
+    }
+  });
+
+  it("keeps the FTS index consistent after edits and archival", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      createIssue(context, { title: "Widget prototype" });
+      expect(searchIssues(context, { query: "widget" }).map((i) => i.identifier)).toEqual(["ENG-1"]);
+      expect(searchIssues(context, { query: "gadget" })).toHaveLength(0);
+
+      // Editing the title updates the index (no stale hit, new hit present).
+      updateIssue(context, "ENG-1", { title: "Gadget prototype" });
+      expect(searchIssues(context, { query: "widget" })).toHaveLength(0);
+      expect(searchIssues(context, { query: "gadget" }).map((i) => i.identifier)).toEqual(["ENG-1"]);
+
+      // Archived issues drop out unless includeArchived is set.
+      archiveIssue(context, "ENG-1");
+      expect(searchIssues(context, { query: "gadget" })).toHaveLength(0);
+      expect(
+        searchIssues(context, { query: "gadget", includeArchived: true }).map((i) => i.identifier)
+      ).toEqual(["ENG-1"]);
+    } finally {
+      close();
+    }
+  });
+
+  it("treats query punctuation and wildcards as literal token boundaries", () => {
     const { context, close } = initializedContext();
 
     try {
@@ -1120,12 +1203,12 @@ describe("core services", () => {
       createIssue(context, { title: "Read abc_def flag" });
       createIssue(context, { title: "Plain matching issue" });
 
-      expect(searchIssues(context, { query: "%" }).map((issue) => issue.identifier)).toEqual([
-        "ENG-1"
-      ]);
-      expect(searchIssues(context, { query: "_" }).map((issue) => issue.identifier)).toEqual([
-        "ENG-2"
-      ]);
+      // FTS operators / SQL wildcards are neutralized: a bare wildcard has no
+      // alphanumeric tokens, so it matches nothing (no injection, no scan-all).
+      expect(searchIssues(context, { query: "%" })).toHaveLength(0);
+      expect(searchIssues(context, { query: "_" })).toHaveLength(0);
+      // Punctuation splits into tokens: "abc_def" matches on the "abc"/"def" terms.
+      expect(searchIssues(context, { query: "abc_def" }).map((i) => i.identifier)).toEqual(["ENG-2"]);
     } finally {
       close();
     }

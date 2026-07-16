@@ -760,7 +760,7 @@ describe("MCP server", () => {
       const all = ((await callJsonTool(client, "search", {
         query: "LOGIN"
       })) as unknown as { issues: Array<Record<string, unknown>> }).issues;
-      expect(all.map((issue) => issue.identifier)).toEqual(["ENG-1", "ENG-2", "OPS-1"]);
+      expect(all.map((issue) => issue.identifier)).toEqual(["OPS-1", "ENG-1", "ENG-2"]);
     } finally {
       await client.close();
     }
