@@ -1065,7 +1065,7 @@ function orderedSearchResults(
       bm25(issues_fts, 10.0, 5.0, 1.0, 0.0) as "rank"
     from issues_fts
     where issues_fts match ${matchExpr}
-    order by "rank"
+    order by "rank", ${sql.raw("rowid")}
   `);
 
   if (ftsRows.length === 0) {

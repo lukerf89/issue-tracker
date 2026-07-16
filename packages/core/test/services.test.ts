@@ -1171,6 +1171,39 @@ describe("core services", () => {
     }
   });
 
+  it("orders equal-ranked matches deterministically by insertion order", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      // Identical searchable content ⇒ identical bm25 score ⇒ the tie must
+      // resolve deterministically (fts rowid / creation order) so pages are stable.
+      createIssue(context, { title: "Duplicate ticket" });
+      createIssue(context, { title: "Duplicate ticket" });
+      createIssue(context, { title: "Duplicate ticket" });
+
+      const ordered = searchIssues(context, { query: "duplicate" }).map((i) => i.identifier);
+      expect(ordered).toEqual(["ENG-1", "ENG-2", "ENG-3"]);
+
+      // Paging over the tie yields the same order with no gaps/dupes.
+      const first = searchIssuesPage(context, { query: "duplicate", limit: 2 });
+      expect(first.rows.map((r) => (r.issue as { identifier: string }).identifier)).toEqual([
+        "ENG-1",
+        "ENG-2"
+      ]);
+      const second = searchIssuesPage(
+        context,
+        { query: "duplicate", limit: 2 },
+        { cursor: first.nextCursor ?? undefined }
+      );
+      expect(second.rows.map((r) => (r.issue as { identifier: string }).identifier)).toEqual([
+        "ENG-3"
+      ]);
+      expect(second.nextCursor).toBeNull();
+    } finally {
+      close();
+    }
+  });
+
   it("keeps the FTS index consistent after edits and archival", () => {
     const { context, close } = initializedContext();
 
