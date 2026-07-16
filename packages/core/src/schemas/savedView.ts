@@ -6,8 +6,8 @@ import type {
   ListIssuesWithViewInput,
   ResolveSavedViewInput
 } from "../services/savedView.js";
-import { nonEmptyStringSchema, optionalNullableStringSchema } from "./common.js";
-import { listIssueFiltersSchema } from "./issue.js";
+import { nonEmptyStringSchema, optionalNullableStringSchema, cursorSchema } from "./common.js";
+import { issuePageOptionsSchema, issueProjectionFieldSchema, listIssueFiltersSchema } from "./issue.js";
 
 export const createSavedViewInputSchema = z.object({
   name: nonEmptyStringSchema,
@@ -31,5 +31,16 @@ export const listIssuesWithViewInputSchema = z.object({
 }) satisfies z.ZodType<ListIssuesWithViewInput>;
 
 export const listIssuesWithViewToolInputSchema = listIssueFiltersSchema.extend({
+  view: nonEmptyStringSchema.optional()
+});
+
+export const listIssuesPageWithViewInputSchema = z.object({
+  view: nonEmptyStringSchema.optional(),
+  filters: listIssueFiltersSchema.optional(),
+  cursor: cursorSchema.optional(),
+  fields: z.array(issueProjectionFieldSchema).optional()
+});
+
+export const listIssuesPageWithViewToolInputSchema = issuePageOptionsSchema.extend({
   view: nonEmptyStringSchema.optional()
 });

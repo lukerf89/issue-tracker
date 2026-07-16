@@ -136,6 +136,65 @@ export function serializeIssue(
   };
 }
 
+const ISSUE_SUMMARY_KEYS = [
+  "identifier",
+  "title",
+  "stateId",
+  "priority",
+  "assigneeId",
+  "updatedAt"
+] as const;
+
+// Canonical ordering for projected extras so JSON output is byte-stable
+// (base summary keys first, then any requested extras in this fixed order).
+const ISSUE_PROJECTION_KEY_ORDER = [
+  "id",
+  "teamId",
+  "number",
+  "description",
+  "creatorId",
+  "projectId",
+  "cycleId",
+  "parentId",
+  "parent",
+  "children",
+  "blockedBy",
+  "blocks",
+  "estimate",
+  "dueDate",
+  "sortOrder",
+  "createdAt",
+  "startedAt",
+  "completedAt",
+  "canceledAt",
+  "archivedAt",
+  "labels"
+] as const;
+
+export function serializeIssueSummary(
+  issue: Parameters<typeof serializeIssue>[0],
+  fields?: readonly string[]
+) {
+  const full = serializeIssue(issue) as Record<string, unknown>;
+  const summary: Record<string, unknown> = {};
+
+  for (const key of ISSUE_SUMMARY_KEYS) {
+    summary[key] = full[key];
+  }
+
+  if (fields && fields.length > 0) {
+    const requested = new Set(fields);
+    for (const key of ISSUE_PROJECTION_KEY_ORDER) {
+      if (requested.has(key) && key in full) {
+        summary[key] = full[key];
+      }
+    }
+    // Any summary key explicitly requested is already present; nothing else to do.
+  }
+
+  return summary;
+}
+
 export function serializeComment(comment: Comment & { author: Actor }) {
   return {
     id: comment.id,

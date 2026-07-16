@@ -9,7 +9,9 @@ import type {
   UnarchiveIssueInput,
   UpdateIssueInput
 } from "../services/issue.js";
+import { ISSUE_PROJECTABLE_FIELDS } from "../services/issue.js";
 import {
+  cursorSchema,
   optionalNullableDateOnlyStringSchema,
   nonEmptyStringSchema,
   optionalIntegerSchema,
@@ -64,6 +66,17 @@ export const listIssueFiltersSchema = z.object({
 export const searchInputSchema = listIssueFiltersSchema.extend({
   query: nonEmptyStringSchema
 }) satisfies z.ZodType<SearchIssuesInput>;
+
+export const issueProjectionFieldSchema = z.enum(ISSUE_PROJECTABLE_FIELDS);
+
+export const issuePageOptionsSchema = listIssueFiltersSchema.extend({
+  cursor: cursorSchema.optional(),
+  fields: z.array(issueProjectionFieldSchema).optional()
+});
+
+export const searchPageInputSchema = issuePageOptionsSchema.extend({
+  query: nonEmptyStringSchema
+});
 
 export const updateIssueInputSchema = z.object({
   title: nonEmptyStringSchema.optional(),

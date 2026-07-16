@@ -6,6 +6,11 @@ export const optionalNullableStringSchema = z.string().min(1).nullable().optiona
 
 export const optionalIntegerSchema = z.number().int().optional();
 
+export const cursorSchema = z.union([
+  z.number().int().nonnegative(),
+  z.string().regex(/^(0|[1-9]\d*)$/)
+]);
+
 export const dateOnlyStringSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(
   (value) => {
     const date = new Date(`${value}T00:00:00.000Z`);
