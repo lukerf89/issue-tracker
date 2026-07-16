@@ -86,8 +86,12 @@ describe("M0 acceptance", () => {
       archivedAt: null
     });
 
-    const listed = trackerJson(dbPath, ["issue", "list", "--json"]);
-    expect(listed).toEqual([created]);
+    const listed = trackerJson(dbPath, ["issue", "list", "--json"]) as {
+      issues: Array<{ identifier: string }>;
+      nextCursor: string | null;
+    };
+    expect(listed.nextCursor).toBeNull();
+    expect(listed.issues.map((issue) => issue.identifier)).toEqual([created.identifier]);
 
     const started = trackerJson(dbPath, ["issue", "move", "ENG-1", "In Progress", "--json"]);
     expect(started).toMatchObject({

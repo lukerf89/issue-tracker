@@ -46,12 +46,12 @@ describe("M2 acceptance", () => {
       await expect(callJsonTool<SerializedActor>(client, "get_current_actor", {}))
         .resolves.toEqual(actor);
 
-      const assignable = await callJsonTool<SerializedIssue[]>(client, "list_issues", {
+      const assignable = await callJsonTool<{ issues: SerializedIssue[] }>(client, "list_issues", {
         team: "ENG",
         state: "Todo",
         assignee: null
       });
-      expect(assignable.map((issue) => issue.identifier)).toEqual([issueIdentifier]);
+      expect(assignable.issues.map((issue) => issue.identifier)).toEqual([issueIdentifier]);
 
       const claimed = await callJsonTool<SerializedIssue>(client, "assign_issue", {
         identifier: issueIdentifier,

@@ -95,19 +95,37 @@ describe("tracker CLI", () => {
     const list = await tracker(dbPath, ["issue", "list", "--json"]);
     expect(list.status).toBe(0);
 
-    const records = JSON.parse(list.stdout) as Array<Record<string, unknown>>;
+    const payload = JSON.parse(list.stdout) as {
+      issues: Array<Record<string, unknown>>;
+      nextCursor: string | null;
+    };
+    expect(payload.nextCursor).toBeNull();
+    const records = payload.issues;
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
       identifier: "ENG-1",
       title: "Set up CI",
       priority: 2,
-      description: null,
-      assigneeId: null,
-      completedAt: null,
-      canceledAt: null,
-      archivedAt: null
+      assigneeId: null
     });
-    expect(records[0]?.projectId).toEqual(expect.any(String));
+    // Compact default: heavy/nested fields are excluded from list payloads.
+    expect(records[0]).not.toHaveProperty("description");
+    expect(records[0]).not.toHaveProperty("comments");
+    expect(records[0]).not.toHaveProperty("attachments");
+    expect(records[0]).not.toHaveProperty("projectId");
+
+    const projected = await tracker(dbPath, [
+      "issue",
+      "list",
+      "--fields",
+      "description,projectId",
+      "--json"
+    ]);
+    const projectedRecords = (JSON.parse(projected.stdout) as {
+      issues: Array<Record<string, unknown>>;
+    }).issues;
+    expect(projectedRecords[0]).toMatchObject({ identifier: "ENG-1", description: null });
+    expect(projectedRecords[0]?.projectId).toEqual(expect.any(String));
   });
 
   it("sets default actor and team config from friendly handles and keys", async () => {
@@ -522,7 +540,7 @@ describe("tracker CLI", () => {
     ]);
     expect(filtered.status).toBe(0);
     expect(
-      (JSON.parse(filtered.stdout) as Array<Record<string, unknown>>).map(
+      ((JSON.parse(filtered.stdout) as { issues: Array<Record<string, unknown>> }).issues).map(
         (issue) => issue.identifier
       )
     ).toEqual(["ENG-1"]);
@@ -559,7 +577,7 @@ describe("tracker CLI", () => {
     const started = await tracker(dbPath, ["issue", "list", "--state", "In Progress", "--json"]);
     expect(started.status).toBe(0);
 
-    const records = JSON.parse(started.stdout) as Array<Record<string, unknown>>;
+    const records = (JSON.parse(started.stdout) as { issues: Array<Record<string, unknown>> }).issues;
     expect(records.map((record) => record.identifier)).toEqual(["ENG-1"]);
   });
 
@@ -640,7 +658,7 @@ describe("tracker CLI", () => {
     const filtered = await tracker(dbPath, ["issue", "list", "--priority", "1", "--json"]);
     expect(filtered.status).toBe(0);
 
-    const records = JSON.parse(filtered.stdout) as Array<Record<string, unknown>>;
+    const records = (JSON.parse(filtered.stdout) as { issues: Array<Record<string, unknown>> }).issues;
     expect(records.map((record) => record.identifier)).toEqual(["ENG-1"]);
     expect(records.map((record) => record.priority)).toEqual([1]);
   });
@@ -732,7 +750,7 @@ describe("tracker CLI", () => {
     ]);
     expect(fromView.status).toBe(0);
     expect(
-      (JSON.parse(fromView.stdout) as Array<Record<string, unknown>>).map(
+      ((JSON.parse(fromView.stdout) as { issues: Array<Record<string, unknown>> }).issues).map(
         (issue) => issue.identifier
       )
     ).toEqual(["ENG-1"]);
@@ -748,7 +766,7 @@ describe("tracker CLI", () => {
     ]);
     expect(overridden.status).toBe(0);
     expect(
-      (JSON.parse(overridden.stdout) as Array<Record<string, unknown>>).map(
+      ((JSON.parse(overridden.stdout) as { issues: Array<Record<string, unknown>> }).issues).map(
         (issue) => issue.identifier
       )
     ).toEqual(["ENG-2"]);
@@ -946,9 +964,9 @@ describe("tracker CLI", () => {
     ).toBe(0);
     expect((await tracker(dbPath, ["issue", "archive", "ENG-3"])).status).toBe(0);
 
-    const searched = await tracker(dbPath, ["issue", "search", "LOGIN", "--json"]);
+    const searched = await tracker(dbPath, ["issue", "search", "LOGIN", "--fields", "archivedAt", "--json"]);
     expect(searched.status).toBe(0);
-    const records = JSON.parse(searched.stdout) as Array<Record<string, unknown>>;
+    const records = (JSON.parse(searched.stdout) as { issues: Array<Record<string, unknown>> }).issues;
     expect(records.map((record) => record.identifier)).toEqual(["ENG-1", "ENG-2", "OPS-1"]);
     expect(records.map((record) => record.archivedAt)).toEqual([null, null, null]);
 
@@ -962,7 +980,7 @@ describe("tracker CLI", () => {
     ]);
     expect(operations.status).toBe(0);
     expect(
-      (JSON.parse(operations.stdout) as Array<Record<string, unknown>>).map(
+      ((JSON.parse(operations.stdout) as { issues: Array<Record<string, unknown>> }).issues).map(
         (record) => record.identifier
       )
     ).toEqual(["OPS-1"]);
@@ -970,7 +988,7 @@ describe("tracker CLI", () => {
     const limited = await tracker(dbPath, ["issue", "search", "login", "--limit", "2", "--json"]);
     expect(limited.status).toBe(0);
     expect(
-      (JSON.parse(limited.stdout) as Array<Record<string, unknown>>).map(
+      ((JSON.parse(limited.stdout) as { issues: Array<Record<string, unknown>> }).issues).map(
         (record) => record.identifier
       )
     ).toEqual(["ENG-1", "ENG-2"]);
@@ -997,7 +1015,7 @@ describe("tracker CLI", () => {
     const visible = await tracker(dbPath, ["issue", "list", "--json"]);
     expect(visible.status).toBe(0);
     expect(
-      (JSON.parse(visible.stdout) as Array<Record<string, unknown>>).map(
+      ((JSON.parse(visible.stdout) as { issues: Array<Record<string, unknown>> }).issues).map(
         (issue) => issue.identifier
       )
     ).toEqual(["ENG-2"]);
@@ -1005,7 +1023,7 @@ describe("tracker CLI", () => {
     const all = await tracker(dbPath, ["issue", "list", "--include-archived", "--json"]);
     expect(all.status).toBe(0);
     expect(
-      (JSON.parse(all.stdout) as Array<Record<string, unknown>>).map(
+      ((JSON.parse(all.stdout) as { issues: Array<Record<string, unknown>> }).issues).map(
         (issue) => issue.identifier
       )
     ).toEqual(["ENG-1", "ENG-2"]);
@@ -1027,7 +1045,7 @@ describe("tracker CLI", () => {
     const visibleAgain = await tracker(dbPath, ["issue", "list", "--json"]);
     expect(visibleAgain.status).toBe(0);
     expect(
-      (JSON.parse(visibleAgain.stdout) as Array<Record<string, unknown>>).map(
+      ((JSON.parse(visibleAgain.stdout) as { issues: Array<Record<string, unknown>> }).issues).map(
         (issue) => issue.identifier
       )
     ).toEqual(["ENG-1", "ENG-2"]);
@@ -1630,7 +1648,7 @@ describe("tracker CLI", () => {
 
     const filtered = await tracker(dbPath, ["issue", "list", "--label", "Bug", "--json"]);
     expect(filtered.status).toBe(0);
-    expect((JSON.parse(filtered.stdout) as Array<Record<string, unknown>>).map((issue) => issue.identifier)).toEqual([
+    expect(((JSON.parse(filtered.stdout) as { issues: Array<Record<string, unknown>> }).issues).map((issue) => issue.identifier)).toEqual([
       "ENG-1"
     ]);
 
@@ -1773,7 +1791,7 @@ describe("tracker CLI", () => {
     const filteredByNumber = await tracker(dbPath, ["issue", "list", "--cycle", "1", "--json"]);
     expect(filteredByNumber.status).toBe(0);
     expect(
-      (JSON.parse(filteredByNumber.stdout) as Array<Record<string, unknown>>).map(
+      ((JSON.parse(filteredByNumber.stdout) as { issues: Array<Record<string, unknown>> }).issues).map(
         (issue) => issue.identifier
       )
     ).toEqual(["ENG-1"]);
@@ -1787,7 +1805,7 @@ describe("tracker CLI", () => {
     ]);
     expect(filteredById.status).toBe(0);
     expect(
-      (JSON.parse(filteredById.stdout) as Array<Record<string, unknown>>).map(
+      ((JSON.parse(filteredById.stdout) as { issues: Array<Record<string, unknown>> }).issues).map(
         (issue) => issue.identifier
       )
     ).toEqual(["ENG-2"]);
