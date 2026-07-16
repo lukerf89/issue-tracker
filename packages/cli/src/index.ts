@@ -57,9 +57,13 @@ import {
   listLabels,
   listLabelsInputSchema,
   listIssueFiltersSchema,
+  listIssuesWithView,
+  listIssuesWithViewInputSchema,
   listIssuesPageWithView,
   listIssuesPageWithViewInputSchema,
+  searchIssues,
   searchIssuesPage,
+  searchInputSchema,
   searchPageInputSchema,
   listProjectsInputSchema,
   listProjects,
@@ -102,8 +106,10 @@ import {
   type CreateTemplateInput,
   type ImportSnapshotSummary,
   type ListActivitySinceInput,
+  type ListIssuesWithViewInput,
   type ListIssuesPageWithViewInput,
   type ListIssueFilters,
+  type SearchIssuesInput,
   type UpdateIssueInput,
   type UpdateProjectInput
 } from "@issue-tracker/core";
@@ -124,6 +130,7 @@ import {
   printCycles,
   printIssue,
   printIssuePage,
+  printIssues,
   printJson,
   printLabel,
   printLabels,
@@ -548,9 +555,17 @@ export function createProgram(): Command {
     .action((_options, command) =>
       withContext(command, { requireActor: false }, (cli) => {
         const options = optionsWithGlobals(command);
-        printIssuePage(
+        if (options.json) {
+          printIssuePage(
+            cli.context,
+            listIssuesPageWithView(cli.context, issueListPageInput(options, cli.defaultTeam)),
+            options
+          );
+          return;
+        }
+        printIssues(
           cli.context,
-          listIssuesPageWithView(cli.context, issueListPageInput(options, cli.defaultTeam)),
+          listIssuesWithView(cli.context, issueListInput(options, cli.defaultTeam)),
           options
         );
       })
@@ -566,10 +581,18 @@ export function createProgram(): Command {
     .action((query, _options, command) =>
       withContext(command, { requireActor: false }, (cli) => {
         const options = optionsWithGlobals(command);
-        const { cursor, fields, ...rest } = issueSearchPageInput(query, options, cli.defaultTeam);
-        printIssuePage(
+        if (options.json) {
+          const { cursor, fields, ...rest } = issueSearchPageInput(query, options, cli.defaultTeam);
+          printIssuePage(
+            cli.context,
+            searchIssuesPage(cli.context, rest, { cursor, fields }),
+            options
+          );
+          return;
+        }
+        printIssues(
           cli.context,
-          searchIssuesPage(cli.context, rest, { cursor, fields }),
+          searchIssues(cli.context, issueSearchInput(query, options, cli.defaultTeam)),
           options
         );
       })
@@ -1144,6 +1167,16 @@ function issueListFilters(options: Record<string, unknown>, defaultTeam?: string
   }));
 }
 
+function issueListInput(
+  options: Record<string, unknown>,
+  defaultTeam?: string
+): ListIssuesWithViewInput {
+  return listIssuesWithViewInputSchema.parse(omitUndefined({
+    view: stringOption(options.view),
+    filters: issueListFilters(options, defaultTeam)
+  }));
+}
+
 function issueListPageInput(
   options: Record<string, unknown>,
   defaultTeam?: string
@@ -1181,6 +1214,18 @@ function templateCreateInput(
     team: stringOption(options.team) ?? defaultTeam,
     project: nullableStringOption(options.project),
     labels: stringArrayOption(options.label)
+  }));
+}
+
+function issueSearchInput(
+  query: string,
+  options: Record<string, unknown>,
+  defaultTeam?: string
+): SearchIssuesInput {
+  return searchInputSchema.parse(omitUndefined({
+    query,
+    team: stringOption(options.team) ?? defaultTeam,
+    limit: numberOption(options.limit)
   }));
 }
 
