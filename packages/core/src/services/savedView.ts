@@ -5,7 +5,7 @@ import { savedViews, type SavedView } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { uuid } from "../ids.js";
 import { listIssueFiltersSchema } from "../schemas/issue.js";
-import { listIssues, type IssueWithDetails, type ListIssueFilters } from "./issue.js";
+import { listIssues, listIssuesPage, type IssuePage, type IssuePageOptions, type IssueWithDetails, type ListIssueFilters } from "./issue.js";
 
 export interface CreateSavedViewInput {
   name: string;
@@ -98,6 +98,22 @@ export function listIssuesWithView(
   input: ListIssuesWithViewInput = {}
 ): IssueWithDetails[] {
   return listIssues(context, resolveIssueListFilters(context, input));
+}
+
+export interface ListIssuesPageWithViewInput extends IssuePageOptions {
+  view?: string;
+  filters?: ListIssueFilters;
+}
+
+export function listIssuesPageWithView(
+  context: ServiceContext,
+  input: ListIssuesPageWithViewInput = {}
+): IssuePage {
+  const filters = resolveIssueListFilters(context, {
+    view: input.view,
+    filters: input.filters
+  });
+  return listIssuesPage(context, filters, { cursor: input.cursor, fields: input.fields });
 }
 
 function getSavedViewById(context: ServiceContext, id: string): SavedViewWithFilters {

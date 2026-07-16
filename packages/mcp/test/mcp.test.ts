@@ -131,9 +131,9 @@ describe("MCP server", () => {
         title: "Retire duplicate task"
       });
 
-      const beforeArchive = (await callJsonTool(client, "list_issues", {})) as unknown as Array<
-        Record<string, unknown>
-      >;
+      const beforeArchive = ((await callJsonTool(client, "list_issues", {})) as unknown as {
+        issues: Array<Record<string, unknown>>;
+      }).issues;
       expect(beforeArchive.map((issue) => issue.identifier)).toEqual([created.identifier]);
 
       const archived = await callJsonTool(client, "archive_issue", {
@@ -147,14 +147,14 @@ describe("MCP server", () => {
       });
       expect(archived.archivedAt).not.toBeNull();
 
-      const defaultList = (await callJsonTool(client, "list_issues", {})) as unknown as Array<
-        Record<string, unknown>
-      >;
+      const defaultList = ((await callJsonTool(client, "list_issues", {})) as unknown as {
+        issues: Array<Record<string, unknown>>;
+      }).issues;
       expect(defaultList).toEqual([]);
 
-      const includeArchived = (await callJsonTool(client, "list_issues", {
+      const includeArchived = ((await callJsonTool(client, "list_issues", {
         includeArchived: true
-      })) as unknown as Array<Record<string, unknown>>;
+      })) as unknown as { issues: Array<Record<string, unknown>> }).issues;
       expect(includeArchived.map((issue) => issue.identifier)).toEqual([created.identifier]);
 
       const fetched = await callJsonTool(client, "get_issue", {
@@ -196,9 +196,9 @@ describe("MCP server", () => {
         identifier: created.identifier
       });
 
-      const archivedList = (await callJsonTool(client, "list_issues", {})) as unknown as Array<
-        Record<string, unknown>
-      >;
+      const archivedList = ((await callJsonTool(client, "list_issues", {})) as unknown as {
+        issues: Array<Record<string, unknown>>;
+      }).issues;
       expect(archivedList).toEqual([]);
 
       const unarchived = await callJsonTool(client, "unarchive_issue", {
@@ -211,9 +211,9 @@ describe("MCP server", () => {
         archivedAt: null
       });
 
-      const visibleAgain = (await callJsonTool(client, "list_issues", {})) as unknown as Array<
-        Record<string, unknown>
-      >;
+      const visibleAgain = ((await callJsonTool(client, "list_issues", {})) as unknown as {
+        issues: Array<Record<string, unknown>>;
+      }).issues;
       expect(visibleAgain.map((issue) => issue.identifier)).toEqual([created.identifier]);
 
       const fetched = await callJsonTool(client, "get_issue", {
@@ -339,7 +339,9 @@ describe("MCP server", () => {
       ]);
 
       expect(
-        (listed as unknown as Array<Record<string, unknown>>).map((issue) => issue.identifier)
+        ((listed as unknown as { issues: Array<Record<string, unknown>> }).issues).map(
+          (issue) => issue.identifier
+        )
       ).toEqual(["ENG-1", "ENG-2"]);
       expect(`${JSON.stringify(listed)}\n`).toBe(cliOutput);
     } finally {
@@ -525,15 +527,15 @@ describe("MCP server", () => {
         description: "High-priority bug queue"
       });
 
-      const fromView = (await callJsonTool(client, "list_issues", {
+      const fromView = ((await callJsonTool(client, "list_issues", {
         view: "Priority bugs"
-      })) as unknown as Array<{ identifier: string }>;
+      })) as unknown as { issues: Array<{ identifier: string }> }).issues;
       expect(fromView.map((issue) => issue.identifier)).toEqual(["ENG-1"]);
 
-      const overridden = (await callJsonTool(client, "list_issues", {
+      const overridden = ((await callJsonTool(client, "list_issues", {
         view: "Priority bugs",
         priority: 2
-      })) as unknown as Array<{ identifier: string }>;
+      })) as unknown as { issues: Array<{ identifier: string }> }).issues;
       expect(overridden.map((issue) => issue.identifier)).toEqual(["ENG-2"]);
 
       const deleted = await callJsonTool(client, "delete_saved_view", {
@@ -709,7 +711,9 @@ describe("MCP server", () => {
       const backlogJson = jsonTextFromResource(backlogResource, "backlog://ENG");
       expect(backlogJson).toBe(JSON.stringify(backlogToolJson));
       expect(
-        (JSON.parse(backlogJson) as Array<{ identifier: string }>).map((issue) => issue.identifier)
+        ((JSON.parse(backlogJson) as { issues: Array<{ identifier: string }> }).issues).map(
+          (issue) => issue.identifier
+        )
       ).toEqual(["ENG-1"]);
 
       await expect(client.readResource({ uri: "issue://ENG-404" })).rejects.toMatchObject({
@@ -734,9 +738,11 @@ describe("MCP server", () => {
 
     try {
       const filter = { query: "login", team: "ENG", limit: 2 };
-      const searched = (await callJsonTool(client, "search", filter)) as unknown as Array<
-        Record<string, unknown>
-      >;
+      const searchedEnvelope = (await callJsonTool(client, "search", filter)) as unknown as {
+        issues: Array<Record<string, unknown>>;
+        nextCursor: string | null;
+      };
+      const searched = searchedEnvelope.issues;
       const cliOutput = tracker(dbPath, [
         "issue",
         "search",
@@ -749,11 +755,11 @@ describe("MCP server", () => {
       ]);
 
       expect(searched.map((issue) => issue.identifier)).toEqual(["ENG-1", "ENG-2"]);
-      expect(`${JSON.stringify(searched)}\n`).toBe(cliOutput);
+      expect(`${JSON.stringify(searchedEnvelope)}\n`).toBe(cliOutput);
 
-      const all = (await callJsonTool(client, "search", {
+      const all = ((await callJsonTool(client, "search", {
         query: "LOGIN"
-      })) as unknown as Array<Record<string, unknown>>;
+      })) as unknown as { issues: Array<Record<string, unknown>> }).issues;
       expect(all.map((issue) => issue.identifier)).toEqual(["ENG-1", "ENG-2", "OPS-1"]);
     } finally {
       await client.close();
@@ -943,9 +949,9 @@ describe("MCP server", () => {
         assigneeId: buildAgentId
       });
 
-      const filtered = (await callJsonTool(client, "list_issues", {
+      const filtered = ((await callJsonTool(client, "list_issues", {
         assignee: "build-agent"
-      })) as unknown as Array<Record<string, unknown>>;
+      })) as unknown as { issues: Array<Record<string, unknown>> }).issues;
       expect(filtered.map((issue) => issue.identifier)).toEqual(["ENG-1"]);
 
       const cleared = await callJsonTool(client, "assign_issue", {
@@ -1053,9 +1059,9 @@ describe("MCP server", () => {
         "Docs"
       ]);
 
-      const filtered = (await callJsonTool(client, "list_issues", {
+      const filtered = ((await callJsonTool(client, "list_issues", {
         label: "Docs"
-      })) as unknown as Array<Record<string, unknown>>;
+      })) as unknown as { issues: Array<Record<string, unknown>> }).issues;
       expect(filtered.map((issue) => issue.identifier)).toEqual(["ENG-1"]);
     } finally {
       await client.close();
@@ -1096,9 +1102,9 @@ describe("MCP server", () => {
         cycleId: secondCycleId
       });
 
-      const filtered = (await callJsonTool(client, "list_issues", {
+      const filtered = ((await callJsonTool(client, "list_issues", {
         cycle: 2
-      })) as unknown as Array<Record<string, unknown>>;
+      })) as unknown as { issues: Array<Record<string, unknown>> }).issues;
       expect(filtered.map((issue) => issue.identifier)).toEqual(["ENG-1"]);
     } finally {
       await client.close();

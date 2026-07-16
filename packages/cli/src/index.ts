@@ -59,6 +59,12 @@ import {
   listIssueFiltersSchema,
   listIssuesWithView,
   listIssuesWithViewInputSchema,
+  listIssuesPageWithView,
+  listIssuesPageWithViewInputSchema,
+  searchIssues,
+  searchIssuesPage,
+  searchInputSchema,
+  searchPageInputSchema,
   listProjectsInputSchema,
   listProjects,
   listSavedViews,
@@ -71,8 +77,6 @@ import {
   projectStatusSchema,
   moveIssue,
   resolveBackupPath,
-  searchInputSchema,
-  searchIssues,
   setConfig,
   type ServiceContext,
   unarchiveIssue,
@@ -103,6 +107,7 @@ import {
   type ImportSnapshotSummary,
   type ListActivitySinceInput,
   type ListIssuesWithViewInput,
+  type ListIssuesPageWithViewInput,
   type ListIssueFilters,
   type SearchIssuesInput,
   type UpdateIssueInput,
@@ -124,6 +129,7 @@ import {
   printCycle,
   printCycles,
   printIssue,
+  printIssuePage,
   printIssues,
   printJson,
   printLabel,
@@ -541,12 +547,23 @@ export function createProgram(): Command {
     .option("--label <label>", "label name")
     .option("--priority <number>", "priority", parseInteger)
     .option("--team <key>", "team key")
-    .option("--limit <number>", "maximum number of issues", parseInteger)
+    .option("--limit <number>", "maximum number of issues per page", parseInteger)
+    .option("--cursor <cursor>", "pagination cursor from a prior page")
+    .option("--fields <list>", "comma-separated extra fields to project")
     .option("--include-archived", "include archived issues")
     .option("--json", "print JSON output")
     .action((_options, command) =>
       withContext(command, { requireActor: false }, (cli) => {
         const options = optionsWithGlobals(command);
+        if (options.json) {
+          printIssuePage(
+            cli.context,
+            listIssuesPageWithView(cli.context, issueListPageInput(options, cli.defaultTeam)),
+            options
+          );
+          return;
+        }
+        requireJsonForPagination(options);
         printIssues(
           cli.context,
           listIssuesWithView(cli.context, issueListInput(options, cli.defaultTeam)),
@@ -558,11 +575,23 @@ export function createProgram(): Command {
     .command("search")
     .argument("<query>")
     .option("--team <key>", "team key")
-    .option("--limit <number>", "maximum number of issues", parseInteger)
+    .option("--limit <number>", "maximum number of issues per page", parseInteger)
+    .option("--cursor <cursor>", "pagination cursor from a prior page")
+    .option("--fields <list>", "comma-separated extra fields to project")
     .option("--json", "print JSON output")
     .action((query, _options, command) =>
       withContext(command, { requireActor: false }, (cli) => {
         const options = optionsWithGlobals(command);
+        if (options.json) {
+          const { cursor, fields, ...rest } = issueSearchPageInput(query, options, cli.defaultTeam);
+          printIssuePage(
+            cli.context,
+            searchIssuesPage(cli.context, rest, { cursor, fields }),
+            options
+          );
+          return;
+        }
+        requireJsonForPagination(options);
         printIssues(
           cli.context,
           searchIssues(cli.context, issueSearchInput(query, options, cli.defaultTeam)),
@@ -1140,6 +1169,18 @@ function issueListFilters(options: Record<string, unknown>, defaultTeam?: string
   }));
 }
 
+// --cursor/--fields only shape the --json page envelope; the human table path
+// is full and unpaged, so silently ignoring them would mislead. Fail loudly,
+// mirroring the existing `export requires --json` guard.
+function requireJsonForPagination(options: Record<string, unknown>): void {
+  if (stringOption(options.cursor) !== undefined) {
+    throw new InvalidArgumentError("--cursor requires --json");
+  }
+  if (stringOption(options.fields) !== undefined) {
+    throw new InvalidArgumentError("--fields requires --json");
+  }
+}
+
 function issueListInput(
   options: Record<string, unknown>,
   defaultTeam?: string
@@ -1147,6 +1188,18 @@ function issueListInput(
   return listIssuesWithViewInputSchema.parse(omitUndefined({
     view: stringOption(options.view),
     filters: issueListFilters(options, defaultTeam)
+  }));
+}
+
+function issueListPageInput(
+  options: Record<string, unknown>,
+  defaultTeam?: string
+): ListIssuesPageWithViewInput {
+  return listIssuesPageWithViewInputSchema.parse(omitUndefined({
+    view: stringOption(options.view),
+    filters: issueListFilters(options, defaultTeam),
+    cursor: stringOption(options.cursor),
+    fields: fieldsOption(options.fields)
   }));
 }
 
@@ -1188,6 +1241,29 @@ function issueSearchInput(
     team: stringOption(options.team) ?? defaultTeam,
     limit: numberOption(options.limit)
   }));
+}
+
+function issueSearchPageInput(
+  query: string,
+  options: Record<string, unknown>,
+  defaultTeam?: string
+) {
+  return searchPageInputSchema.parse(omitUndefined({
+    query,
+    team: stringOption(options.team) ?? defaultTeam,
+    limit: numberOption(options.limit),
+    cursor: stringOption(options.cursor),
+    fields: fieldsOption(options.fields)
+  }));
+}
+
+function fieldsOption(value: unknown): string[] | undefined {
+  const raw = stringOption(value);
+  if (raw === undefined) {
+    return undefined;
+  }
+  const parts = raw.split(",").map((part) => part.trim()).filter((part) => part.length > 0);
+  return parts.length > 0 ? parts : undefined;
 }
 
 function issueUpdateInput(options: Record<string, unknown>): UpdateIssueInput {

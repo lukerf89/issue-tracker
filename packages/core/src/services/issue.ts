@@ -63,6 +63,76 @@ export interface SearchIssuesInput extends ListIssueFilters {
   query: string;
 }
 
+// Scalar fields always present in a compact issue summary.
+export const ISSUE_SUMMARY_FIELDS = [
+  "identifier",
+  "title",
+  "stateId",
+  "priority",
+  "assigneeId",
+  "updatedAt"
+] as const;
+
+// Extra fields a caller may opt into via `fields`. Deliberately excludes
+// `comments` and `attachments` — those are full-fidelity only via get_issue.
+export const ISSUE_PROJECTABLE_FIELDS = [
+  "description",
+  "labels",
+  "parent",
+  "children",
+  "blockedBy",
+  "blocks",
+  "stateId",
+  "priority",
+  "assigneeId",
+  "updatedAt",
+  "createdAt",
+  "projectId",
+  "cycleId",
+  "dueDate",
+  "estimate",
+  "sortOrder",
+  "teamId",
+  "number",
+  "id",
+  "creatorId",
+  "parentId",
+  "startedAt",
+  "completedAt",
+  "canceledAt",
+  "archivedAt"
+] as const;
+
+// Projectable fields whose values require the expensive per-issue detail load.
+const ISSUE_RELATION_FIELDS = new Set([
+  "labels",
+  "parent",
+  "children",
+  "blockedBy",
+  "blocks"
+]);
+
+export type IssueProjectionField = (typeof ISSUE_PROJECTABLE_FIELDS)[number];
+
+export const DEFAULT_ISSUE_PAGE_SIZE = 50;
+export const MAX_ISSUE_PAGE_SIZE = 250;
+
+export interface IssuePageOptions {
+  cursor?: string | number;
+  fields?: IssueProjectionField[];
+}
+
+export interface IssuePageRow {
+  issue: Issue | IssueWithDetails;
+  fields?: IssueProjectionField[];
+}
+
+export interface IssuePage {
+  rows: IssuePageRow[];
+  nextCursor: string | null;
+  fields?: IssueProjectionField[];
+}
+
 export interface UpdateIssueInput {
   title?: string;
   description?: string | null;
@@ -244,6 +314,91 @@ export function searchIssues(context: ServiceContext, input: SearchIssuesInput) 
     .limit(input.limit ?? -1)
     .all()
     .map(({ issue }) => withIssueDetails(context, issue));
+}
+
+export function decodeIssueCursor(cursor: string | number | undefined): number {
+  if (cursor === undefined) {
+    return 0;
+  }
+
+  const offset = typeof cursor === "number" ? cursor : Number.parseInt(cursor, 10);
+
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new AppError(AppErrorCode.VALIDATION_FAILED, `Invalid cursor: ${cursor}`, { cursor });
+  }
+
+  return offset;
+}
+
+function resolvePageSize(limit: number | undefined): number {
+  const requested = limit ?? DEFAULT_ISSUE_PAGE_SIZE;
+  return Math.max(1, Math.min(requested, MAX_ISSUE_PAGE_SIZE));
+}
+
+function needsIssueDetails(fields: IssueProjectionField[] | undefined): boolean {
+  return (fields ?? []).some((field) => ISSUE_RELATION_FIELDS.has(field));
+}
+
+function paginateIssueRows(
+  context: ServiceContext,
+  baseConditions: SQL[],
+  options: IssuePageOptions & { limit?: number }
+): IssuePage {
+  const offset = decodeIssueCursor(options.cursor);
+  const pageSize = resolvePageSize(options.limit);
+  const detailed = needsIssueDetails(options.fields);
+
+  const rows = context.db
+    .select({ issue: issues })
+    .from(issues)
+    .innerJoin(teams, eq(teams.id, issues.teamId))
+    .where(baseConditions.length ? and(...baseConditions) : undefined)
+    .orderBy(asc(teams.key), asc(issues.number), asc(issues.id))
+    .limit(pageSize + 1)
+    .offset(offset)
+    .all();
+
+  const hasMore = rows.length > pageSize;
+  const pageRows = hasMore ? rows.slice(0, pageSize) : rows;
+
+  return {
+    rows: pageRows.map(({ issue }) => ({
+      issue: detailed ? withIssueDetails(context, issue) : issue,
+      fields: options.fields
+    })),
+    nextCursor: hasMore ? String(offset + pageSize) : null,
+    fields: options.fields
+  };
+}
+
+export function listIssuesPage(
+  context: ServiceContext,
+  filters: ListIssueFilters = {},
+  options: IssuePageOptions = {}
+): IssuePage {
+  const conditions = issueFilterConditions(context, filters);
+
+  if (conditions === null) {
+    return { rows: [], nextCursor: null, fields: options.fields };
+  }
+
+  return paginateIssueRows(context, conditions, { ...options, limit: filters.limit });
+}
+
+export function searchIssuesPage(
+  context: ServiceContext,
+  input: SearchIssuesInput,
+  options: IssuePageOptions = {}
+): IssuePage {
+  const filterConditions = issueFilterConditions(context, input);
+
+  if (filterConditions === null) {
+    return { rows: [], nextCursor: null, fields: options.fields };
+  }
+
+  const conditions: SQL[] = [...filterConditions, textSearchCondition(input.query)];
+
+  return paginateIssueRows(context, conditions, { ...options, limit: input.limit });
 }
 
 function issueFilterConditions(
