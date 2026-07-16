@@ -10,6 +10,7 @@ import {
   serializeComment,
   serializeCycle,
   serializeIssue,
+  serializeIssueSummary,
   serializeLabel,
   serializeProject,
   serializeSavedView,
@@ -22,6 +23,7 @@ import {
   type CommentWithAuthor,
   type Cycle,
   type Issue,
+  type IssuePage,
   type IssueReference,
   type Label,
   type Project,
@@ -294,6 +296,25 @@ export function printIssues(
   }
 
   printIssueTable(issues.map((issue) => issueRow(context, issue)));
+}
+
+export function printIssuePage(
+  context: ServiceContext,
+  page: IssuePage,
+  options: OutputOptions
+): void {
+  if (options.json) {
+    printJson({
+      issues: page.rows.map((row) => serializeIssueSummary(row.issue, row.fields)),
+      nextCursor: page.nextCursor
+    });
+    return;
+  }
+
+  printIssueTable(page.rows.map((row) => issueRow(context, row.issue as Issue)));
+  if (page.nextCursor !== null) {
+    process.stdout.write(pc.dim(`\nnext cursor: ${page.nextCursor}`) + "\n");
+  }
 }
 
 export function handleCliError(error: unknown): number {

@@ -2,8 +2,9 @@ import {
   AppErrorCode,
   errorEnvelope,
   getIssue,
-  listIssues,
-  serializeIssue
+  listIssuesPage,
+  serializeIssue,
+  serializeIssueSummary
 } from "@issue-tracker/core";
 import { ResourceTemplate, type McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
@@ -41,9 +42,13 @@ export function registerIssueResources(
     },
     (uri) =>
       jsonResource(uri, () =>
-        withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-          listIssues(context, { team: authoritySegment(uri) }).map(serializeIssue)
-        )
+        withMcpContext({ ...options, requireActor: false }, ({ context }) => {
+          const page = listIssuesPage(context, { team: authoritySegment(uri) });
+          return {
+            issues: page.rows.map((row) => serializeIssueSummary(row.issue, row.fields)),
+            nextCursor: page.nextCursor
+          };
+        })
       )
   );
 }

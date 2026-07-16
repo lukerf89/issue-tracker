@@ -14,16 +14,17 @@ import {
   listActivityInputSchema,
   linkIssueInputSchema,
   linkIssueToolInputSchema,
-  listIssuesWithView,
-  listIssuesWithViewToolInputSchema,
+  listIssuesPageWithView,
+  listIssuesPageWithViewToolInputSchema,
+  searchIssuesPage,
+  searchPageInputSchema,
   moveIssue,
   moveIssueInputSchema,
-  searchInputSchema,
-  searchIssues,
   serializeActivity,
   serializeAttachment,
   serializeComment,
   serializeIssue,
+  serializeIssueSummary,
   unarchiveIssue,
   unarchiveIssueInputSchema,
   updateIssue,
@@ -42,14 +43,24 @@ export function registerIssueTools(
     "list_issues",
     {
       title: "List issues",
-      description: "Query issues with optional filters.",
-      inputSchema: listIssuesWithViewToolInputSchema.shape
+      description:
+        "Query issues with optional filters. Returns a compact summary page " +
+        "({issues, nextCursor}); each issue carries identifier, title, stateId, " +
+        "priority, assigneeId, updatedAt. Use `fields` to project extra columns " +
+        "(e.g. description, labels), `limit`/`cursor` to paginate, and get_issue " +
+        "for full fidelity incl. comments/attachments.",
+      inputSchema: listIssuesPageWithViewToolInputSchema.shape
     },
     (input) => mcpToolResult(() => {
-      const { view, ...filters } = listIssuesWithViewToolInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(listIssuesWithView(context, { view, filters }).map(serializeIssue))
-      );
+      const { view, cursor, fields, ...filters } =
+        listIssuesPageWithViewToolInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: false }, ({ context }) => {
+        const page = listIssuesPageWithView(context, { view, filters, cursor, fields });
+        return jsonResult({
+          issues: page.rows.map((row) => serializeIssueSummary(row.issue, row.fields)),
+          nextCursor: page.nextCursor
+        });
+      });
     })
   );
 
@@ -57,14 +68,21 @@ export function registerIssueTools(
     "search",
     {
       title: "Search issues",
-      description: "Search issues by title or description text.",
-      inputSchema: searchInputSchema.shape
+      description:
+        "Search issues by title or description text. Returns a compact summary " +
+        "page ({issues, nextCursor}); use `fields` to project extra columns and " +
+        "`limit`/`cursor` to paginate.",
+      inputSchema: searchPageInputSchema.shape
     },
     (input) => mcpToolResult(() => {
-      const parsed = searchInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(searchIssues(context, parsed).map(serializeIssue))
-      );
+      const { cursor, fields, ...rest } = searchPageInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: false }, ({ context }) => {
+        const page = searchIssuesPage(context, rest, { cursor, fields });
+        return jsonResult({
+          issues: page.rows.map((row) => serializeIssueSummary(row.issue, row.fields)),
+          nextCursor: page.nextCursor
+        });
+      });
     })
   );
 

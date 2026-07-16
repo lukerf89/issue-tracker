@@ -57,8 +57,10 @@ import {
   listLabels,
   listLabelsInputSchema,
   listIssueFiltersSchema,
-  listIssuesWithView,
-  listIssuesWithViewInputSchema,
+  listIssuesPageWithView,
+  listIssuesPageWithViewInputSchema,
+  searchIssuesPage,
+  searchPageInputSchema,
   listProjectsInputSchema,
   listProjects,
   listSavedViews,
@@ -71,8 +73,6 @@ import {
   projectStatusSchema,
   moveIssue,
   resolveBackupPath,
-  searchInputSchema,
-  searchIssues,
   setConfig,
   type ServiceContext,
   unarchiveIssue,
@@ -102,9 +102,8 @@ import {
   type CreateTemplateInput,
   type ImportSnapshotSummary,
   type ListActivitySinceInput,
-  type ListIssuesWithViewInput,
+  type ListIssuesPageWithViewInput,
   type ListIssueFilters,
-  type SearchIssuesInput,
   type UpdateIssueInput,
   type UpdateProjectInput
 } from "@issue-tracker/core";
@@ -124,7 +123,7 @@ import {
   printCycle,
   printCycles,
   printIssue,
-  printIssues,
+  printIssuePage,
   printJson,
   printLabel,
   printLabels,
@@ -541,15 +540,17 @@ export function createProgram(): Command {
     .option("--label <label>", "label name")
     .option("--priority <number>", "priority", parseInteger)
     .option("--team <key>", "team key")
-    .option("--limit <number>", "maximum number of issues", parseInteger)
+    .option("--limit <number>", "maximum number of issues per page", parseInteger)
+    .option("--cursor <cursor>", "pagination cursor from a prior page")
+    .option("--fields <list>", "comma-separated extra fields to project")
     .option("--include-archived", "include archived issues")
     .option("--json", "print JSON output")
     .action((_options, command) =>
       withContext(command, { requireActor: false }, (cli) => {
         const options = optionsWithGlobals(command);
-        printIssues(
+        printIssuePage(
           cli.context,
-          listIssuesWithView(cli.context, issueListInput(options, cli.defaultTeam)),
+          listIssuesPageWithView(cli.context, issueListPageInput(options, cli.defaultTeam)),
           options
         );
       })
@@ -558,14 +559,17 @@ export function createProgram(): Command {
     .command("search")
     .argument("<query>")
     .option("--team <key>", "team key")
-    .option("--limit <number>", "maximum number of issues", parseInteger)
+    .option("--limit <number>", "maximum number of issues per page", parseInteger)
+    .option("--cursor <cursor>", "pagination cursor from a prior page")
+    .option("--fields <list>", "comma-separated extra fields to project")
     .option("--json", "print JSON output")
     .action((query, _options, command) =>
       withContext(command, { requireActor: false }, (cli) => {
         const options = optionsWithGlobals(command);
-        printIssues(
+        const { cursor, fields, ...rest } = issueSearchPageInput(query, options, cli.defaultTeam);
+        printIssuePage(
           cli.context,
-          searchIssues(cli.context, issueSearchInput(query, options, cli.defaultTeam)),
+          searchIssuesPage(cli.context, rest, { cursor, fields }),
           options
         );
       })
@@ -1140,13 +1144,15 @@ function issueListFilters(options: Record<string, unknown>, defaultTeam?: string
   }));
 }
 
-function issueListInput(
+function issueListPageInput(
   options: Record<string, unknown>,
   defaultTeam?: string
-): ListIssuesWithViewInput {
-  return listIssuesWithViewInputSchema.parse(omitUndefined({
+): ListIssuesPageWithViewInput {
+  return listIssuesPageWithViewInputSchema.parse(omitUndefined({
     view: stringOption(options.view),
-    filters: issueListFilters(options, defaultTeam)
+    filters: issueListFilters(options, defaultTeam),
+    cursor: stringOption(options.cursor),
+    fields: fieldsOption(options.fields)
   }));
 }
 
@@ -1178,16 +1184,27 @@ function templateCreateInput(
   }));
 }
 
-function issueSearchInput(
+function issueSearchPageInput(
   query: string,
   options: Record<string, unknown>,
   defaultTeam?: string
-): SearchIssuesInput {
-  return searchInputSchema.parse(omitUndefined({
+) {
+  return searchPageInputSchema.parse(omitUndefined({
     query,
     team: stringOption(options.team) ?? defaultTeam,
-    limit: numberOption(options.limit)
+    limit: numberOption(options.limit),
+    cursor: stringOption(options.cursor),
+    fields: fieldsOption(options.fields)
   }));
+}
+
+function fieldsOption(value: unknown): string[] | undefined {
+  const raw = stringOption(value);
+  if (raw === undefined) {
+    return undefined;
+  }
+  const parts = raw.split(",").map((part) => part.trim()).filter((part) => part.length > 0);
+  return parts.length > 0 ? parts : undefined;
 }
 
 function issueUpdateInput(options: Record<string, unknown>): UpdateIssueInput {
