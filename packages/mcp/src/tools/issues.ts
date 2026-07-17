@@ -69,8 +69,11 @@ export function registerIssueTools(
     {
       title: "Search issues",
       description:
-        "Search issues by title or description text. Returns a compact summary " +
-        "page ({issues, nextCursor}); use `fields` to project extra columns and " +
+        "Search issues by full-text (FTS5) over identifier, title, and " +
+        "description. Returns a compact summary page ({issues, nextCursor}) " +
+        "ranked by bm25 relevance; each issue carries a `snippet` excerpt of " +
+        "the match. Supports prefix and multi-token queries and composes with " +
+        "the standard filters; use `fields` to project extra columns and " +
         "`limit`/`cursor` to paginate.",
       inputSchema: searchPageInputSchema.shape
     },
@@ -79,7 +82,7 @@ export function registerIssueTools(
       return withMcpContext({ ...options, requireActor: false }, ({ context }) => {
         const page = searchIssuesPage(context, rest, { cursor, fields });
         return jsonResult({
-          issues: page.rows.map((row) => serializeIssueSummary(row.issue, row.fields)),
+          issues: page.rows.map((row) => serializeIssueSummary(row.issue, row.fields, row.snippet)),
           nextCursor: page.nextCursor
         });
       });

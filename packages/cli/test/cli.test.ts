@@ -977,8 +977,11 @@ describe("tracker CLI", () => {
     const searched = await tracker(dbPath, ["issue", "search", "LOGIN", "--fields", "archivedAt", "--json"]);
     expect(searched.status).toBe(0);
     const records = (JSON.parse(searched.stdout) as { issues: Array<Record<string, unknown>> }).issues;
-    expect(records.map((record) => record.identifier)).toEqual(["ENG-1", "ENG-2", "OPS-1"]);
+    // bm25-ranked: the title-only match (OPS-1) leads; archived ENG-3 is hidden.
+    expect(records.map((record) => record.identifier)).toEqual(["OPS-1", "ENG-1", "ENG-2"]);
     expect(records.map((record) => record.archivedAt)).toEqual([null, null, null]);
+    // Every search result carries a snippet excerpt.
+    expect(records.every((record) => typeof record.snippet === "string" && (record.snippet as string).length > 0)).toBe(true);
 
     const operations = await tracker(dbPath, [
       "issue",
@@ -1001,7 +1004,7 @@ describe("tracker CLI", () => {
       ((JSON.parse(limited.stdout) as { issues: Array<Record<string, unknown>> }).issues).map(
         (record) => record.identifier
       )
-    ).toEqual(["ENG-1", "ENG-2"]);
+    ).toEqual(["OPS-1", "ENG-1"]);
   });
 
   it("archives issues, hides them from list by default, includes them on request, and still views them", async () => {

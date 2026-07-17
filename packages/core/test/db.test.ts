@@ -27,6 +27,7 @@ const tableNames = [
   "labels",
   "issue_labels",
   "issue_dependencies",
+  "issues_fts",
   "comments",
   "actors",
   "attachments",
@@ -199,6 +200,38 @@ describe("core database foundation", () => {
       db.$client.close();
     }
   });
+
+  it("backfills the FTS index for issues that existed before the 0005 migration", () => {
+    const db = openTempDb();
+
+    try {
+      // Migrate only through 0004 (before the FTS table/triggers exist), then
+      // seed a pre-existing issue with no FTS row.
+      applyMigrations(db, {
+        migrationsFolder: partialMigrationsFolder([
+          "0000_initial",
+          "0001_nebulous_medusa",
+          "0002_puzzling_red_skull",
+          "0003_add_blocked_workflow_state",
+          "0004_add_issue_dependencies"
+        ])
+      });
+      insertIssueFixture(db);
+
+      // Applying the remaining migrations creates the FTS table and backfills it.
+      applyMigrations(db);
+
+      const rows = db.$client
+        .prepare(
+          "select issue_id from issues_fts where issues_fts match ? order by rank"
+        )
+        .all('"set"* "up"*') as Array<{ issue_id: string }>;
+
+      expect(rows.map((row) => row.issue_id)).toEqual(["issue-eng-1"]);
+    } finally {
+      db.$client.close();
+    }
+  });
 });
 
 function openTempDb() {
@@ -336,7 +369,7 @@ function insertTemplateFixture(db: ReturnType<typeof openDb>): void {
 function listUserTables(db: ReturnType<typeof openDb>): string[] {
   const rows = db.$client
     .prepare(
-      "select name from sqlite_master where type = 'table' and name not like 'sqlite_%' order by name"
+      "select name from sqlite_master where type = 'table' and name not like 'sqlite_%' and name not like 'issues_fts_%' order by name"
     )
     .all() as Array<{ name: string }>;
 
@@ -366,13 +399,20 @@ function uniqueColumnSets(db: ReturnType<typeof openDb>, table: string): string[
 }
 
 function preBlockedMigrationsFolder(): string {
+  return partialMigrationsFolder([
+    "0000_initial",
+    "0001_nebulous_medusa",
+    "0002_puzzling_red_skull"
+  ]);
+}
+
+function partialMigrationsFolder(tags: string[]): string {
   const tempDir = mkdtempSync(join(tmpdir(), "issue-tracker-core-migrations-"));
   tempDirs.push(tempDir);
 
   const source = join(dirname(fileURLToPath(import.meta.url)), "../src/migrations");
   const target = join(tempDir, "migrations");
   const targetMeta = join(target, "meta");
-  const tags = ["0000_initial", "0001_nebulous_medusa", "0002_puzzling_red_skull"];
 
   mkdirSync(targetMeta, { recursive: true });
 
