@@ -60,6 +60,7 @@ CREATE TABLE `orchestration_profiles` (
 --> statement-breakpoint
 CREATE UNIQUE INDEX `orchestration_profiles_name_unique` ON `orchestration_profiles` (`name`);--> statement-breakpoint
 CREATE UNIQUE INDEX `orchestration_profiles_one_default` ON `orchestration_profiles` (`is_default`) WHERE "orchestration_profiles"."is_default" = 1 AND "orchestration_profiles"."archived_at" IS NULL;--> statement-breakpoint
+INSERT INTO `orchestration_profiles` (`id`, `name`, `workflow`, `schema_version`, `configuration`, `is_default`, `is_builtin`, `archived_at`, `created_at`, `updated_at`) SELECT 'builtin-issue-delivery', 'issue-delivery', 'issue-delivery', 1, '{"roles":{"orchestrator":"claude-default","planner":"claude-default","implementer":"claude-default","verifier":"claude-default","bindingReviewer":"claude-default","adversarialReviewer":"claude-default"},"reviewDepth":"auto","isolation":"worktree","permissionPolicy":"prompt","fallbackPolicy":"explicit","pushPolicy":"approved","draftPrPolicy":"approved","mergePolicy":"human","maxAddressCycles":2,"stallThresholdMs":300000,"issueStartedState":"__started__","issueReviewState":null}', 1, 1, NULL, '2026-07-18T00:00:00.000Z', '2026-07-18T00:00:00.000Z' WHERE EXISTS (SELECT 1 FROM `teams`);--> statement-breakpoint
 CREATE TABLE `project_repositories` (
 	`project_id` text NOT NULL,
 	`repository_id` text NOT NULL,

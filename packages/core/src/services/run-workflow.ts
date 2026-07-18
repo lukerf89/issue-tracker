@@ -164,9 +164,22 @@ export function completeRunWorkflowInTransaction(txContext: ServiceContext, inpu
     if (input.testsFailed.length > 0) throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "A run with reported test failures cannot succeed.", { testsFailed: input.testsFailed });
     const verificationActions = txContext.db.query.runActions.findMany({ where: and(eq(runActions.runId, run.id), eq(runActions.kind, "verify_commands")), orderBy: [asc(runActions.createdAt), asc(runActions.id)] }).sync().filter((action) => action.state === "completed");
     const verificationAction = verificationActions.at(-1);
-    const verificationResults = verificationAction?.result && typeof verificationAction.result === "object" && Array.isArray((verificationAction.result as { results?: unknown }).results) ? (verificationAction.result as { results: Array<{ verificationId?: unknown; repositoryId?: unknown; commitSha?: unknown; classification?: unknown; exitCode?: unknown }> }).results : [];
+    const verificationResults = verificationAction?.result && typeof verificationAction.result === "object" && Array.isArray((verificationAction.result as { results?: unknown }).results) ? (verificationAction.result as { results: Array<{ verificationId?: unknown; repositoryId?: unknown; commitSha?: unknown; command?: unknown; classification?: unknown; exitCode?: unknown }> }).results : [];
     const expectedVerificationCount = run.repositories.length * 2;
-    if (verificationResults.length !== expectedVerificationCount || verificationResults.some((result) => result.classification !== "clean" || result.exitCode !== 0) || verificationResults[0]?.commitSha !== input.commitSha) throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "Success requires the latest independent test and verification commands to be clean for every repository at the finalized commits.", { commitSha: input.commitSha, expectedVerificationCount, results: verificationResults });
+    const finalize = txContext.db.query.runActions.findMany({ where: and(eq(runActions.runId, run.id), eq(runActions.kind, "finalize")) }).sync().find((action) => action.state === "completed");
+    if (!finalize) throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "Final artifact reconciliation has not completed.");
+    const finalizedRepositories = finalize.result && typeof finalize.result === "object" && Array.isArray((finalize.result as { repositories?: unknown }).repositories)
+      ? (finalize.result as { repositories: Array<{ repositoryId?: unknown; commitSha?: unknown; filesChanged?: unknown; diffSize?: unknown; branch?: unknown }> }).repositories
+      : [];
+    const finalizedByRepository = new Map(finalizedRepositories.map((result) => [result.repositoryId, result]));
+    const primaryFinalized = finalizedByRepository.get(run.primaryRepositoryId);
+    const repositoryCoverageIsExact = finalizedRepositories.length === run.repositories.length && finalizedByRepository.size === run.repositories.length && run.repositories.every((repository) => finalizedByRepository.has(repository.repositoryId));
+    const verificationCoverageIsExact = run.repositories.every((repository) => {
+      const finalized = finalizedByRepository.get(repository.repositoryId);
+      const results = verificationResults.filter((result) => result.repositoryId === repository.repositoryId);
+      return finalized && typeof finalized.commitSha === "string" && finalized.branch === repository.branch && results.length === 2 && new Set(results.map((result) => result.command)).size === 2 && results.some((result) => result.command === "test") && results.some((result) => result.command === "verification") && results.every((result) => result.commitSha === finalized.commitSha && result.classification === "clean" && result.exitCode === 0);
+    });
+    if (verificationResults.length !== expectedVerificationCount || !repositoryCoverageIsExact || !verificationCoverageIsExact || primaryFinalized?.commitSha !== input.commitSha) throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "Success requires the latest independent test and verification commands to be clean for every repository at the finalized commits.", { commitSha: input.commitSha, expectedVerificationCount, finalizedRepositories, results: verificationResults });
     const verificationIds = verificationResults.map((result) => String(result.verificationId));
     if (new Set(verificationIds).size !== verificationIds.length) throw new AppError(AppErrorCode.DATA_INTEGRITY, "Latest verification action references duplicate evidence rows.");
     const verificationRows = verificationResults.map((result) => {
@@ -187,8 +200,6 @@ export function completeRunWorkflowInTransaction(txContext: ServiceContext, inpu
     if (blocking.length) throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "Unresolved blocking review findings prevent success.", { findings: blocking.map((finding) => finding.id) });
     const unreconciled = txContext.db.query.runReviewFindings.findMany({ where: eq(runReviewFindings.runId, run.id) }).sync().filter((finding) => !finding.reconciliation);
     if (unreconciled.length) throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "Review findings must be reconciled before success.", { findings: unreconciled.map((finding) => finding.id) });
-    const finalize = txContext.db.query.runActions.findMany({ where: and(eq(runActions.runId, run.id), eq(runActions.kind, "finalize")) }).sync().find((action) => action.state === "completed");
-    if (!finalize) throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "Final artifact reconciliation has not completed.");
     if (!finalize.result || typeof finalize.result !== "object" || (finalize.result as { commitSha?: unknown }).commitSha !== input.commitSha) throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "Finalized commit does not match the requested completion commit.", { commitSha: input.commitSha });
     const published = txContext.db.query.runActions.findMany({ where: and(eq(runActions.runId, run.id), eq(runActions.kind, "publish_draft_pr")) }).sync().find((action) => action.state === "completed");
     if (run.pendingActions.some((action) => action.kind === "push_branch" || action.kind === "publish_draft_pr")) throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "Publication actions must reconcile before workflow completion.");

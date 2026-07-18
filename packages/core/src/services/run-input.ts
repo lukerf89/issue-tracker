@@ -98,6 +98,8 @@ export function retryRun(context: ServiceContext, input: { run: string; engine?:
     const now = txContext.clock.now().toISOString();
     if (active) txContext.db.update(runAttempts).set({ state: "failed", completedAt: now, error: { reason: "retry" } }).where(eq(runAttempts.id, active.id)).run();
     if (active) txContext.db.update(runParticipants).set({ state: "stopped", completedAt: now }).where(and(eq(runParticipants.attemptId, active.id), isNull(runParticipants.completedAt))).run();
+    if (active) txContext.db.update(runInputRequests).set({ state: "expired", respondedAt: now }).where(and(eq(runInputRequests.runId, run.id), eq(runInputRequests.state, "pending"))).run();
+    if (active) txContext.db.update(runActions).set({ state: "canceled", error: { reason: "attempt_retried" }, completedAt: now, leaseOwner: null, leaseExpiresAt: null, updatedAt: now }).where(and(eq(runActions.attemptId, active.id), or(eq(runActions.state, "queued"), eq(runActions.state, "claimed")))).run();
     const number = run.attemptCounter + 1;
     const attemptId = uuid();
     txContext.db.insert(runAttempts).values({ id: attemptId, runId: run.id, number, reason: input.reason ?? "retry", requestedEngine: { engine: input.engine ?? null }, actualEngine: null, state: "queued", startedAt: null, completedAt: null, result: null, error: null, createdAt: now }).run();

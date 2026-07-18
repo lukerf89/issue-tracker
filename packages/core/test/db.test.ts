@@ -261,6 +261,7 @@ describe("core database foundation", () => {
       expect(db.query.issues.findFirst().sync()).toMatchObject({ id: "issue-eng-1", title: "Set up CI" });
       expect(db.query.attachments.findFirst().sync()).toMatchObject({ id: "attachment-before-runs", title: "Fictional design" });
       expect(db.query.activity.findFirst().sync()).toMatchObject({ id: "activity-before-runs", action: "linked", data: { title: "Fictional design" } });
+      expect(db.query.orchestrationProfiles.findFirst().sync()).toMatchObject({ name: "issue-delivery", isDefault: true, isBuiltin: true });
     } finally { db.$client.close(); }
   });
 });

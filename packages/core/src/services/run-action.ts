@@ -45,9 +45,9 @@ export function claimRunAction(context: ServiceContext, input: ClaimRunActionInp
       const activeRun = txContext.db.query.agentRuns.findFirst({ where: eq(agentRuns.id, active.runId) }).sync();
       if (activeRun) repositoryCounts.set(activeRun.primaryRepositoryId, (repositoryCounts.get(activeRun.primaryRepositoryId) ?? 0) + 1);
     }
-    const action = candidates.sort((left, right) => Number(right.state === "claimed") - Number(left.state === "claimed") || left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)).find((candidate) => {
+    const action = candidates.find((candidate) => {
       const candidateRun = txContext.db.query.agentRuns.findFirst({ where: eq(agentRuns.id, candidate.runId) }).sync();
-      return candidateRun && !["succeeded", "partial", "failed", "canceled", "crashed"].includes(candidateRun.state) && (repositoryCounts.get(candidateRun.primaryRepositoryId) ?? 0) < (input.perRepositoryLimit ?? 2);
+      return candidateRun && actionIsClaimable(candidateRun.state, candidate.kind) && (repositoryCounts.get(candidateRun.primaryRepositoryId) ?? 0) < (input.perRepositoryLimit ?? 2);
     });
     if (!action) return null;
     const leaseExpiresAt = new Date(nowDate.getTime() + (input.leaseMs ?? 30_000)).toISOString();
@@ -59,6 +59,13 @@ export function claimRunAction(context: ServiceContext, input: ClaimRunActionInp
     }
     return txContext.db.query.runActions.findFirst({ where: eq(runActions.id, action.id) }).sync()!;
   });
+}
+
+function actionIsClaimable(runState: (typeof agentRuns.$inferSelect)["state"], actionKind: (typeof runActions.$inferSelect)["kind"]) {
+  if (["queued", "provisioning", "running"].includes(runState)) return true;
+  if (runState === "waiting_for_input") return ["deliver_input", "graceful_stop", "force_stop"].includes(actionKind);
+  if (runState === "blocked" || runState === "stalled") return ["resume_participant", "nudge_participant", "graceful_stop", "force_stop"].includes(actionKind);
+  return ["remove_raw_logs", "remove_worktree"].includes(actionKind);
 }
 
 export function heartbeatRunAction(context: ServiceContext, input: { actionId: string; supervisorId: string; leaseMs?: number }) {

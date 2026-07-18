@@ -230,10 +230,14 @@ export class Supervisor {
   }
 
   private finalize(run: ReturnType<typeof getRun>) {
-    const commitSha = git(run.worktreePath, "rev-parse", "HEAD");
-    const filesChanged = git(run.worktreePath, "diff", "--name-only", run.baseCommit, commitSha).split(/\r?\n/).filter(Boolean).sort();
-    const diffSize = Number(git(run.worktreePath, "diff", "--numstat", run.baseCommit, commitSha).split(/\r?\n/).filter(Boolean).reduce((sum, line) => sum + line.split("\t").slice(0, 2).reduce((count, value) => count + (Number(value) || 0), 0), 0));
-    return { commitSha, filesChanged, diffSize, branch: run.branch };
+    const repositories = run.repositories.map((repository) => {
+      const commitSha = git(repository.worktreePath, "rev-parse", "HEAD");
+      const filesChanged = git(repository.worktreePath, "diff", "--name-only", repository.baseCommit, commitSha).split(/\r?\n/).filter(Boolean).sort();
+      const diffSize = Number(git(repository.worktreePath, "diff", "--numstat", repository.baseCommit, commitSha).split(/\r?\n/).filter(Boolean).reduce((sum, line) => sum + line.split("\t").slice(0, 2).reduce((count, value) => count + (Number(value) || 0), 0), 0));
+      return { repositoryId: repository.repositoryId, commitSha, filesChanged, diffSize, branch: repository.branch };
+    });
+    const primary = repositories.find((repository) => repository.repositoryId === run.primaryRepositoryId)!;
+    return { ...primary, repositories };
   }
 }
 

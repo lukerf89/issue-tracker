@@ -13,7 +13,7 @@ import {
   markRunStalled, recordProcessExit, releaseExpiredRunActions, requestRunInput, respondToRunInput, retryRun, startRun, startRunParticipant,
   type Clock, type EngineCatalog, type ServiceContext
 } from "../src/index.js";
-import { runParticipants } from "../src/db/schema.js";
+import { runActions, runParticipants } from "../src/db/schema.js";
 
 const tempDirs: string[] = [];
 afterEach(() => { for (const directory of tempDirs.splice(0)) rmSync(directory, { recursive: true, force: true }); });
@@ -154,6 +154,8 @@ describe("autonomous coding run control plane", () => {
       completeRunAction(fixture.context, { actionId: provision.id, supervisorId: "agentd", result: {} });
       const participantAction = claimRunAction(fixture.context, { supervisorId: "crashed", leaseMs: -1 })!;
       expect(participantAction.kind).toBe("run_participant");
+      const now = fixture.context.clock.now().toISOString();
+      fixture.db.insert(runActions).values({ id: "fictional-sibling-action", runId: started.id, attemptId: participantAction.attemptId, kind: "setup_command", idempotencyKey: `${started.id}:fictional-sibling`, payload: { command: { executable: "node", args: [], envNames: [] } }, state: "queued", leaseOwner: null, leaseExpiresAt: null, attemptCount: 0, result: null, error: null, createdAt: now, updatedAt: now, completedAt: null }).run();
       expect(releaseExpiredRunActions(fixture.context)).toBe(1);
       expect(getRun(fixture.context, started.id)).toMatchObject({ state: "blocked", outcome: "action_reconciliation_required" });
       expect(claimRunAction(fixture.context, { supervisorId: "agentd" })).toBeNull();
@@ -197,9 +199,12 @@ describe("autonomous coding run control plane", () => {
       const started = startRun(fixture.context, { issue: fixture.issue.identifier, previewFingerprint: preview.previewFingerprint, confirmWarnings: preview.warnings }, fixture.runtime);
       const provision = claimRunAction(fixture.context, { supervisorId: "agentd" })!;
       completeRunAction(fixture.context, { actionId: provision.id, supervisorId: "agentd", result: {} });
+      const staleAction = claimRunAction(fixture.context, { supervisorId: "old-agentd" })!;
       expect(markRunStalled(fixture.context, started.id).state).toBe("stalled");
       const retried = retryRun(fixture.context, { run: started.id, engine: "fictional-fallback", reason: "fallback" });
       expect(retried.attempts.map((attempt) => attempt.number)).toEqual([1, 2]);
+      expect(fixture.db.query.runActions.findFirst({ where: eq(runActions.id, staleAction.id) }).sync()).toMatchObject({ state: "canceled", leaseOwner: null, error: { reason: "attempt_retried" } });
+      expect(() => completeRunAction(fixture.context, { actionId: staleAction.id, supervisorId: "old-agentd", result: { role: "planner" } })).toThrowError(/not leased/);
       const implementer = startRunParticipant(fixture.context, { run: started.id, attemptId: retried.attempts[1]!.id, role: "implementer", actor: "fictional-fallback", adapter: "fake", requestedModel: "fictional-model", capabilities: {} });
       fixture.db.update(runParticipants).set({ state: "running", providerSessionId: "clean-exit-no-result" }).where(eq(runParticipants.id, implementer.id)).run();
       expect(recordProcessExit(fixture.context, { run: started.id, participantId: implementer.id, exitCode: 0, structuredResult: null })).toMatchObject({ state: "failed", outcome: "missing_structured_result" });

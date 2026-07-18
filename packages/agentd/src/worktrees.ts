@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { execFileSync } from "node:child_process";
 
 export interface WorktreeSpec { repositoryPath: string; worktreePath: string; branch: string; baseCommit: string }
@@ -14,7 +14,9 @@ export class WorktreeManager {
       const actualBranch = this.git(spec.worktreePath, "branch", "--show-current");
       if (actualBranch !== spec.branch) throw new Error(`Existing worktree ${spec.worktreePath} belongs to branch ${actualBranch}, not ${spec.branch}.`);
       if (actualCommit !== spec.baseCommit) throw new Error(`Existing worktree ${spec.worktreePath} is at ${actualCommit}, not immutable base commit ${spec.baseCommit}.`);
-      return { adopted: true, path: realpathSync(spec.worktreePath), branch: actualBranch, commit: actualCommit };
+      const adoptedPath = realpathSync(spec.worktreePath);
+      this.assertResolved(adoptedPath);
+      return { adopted: true, path: adoptedPath, branch: actualBranch, commit: actualCommit };
     }
     mkdirSync(dirname(spec.worktreePath), { recursive: true });
     try {
@@ -24,6 +26,7 @@ export class WorktreeManager {
       if (existingBranch !== spec.baseCommit) throw error;
       execFileSync("git", ["-C", spec.repositoryPath, "worktree", "add", spec.worktreePath, spec.branch], { stdio: ["ignore", "pipe", "pipe"] });
     }
+    this.assertManaged(spec.worktreePath);
     return { adopted: false, path: realpathSync(spec.worktreePath), branch: spec.branch, commit: this.git(spec.worktreePath, "rev-parse", "HEAD") };
   }
 
@@ -43,7 +46,20 @@ export class WorktreeManager {
     const root = resolve(this.managedRoot);
     const target = resolve(path);
     const relation = relative(root, target);
-    if (!relation || relation.startsWith("..") || relation.startsWith("/")) throw new Error(`Cleanup target ${target} is outside or equal to the managed root ${root}.`);
+    if (!relation || relation.startsWith("..") || isAbsolute(relation)) throw new Error(`Cleanup target ${target} is outside or equal to the managed root ${root}.`);
+    mkdirSync(root, { recursive: true });
+    const resolvedRoot = realpathSync(root);
+    let candidate = root;
+    for (const component of relation.split(sep)) {
+      candidate = resolve(candidate, component);
+      if (!existsSync(candidate)) break;
+      this.assertResolved(realpathSync(candidate), resolvedRoot);
+    }
+  }
+
+  private assertResolved(path: string, resolvedRoot = realpathSync(resolve(this.managedRoot))) {
+    const relation = relative(resolvedRoot, path);
+    if (!relation || relation.startsWith("..") || isAbsolute(relation)) throw new Error(`Cleanup target ${path} resolves outside or equal to the managed root ${resolvedRoot}.`);
   }
 
   private git(cwd: string, ...args: string[]) { return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim(); }

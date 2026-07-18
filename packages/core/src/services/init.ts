@@ -58,11 +58,14 @@ export function init(context: ServiceContext, input: InitInput = {}) {
 
     txContext.db.insert(actors).values(actor).run();
     const profile = builtinProfileInput();
-    txContext.db.insert(orchestrationProfiles).values({
-      id: uuid(), name: profile.name, workflow: profile.workflow, schemaVersion: 1,
-      configuration: profile.configuration, isDefault: true, isBuiltin: true,
-      archivedAt: null, createdAt: now, updatedAt: now
-    }).run();
+    const existingProfile = txContext.db.query.orchestrationProfiles.findFirst({ where: eq(orchestrationProfiles.name, profile.name) }).sync();
+    if (!existingProfile) {
+      txContext.db.insert(orchestrationProfiles).values({
+        id: uuid(), name: profile.name, workflow: profile.workflow, schemaVersion: 1,
+        configuration: profile.configuration, isDefault: true, isBuiltin: true,
+        archivedAt: null, createdAt: now, updatedAt: now
+      }).run();
+    }
     setConfigInTransaction(txContext, ConfigKey.DEFAULT_TEAM, team.id);
     setConfigInTransaction(txContext, ConfigKey.DEFAULT_ACTOR, actor.id);
 

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   addRepository, applyMigrations, associateRepository, claimRunAction,
-  createIssue, createNodeRepositoryInspector, createProject, exportSnapshot, getRun, init, listRunEvents,
+  completeRunWorkflow, createIssue, createNodeRepositoryInspector, createProject, exportSnapshot, getRun, init, listRunEvents,
   openDb, previewRun, requestRunPublication, startRun, type Clock, type EngineDefinition, type ServiceContext
 } from "@issue-tracker/core";
 
@@ -33,6 +33,18 @@ describe("durable coding-run supervisor", () => {
     expect(() => manager.provision(spec)).toThrowError(/immutable base commit/);
   });
 
+  it("rejects a managed-root symlink that resolves to an external repository", () => {
+    const root = mkdtempSync(join(tmpdir(), "issue-tracker-agentd-symlink-")); tempDirs.push(root);
+    const repositoryPath = createRepository(root);
+    const managedRoot = join(root, "data", "worktrees");
+    mkdirSync(managedRoot, { recursive: true });
+    const worktreePath = join(managedRoot, "fictional-run");
+    symlinkSync(repositoryPath, worktreePath, "dir");
+    const manager = new WorktreeManager(managedRoot);
+    const baseCommit = execFileSync("git", ["-C", repositoryPath, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    expect(() => manager.provision({ repositoryPath, worktreePath, branch: "main", baseCommit })).toThrowError(/resolves outside/);
+  });
+
   it("adopts a worktree after lease expiry and completes a verified workflow without duplicate effects", async () => {
     const root = mkdtempSync(join(tmpdir(), "issue-tracker-agentd-")); tempDirs.push(root);
     const db = openDb(join(root, "tracker.db")); applyMigrations(db);
@@ -46,6 +58,9 @@ describe("durable coding-run supervisor", () => {
       const command = { executable: process.execPath, args: ["-e", "process.exit(0)"], envNames: [] };
       const repository = addRepository(context, { name: "Runtime", path: repositoryPath, testCommand: command, verificationCommand: command }, createNodeRepositoryInspector());
       associateRepository(context, { repository: repository.id, project: project.id, position: 0, isDefault: true, overrideKind: "replace" });
+      const secondaryPath = createRepository(root, "secondary");
+      const secondary = addRepository(context, { name: "Secondary", path: secondaryPath, testCommand: command, verificationCommand: command }, createNodeRepositoryInspector());
+      associateRepository(context, { repository: secondary.id, project: project.id, position: 1, isDefault: false, overrideKind: "replace" });
       const capabilities = { resume: true, redirect: true, interactivePermissions: true, structuredOutput: true, childParticipants: false, usage: true };
       const engine: EngineDefinition = { adapter: "fake", executable: "fixture", model: "fictional-model", permissionMode: "autonomous", envNames: [], capabilities };
       const runtime = { inspector: createNodeRepositoryInspector(), dataRoot: join(root, "data"), engineCatalog: { schemaVersion: 1 as const, engines: { "claude-default": engine } } };
@@ -77,6 +92,13 @@ describe("durable coding-run supervisor", () => {
       expect(finalized.phase).toBe("finalize");
       expect(finalized.pendingActions).toHaveLength(0);
       expect(new Set(finalized.participants.filter((participant) => participant.state === "succeeded").map((participant) => participant.providerSessionId)).size).toBe(4);
+      const finalizeAction = (exportSnapshot(context).runActions as Array<{ id: string; kind: string; result: { repositoryId: string; commitSha: string; filesChanged: string[]; diffSize: number; branch: string; repositories?: Array<{ repositoryId: string; commitSha: string }> } | null }>).find((action) => action.kind === "finalize")!;
+      const finalizeResult = finalizeAction.result!;
+      expect(finalizeResult.repositories).toHaveLength(2);
+      const staleResult = { ...finalizeResult, repositories: finalizeResult.repositories!.map((repository, index) => index === 1 ? { ...repository, commitSha: "stale-secondary-commit" } : repository) };
+      db.$client.prepare("update run_actions set result = ? where id = ?").run(JSON.stringify(staleResult), finalizeAction.id);
+      expect(() => completeRunWorkflow(context, { run: started.id, commitSha: finalizeResult.commitSha, filesChanged: finalizeResult.filesChanged, diffSize: finalizeResult.diffSize, testsRun: ["test", "verification", "test", "verification"], testsFailed: [], riskNotes: [], branch: finalizeResult.branch })).toThrowError(/finalized commits/);
+      db.$client.prepare("update run_actions set result = ? where id = ?").run(JSON.stringify(finalizeResult), finalizeAction.id);
 
       requestRunPublication(context, { run: started.id, publishDraftPr: true, confirmed: true });
       expect(await supervisor.runOnce()).toBe(true);
@@ -91,13 +113,13 @@ describe("durable coding-run supervisor", () => {
   });
 });
 
-function createRepository(root: string) {
-  const repository = join(root, "repository");
+function createRepository(root: string, name = "repository") {
+  const repository = join(root, name);
   execFileSync("git", ["init", "-b", "main", repository]);
   writeFileSync(join(repository, "README.md"), "# Fictional runtime\n");
   execFileSync("git", ["-C", repository, "add", "README.md"]);
   execFileSync("git", ["-C", repository, "-c", "user.name=Fictional User", "-c", "user.email=fictional@example.test", "commit", "-m", "Set up fictional runtime"]);
-  const remote = join(root, "remote.git");
+  const remote = join(root, `${name}-remote.git`);
   execFileSync("git", ["init", "--bare", remote]);
   execFileSync("git", ["-C", repository, "remote", "add", "origin", remote]);
   execFileSync("git", ["-C", repository, "push", "-u", "origin", "main"]);
