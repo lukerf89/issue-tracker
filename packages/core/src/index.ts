@@ -297,6 +297,9 @@ export {
 } from "./services/run-action.js";
 export {
   requestRunInput,
+  getRunInputRequest,
+  recordPermissionWaitProgress,
+  expireHookPermissionWait,
   respondToRunInput,
   resolveRunPermission,
   requestRunStop,

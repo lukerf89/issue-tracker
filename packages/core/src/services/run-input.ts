@@ -8,18 +8,61 @@ import { appendRunEventInTransaction, getRun } from "./run.js";
 
 const TERMINAL = ["succeeded", "partial", "failed", "canceled", "crashed"];
 
-export function requestRunInput(context: ServiceContext, input: { run: string; participantId: string; kind: "input" | "permission"; prompt: string; operation?: Record<string, unknown> | null; blocking?: boolean }) {
+export function requestRunInput(context: ServiceContext, input: { run: string; participantId: string; kind: "input" | "permission"; prompt: string; operation?: Record<string, unknown> | null; blocking?: boolean; delivery?: "resume" | "hook"; providerSessionId?: string | null }) {
   return inTransaction(context, (txContext) => {
     const run = getRun(txContext, input.run);
     const participant = txContext.db.query.runParticipants.findFirst({ where: and(eq(runParticipants.id, input.participantId), eq(runParticipants.runId, input.run)) }).sync();
     if (!participant || !["running", "waiting"].includes(participant.state)) throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "Input can only be requested by a live participant.");
     if (TERMINAL.includes(run.state)) throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "A terminal run cannot request input.");
     const now = txContext.clock.now().toISOString();
-    const request = { id: uuid(), runId: input.run, participantId: input.participantId, kind: input.kind, prompt: input.prompt, operation: input.operation ?? null, blocking: input.blocking ?? true, state: "pending" as const, response: null, requestedBy: participant.actor, respondedBy: null, requestedAt: now, respondedAt: null };
+    const delivery = input.delivery ?? "resume";
+    const request = { id: uuid(), runId: input.run, participantId: input.participantId, kind: input.kind, prompt: input.prompt, operation: input.operation ?? null, blocking: input.blocking ?? true, delivery, state: "pending" as const, response: null, requestedBy: participant.actor, respondedBy: null, requestedAt: now, respondedAt: null };
     txContext.db.insert(runInputRequests).values(request).run();
+    // A hook-delivered request arrives mid-session, before the participant action completes and
+    // records the session id. Stamp it now so resolution can verify liveness and so the resume
+    // fallback has a session to reattach to if the bounded hook wait expires.
+    const session = input.providerSessionId ?? participant.providerSessionId;
+    txContext.db.update(runParticipants).set({ state: "waiting", providerSessionId: session }).where(eq(runParticipants.id, participant.id)).run();
     if (request.blocking) txContext.db.update(agentRuns).set({ state: "waiting_for_input", updatedAt: now }).where(eq(agentRuns.id, input.run)).run();
-    appendRunEventInTransaction(txContext, { runId: input.run, attemptId: participant.attemptId, participantId: participant.id, type: input.kind === "permission" ? "permission.requested" : "input.requested", data: { requestId: request.id, prompt: request.prompt, blocking: request.blocking }, progress: true });
+    appendRunEventInTransaction(txContext, { runId: input.run, attemptId: participant.attemptId, participantId: participant.id, type: input.kind === "permission" ? "permission.requested" : "input.requested", data: { requestId: request.id, prompt: request.prompt, blocking: request.blocking, delivery, operation: request.operation }, progress: true });
     return request;
+  });
+}
+
+export function getRunInputRequest(context: ServiceContext, runId: string, requestId: string) {
+  return context.db.query.runInputRequests.findFirst({ where: and(eq(runInputRequests.id, requestId), eq(runInputRequests.runId, runId)) }).sync() ?? null;
+}
+
+/**
+ * Emits a progress event while a hook blocks on a human decision. Without this the run trips
+ * `detectStalls`, because `permission.requested` marks progress only once and a human may
+ * legitimately deliberate for longer than the stall threshold.
+ */
+export function recordPermissionWaitProgress(context: ServiceContext, runId: string, requestId: string) {
+  return inTransaction(context, (txContext) => {
+    const request = txContext.db.query.runInputRequests.findFirst({ where: and(eq(runInputRequests.id, requestId), eq(runInputRequests.runId, runId)) }).sync();
+    if (!request || request.state !== "pending") return null;
+    const participant = txContext.db.query.runParticipants.findFirst({ where: eq(runParticipants.id, request.participantId) }).sync();
+    appendRunEventInTransaction(txContext, { runId, attemptId: participant?.attemptId ?? null, participantId: request.participantId, type: "permission.waiting", data: { requestId, waitingSince: request.requestedAt }, progress: true });
+    return request;
+  });
+}
+
+/**
+ * Ends the provider-side blocking wait when the bounded hook timeout expires, converting the
+ * still-pending request to resume delivery so a later approval reaches the provider by restarting
+ * the session instead of by a hook that is no longer listening. Returns the request if it was
+ * resolved in the meantime, so a decision racing the timeout is still honored inline.
+ */
+export function expireHookPermissionWait(context: ServiceContext, runId: string, requestId: string) {
+  return inTransaction(context, (txContext) => {
+    const request = txContext.db.query.runInputRequests.findFirst({ where: and(eq(runInputRequests.id, requestId), eq(runInputRequests.runId, runId)) }).sync();
+    if (!request) throw new AppError(AppErrorCode.CONSTRAINT_VIOLATION, `Run request ${requestId} was not found.`);
+    if (request.state !== "pending") return request;
+    txContext.db.update(runInputRequests).set({ delivery: "resume" }).where(eq(runInputRequests.id, requestId)).run();
+    const participant = txContext.db.query.runParticipants.findFirst({ where: eq(runParticipants.id, request.participantId) }).sync();
+    appendRunEventInTransaction(txContext, { runId, attemptId: participant?.attemptId ?? null, participantId: request.participantId, type: "permission.wait_expired", data: { requestId, delivery: "resume" }, progress: true });
+    return null;
   });
 }
 
@@ -46,9 +89,17 @@ function resolveRequest(context: ServiceContext, runId: string, requestId: strin
     if (!participant || !["running", "waiting"].includes(participant.state) || !participant.providerSessionId) throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "The target participant is no longer live; input was not delivered.");
     const now = txContext.clock.now().toISOString();
     txContext.db.update(runInputRequests).set({ state, response, respondedBy: txContext.actor!.id, respondedAt: now }).where(eq(runInputRequests.id, request.id)).run();
-    txContext.db.insert(runActions).values({ id: uuid(), runId, attemptId: participant.attemptId, kind: "deliver_input", idempotencyKey: `${runId}:request:${request.id}`, payload: { requestId: request.id, participantId: participant.id, providerSessionId: participant.providerSessionId, state, response }, state: "queued", leaseOwner: null, leaseExpiresAt: null, attemptCount: 0, result: null, error: null, createdAt: now, updatedAt: now, completedAt: null }).run();
+    // Hook delivery reaches a provider process that is still alive and polling this row, so the
+    // decision needs no transport. Enqueueing deliver_input here would start a second --resume
+    // subprocess and orphan the blocked one.
+    if (request.delivery === "resume") {
+      txContext.db.insert(runActions).values({ id: uuid(), runId, attemptId: participant.attemptId, kind: "deliver_input", idempotencyKey: `${runId}:request:${request.id}`, payload: { requestId: request.id, participantId: participant.id, providerSessionId: participant.providerSessionId, state, response }, state: "queued", leaseOwner: null, leaseExpiresAt: null, attemptCount: 0, result: null, error: null, createdAt: now, updatedAt: now, completedAt: null }).run();
+    }
     const pendingBlocking = txContext.db.query.runInputRequests.findMany({ where: and(eq(runInputRequests.runId, runId), eq(runInputRequests.state, "pending"), eq(runInputRequests.blocking, true)) }).sync().filter((candidate) => candidate.id !== request.id);
-    if (pendingBlocking.length === 0) txContext.db.update(agentRuns).set({ state: "running", updatedAt: now }).where(and(eq(agentRuns.id, runId), eq(agentRuns.state, "waiting_for_input"))).run();
+    if (pendingBlocking.length === 0) {
+      txContext.db.update(agentRuns).set({ state: "running", updatedAt: now }).where(and(eq(agentRuns.id, runId), eq(agentRuns.state, "waiting_for_input"))).run();
+      txContext.db.update(runParticipants).set({ state: "running" }).where(and(eq(runParticipants.id, participant.id), eq(runParticipants.state, "waiting"))).run();
+    }
     appendRunEventInTransaction(txContext, { runId, attemptId: participant.attemptId, participantId: participant.id, type: request.kind === "permission" ? "permission.resolved" : "input.responded", data: { requestId: request.id, state, actorId: txContext.actor!.id }, progress: true });
     return txContext.db.query.runInputRequests.findFirst({ where: eq(runInputRequests.id, request.id) }).sync()!;
   });

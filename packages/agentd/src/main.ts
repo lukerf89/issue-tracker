@@ -19,7 +19,7 @@ export async function runAgentd(argv = process.argv.slice(2)) {
   const context: ServiceContext = { db, actor: null, clock: systemClock };
   context.actor = whoami(context);
   const catalog = loadEngineCatalog(options.config ?? resolveEngineCatalogPath(), createNodeEngineCatalogRuntime());
-  const supervisor = new Supervisor({ id: options.id ?? `agentd-${process.pid}`, context, dataRoot, engines: catalog.engines, adapters: { "claude-code": new ClaudeCodeAdapter(), codex: new CodexAdapter() } });
+  const supervisor = new Supervisor({ id: options.id ?? `agentd-${process.pid}`, context, dataRoot, dbPath, engines: catalog.engines, adapters: { "claude-code": new ClaudeCodeAdapter(), codex: new CodexAdapter() } });
   const controller = new AbortController();
   const stop = () => { controller.abort(); supervisor.stop(); };
   process.once("SIGINT", stop); process.once("SIGTERM", stop);

@@ -26,6 +26,11 @@ export interface SupervisorOptions {
   perRepositoryLimit?: number;
   publisher?: (input: { cwd: string; title: string; body: string; base: string; head: string }) => Promise<{ url: string }>;
   isProcessAlive?: (pid: number) => boolean;
+  /** How long a provider blocks on a durable permission request before degrading to resume delivery. */
+  permissionTimeoutMs?: number;
+  /** Database the permission hook reopens to record and poll requests. Adapters that declare
+   * interactive permissions cannot perform mutating work without it. */
+  dbPath?: string;
 }
 
 export class Supervisor {
@@ -93,6 +98,15 @@ export class Supervisor {
       clearInterval(heartbeat);
     }
     return true;
+  }
+
+  /**
+   * Supplies the durable approval route for adapters that declare interactive permissions. Adapters
+   * without that capability get null and keep whatever containment their own runtime enforces.
+   */
+  private permissionHook(runId: string, adapter: ProviderAdapter) {
+    if (!adapter.capabilities.interactivePermissions || !this.options.dbPath) return null;
+    return { dbPath: this.options.dbPath, runId, timeoutMs: this.options.permissionTimeoutMs };
   }
 
   private detectStalls() {
@@ -173,7 +187,7 @@ export class Supervisor {
     const prompt = `Execute this Issue Tracker work order. Your final response must be one JSON object (not Markdown) with role, summary, files, tests, risks, findings, verifiedTestsPassed, and riskNotes fields. Planner results must also include risk (low, medium, or high) and estimatedSize.\n${JSON.stringify({ workflow: run.workflow, phase: run.phase, role, issue: resolved.issue, immutableBaseCommit: resolved.repositories[0]?.baseCommit, repositoryInstructions: resolved.repositories[0]?.instructions ?? {}, input: action.payload })}`;
     let result: ProviderResult;
     try {
-      result = await adapter.run({ participantId: participant.id, role, executable: engine.executable, model: engine.model, workingDirectory: run.worktreePath, prompt, options: engine, env: inheritedEnvironment(engine.envNames), onProcess: (pid) => recordParticipantProcess(this.options.context, { run: run.id, participantId: participant!.id, pid }) }, signal);
+      result = await adapter.run({ participantId: participant.id, role, executable: engine.executable, model: engine.model, workingDirectory: run.worktreePath, prompt, options: engine, env: inheritedEnvironment(engine.envNames), permissionHook: this.permissionHook(run.id, adapter), onProcess: (pid) => recordParticipantProcess(this.options.context, { run: run.id, participantId: participant!.id, pid }) }, signal);
     } catch (error) {
       result = { exitCode: null, sessionId: null, actualModel: null, structuredResult: null, events: [], rawLog: error instanceof Error ? error.stack ?? error.message : String(error), failure: { code: "provider_process_crashed", message: "The provider process crashed before returning a result." } };
     }
@@ -221,7 +235,7 @@ export class Supervisor {
         : String(payload.message ?? "Re-evaluate progress and continue the assigned work.");
     let result: ProviderResult;
     try {
-      result = await operation.call(adapter, { participantId: participant.id, role: participant.role, executable: engine.executable, model: engine.model, workingDirectory: run.worktreePath, prompt, options: engine, env: inheritedEnvironment(engine.envNames), onProcess: (pid) => recordParticipantProcess(this.options.context, { run: run.id, participantId: participant.id, pid }) }, payload.providerSessionId, signal);
+      result = await operation.call(adapter, { participantId: participant.id, role: participant.role, executable: engine.executable, model: engine.model, workingDirectory: run.worktreePath, prompt, options: engine, env: inheritedEnvironment(engine.envNames), permissionHook: this.permissionHook(run.id, adapter), onProcess: (pid) => recordParticipantProcess(this.options.context, { run: run.id, participantId: participant.id, pid }) }, payload.providerSessionId, signal);
     } catch (error) {
       result = { exitCode: null, sessionId: payload.providerSessionId, actualModel: null, structuredResult: null, events: [], rawLog: error instanceof Error ? error.stack ?? error.message : String(error), failure: { code: "provider_process_crashed", message: "The provider process crashed before returning a result." } };
     }

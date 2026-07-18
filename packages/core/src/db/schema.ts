@@ -433,6 +433,10 @@ export const runInputRequests = sqliteTable("run_input_requests", {
   prompt: text("prompt").notNull(),
   operation: text("operation", { mode: "json" }),
   blocking: integer("blocking", { mode: "boolean" }).notNull(),
+  // How a resolution reaches the provider. "resume" enqueues a deliver_input action that starts a
+  // fresh --resume subprocess. "hook" means the provider process is still alive, blocked inside a
+  // PreToolUse hook that is polling this row, so enqueueing deliver_input would orphan it.
+  delivery: text("delivery", { enum: ["resume", "hook"] }).notNull().default("resume"),
   state: text("state", { enum: ["pending", "approved", "denied", "answered", "expired"] }).notNull(),
   response: text("response"),
   requestedBy: text("requested_by").notNull(),

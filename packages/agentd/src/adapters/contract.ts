@@ -21,6 +21,12 @@ export interface ProviderLaunch {
   options?: Record<string, unknown>;
   env?: Record<string, string>;
   onProcess?: (pid: number) => void;
+  /**
+   * Routes provider permission prompts to a durable tracker request a human can answer. Supplied
+   * for adapters whose capabilities declare `interactivePermissions`; without it those adapters
+   * cannot perform mutating work in a noninteractive session.
+   */
+  permissionHook?: { dbPath: string; runId: string; timeoutMs?: number } | null;
 }
 
 export interface ProviderEvent {

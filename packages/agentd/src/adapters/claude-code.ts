@@ -1,5 +1,36 @@
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { isParticipantResult, participantResultOutputSchema, providerEnvironment, providerFailure, type ProviderAdapter, type ProviderLaunch, type ProviderProbe } from "./contract.js";
 import { parseJsonLines, runProcess } from "./process.js";
+
+/** Tools that mutate the worktree, execute commands, or leave the machine. Read-only tools are not
+ * gated: they cannot change state, and routing them to a human would make every run unanswerable. */
+const GATED_TOOLS = "Write|Edit|MultiEdit|NotebookEdit|Bash|WebFetch";
+
+export function resolvePermissionHookScript() {
+  const override = process.env.ISSUE_TRACKER_PERMISSION_HOOK_SCRIPT;
+  if (override) return override;
+  const compiled = fileURLToPath(new URL("../permission-hook.js", import.meta.url));
+  if (existsSync(compiled)) return compiled;
+  // Running from TypeScript sources (tests): fall back to the built artifact for the same package.
+  const built = compiled.replace(`${join("", "src", "")}`, `${join("", "dist", "")}`).replace("/src/", "/dist/");
+  if (existsSync(built)) return built;
+  throw new Error(`The tracker permission hook script was not found at ${compiled} or ${built}; build @issue-tracker/agentd first.`);
+}
+
+function writePermissionSettings(hook: { dbPath: string; runId: string; timeoutMs?: number }) {
+  const directory = mkdtempSync(join(tmpdir(), "tracker-permission-"));
+  const path = join(directory, "settings.json");
+  const command = `${JSON.stringify(process.execPath)} ${JSON.stringify(resolvePermissionHookScript())}`;
+  const timeoutMs = hook.timeoutMs ?? 15 * 60_000;
+  // The hook timeout must outlast the wait it supervises, otherwise Claude Code kills the hook
+  // before it can convert the request to resume delivery and the decision is lost.
+  writeFileSync(path, JSON.stringify({ hooks: { PreToolUse: [{ matcher: GATED_TOOLS, hooks: [{ type: "command", command, timeout: Math.ceil(timeoutMs / 1000) + 30 }] }] } }), { mode: 0o600 });
+  return { directory, path, env: { ISSUE_TRACKER_DB: hook.dbPath, ISSUE_TRACKER_RUN_ID: hook.runId, ISSUE_TRACKER_PERMISSION_TIMEOUT_MS: String(timeoutMs) } };
+}
 
 export class ClaudeCodeAdapter implements ProviderAdapter {
   readonly name = "claude-code";
@@ -25,10 +56,25 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
   private async execute(launch: ProviderLaunch, sessionId: string | null, signal?: AbortSignal) {
     const args = ["--print", "--output-format", "stream-json", "--verbose", "--model", launch.model, "--json-schema", JSON.stringify(participantResultOutputSchema("claude-code", launch.role))];
     if (sessionId) args.push("--resume", sessionId);
-    if (launch.options?.permissionMode === "autonomous") throw new Error("Claude Code autonomous mode is unsupported without a worktree-scoped sandbox.");
+    // Claude Code exposes no OS-level worktree sandbox, so autonomous mode is permitted only when
+    // every mutating tool call is adjudicated through a durable tracker permission request.
+    if (launch.options?.permissionMode === "autonomous" && !launch.permissionHook) throw new Error("Claude Code autonomous mode requires a durable permission hook; no approval route was configured.");
+    const settings = launch.permissionHook ? writePermissionSettings(launch.permissionHook) : null;
+    if (settings) args.push("--settings", settings.path);
+    // The mode stays `default` deliberately: the hook grants permission per call, so nothing is
+    // pre-approved and no blanket acceptEdits or bypassPermissions grant is ever issued.
     args.push("--permission-mode", "default");
     args.push(launch.prompt);
-    const result = await runProcess(launch.executable, args, { cwd: launch.workingDirectory, env: providerEnvironment(launch.env), signal, onProcess: launch.onProcess });
+    const env = { ...providerEnvironment(launch.env), ...settings?.env, ...(settings ? { ISSUE_TRACKER_PARTICIPANT_ID: launch.participantId } : {}) };
+    try {
+      return await this.collect(launch, args, env, signal);
+    } finally {
+      if (settings) rmSync(settings.directory, { recursive: true, force: true });
+    }
+  }
+
+  private async collect(launch: ProviderLaunch, args: string[], env: NodeJS.ProcessEnv, signal?: AbortSignal) {
+    const result = await runProcess(launch.executable, args, { cwd: launch.workingDirectory, env, signal, onProcess: launch.onProcess });
     const raw = parseJsonLines(result.stdout);
     const terminal = [...raw].reverse().find((event): event is Record<string, unknown> => typeof event === "object" && event !== null && (event as { type?: unknown }).type === "result");
     const structuredResult = parseStructured(terminal?.result);

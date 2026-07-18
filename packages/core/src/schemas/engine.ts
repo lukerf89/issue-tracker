@@ -30,8 +30,12 @@ export const engineDefinitionSchema = z.object({
   if (engine.adapter === "claude-code" && (engine.reasoningEffort || engine.sandbox)) {
     context.addIssue({ code: "custom", message: "Claude Code does not support reasoningEffort or sandbox." });
   }
-  if (engine.adapter === "claude-code" && engine.permissionMode === "autonomous") {
-    context.addIssue({ code: "custom", message: "Claude Code autonomous mode is unsupported because this supervisor cannot enforce a worktree-scoped sandbox." });
+  // Claude Code has no OS-level worktree sandbox, so autonomous mode is admissible only when the
+  // engine declares interactive permissions: every mutating tool call is then adjudicated through a
+  // durable tracker permission request rather than pre-approved. Containment here is policy-level,
+  // not kernel-level as it is for a sandboxed Codex engine.
+  if (engine.adapter === "claude-code" && engine.permissionMode === "autonomous" && !engine.capabilities.interactivePermissions) {
+    context.addIssue({ code: "custom", message: "Claude Code autonomous mode requires an engine that declares interactivePermissions, because this supervisor cannot enforce a worktree-scoped sandbox and must adjudicate each tool call." });
   }
   if (engine.adapter === "codex" && engine.permissionMode === "autonomous" && engine.sandbox === "read-only") {
     context.addIssue({ code: "custom", message: "Autonomous Codex requires a writable sandbox." });

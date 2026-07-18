@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "bin": { "tracker-agentd": "./dist/index.js" },
+  "bin": { "tracker-agentd": "./dist/index.js", "tracker-permission-hook": "./dist/permission-hook.js" },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },

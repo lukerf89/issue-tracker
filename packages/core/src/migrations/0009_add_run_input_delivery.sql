@@ -1,0 +1,1 @@
+ALTER TABLE `run_input_requests` ADD `delivery` text DEFAULT 'resume' NOT NULL;
