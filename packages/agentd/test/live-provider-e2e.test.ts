@@ -82,7 +82,10 @@ function liveTest(adapterName: "claude-code" | "codex", flag: string, adapter: C
       for (const artifact of completed.artifacts.filter((candidate) => candidate.kind === "raw_log" && candidate.localPath)) expect(statSync(artifact.localPath!).mode & 0o077).toBe(0);
       // The requested-versus-actual audit contract: every participant that ran must report which
       // model actually served it, so a silent provider-side substitution cannot pass unnoticed.
-      const attribution = completed.participants.map((participant) => ({ role: participant.role, requestedModel: participant.requestedModel, actualModel: participant.actualModel }));
+      // Scoped to participants that actually held a provider session: roles like orchestrator are
+      // bookkeeping rows that never invoke a provider, so they have no model to attribute.
+      const attribution = completed.participants.filter((participant) => participant.providerSessionId).map((participant) => ({ role: participant.role, requestedModel: participant.requestedModel, actualModel: participant.actualModel }));
+      expect(attribution.length, "no participant held a provider session; the attribution check would be vacuous").toBeGreaterThan(0);
       for (const participant of attribution) {
         expect(participant.requestedModel).toBe(model);
         expect(participant.actualModel, `participant ${participant.role} reported no actual model`).toBeTruthy();
