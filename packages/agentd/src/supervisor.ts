@@ -3,7 +3,7 @@ import { existsSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 
 import {
-  assertContained, claimRunAction, completeRunAction, confirmRunStopped, failRunAction, getRun, heartbeatRunAction, heartbeatRunParticipant, heartbeatSupervisor, listRuns, markRunStalled, recordArtifact,
+  assertContained, claimRunAction, completeParticipantAction, completeParticipantActionInputSchema, completeRunAction, confirmRunStopped, engineHealthFingerprint, failRunAction, getEngineHealth, getRun, heartbeatRunAction, heartbeatRunParticipant, heartbeatSupervisor, listRuns, markRunStalled, recordArtifact, recordEngineHealth,
   recordParticipantProcess, recordProcessExit, recordProviderEvent, recordReviewFinding, recordVerification, registerSupervisor, releaseExpiredRunActions, resolveReviewFindings, startRunParticipant,
   type EngineDefinition, type ServiceContext
 } from "@issue-tracker/core";
@@ -38,6 +38,7 @@ export class Supervisor {
 
   async start(signal?: AbortSignal) {
     registerSupervisor(this.options.context, { id: this.options.id, processIdentity: { pid: process.pid }, version: "0.0.0", capabilities: { adapters: Object.keys(this.options.adapters).sort() } });
+    await this.refreshEngineHealth();
     this.reconcileProcesses();
     releaseExpiredRunActions(this.options.context);
     while (!this.stopped && !signal?.aborted) {
@@ -60,6 +61,7 @@ export class Supervisor {
   }
 
   async runOnce(signal?: AbortSignal) {
+    await this.refreshEngineHealth();
     this.detectStalls();
     releaseExpiredRunActions(this.options.context);
     const action = claimRunAction(this.options.context, { supervisorId: this.options.id, leaseMs: this.options.leaseMs, globalLimit: this.options.globalLimit, perRepositoryLimit: this.options.perRepositoryLimit });
@@ -76,7 +78,14 @@ export class Supervisor {
     }, Math.max(250, Math.floor((this.options.leaseMs ?? 30_000) / 3)));
     try {
       const result = await this.perform(action, signal);
-      completeRunAction(this.options.context, { actionId: action.id, supervisorId: this.options.id, result });
+      if (isParticipantAction(action.kind)) {
+        const participantId = String(result.participantId);
+        completeParticipantAction(this.options.context, completeParticipantActionInputSchema.parse({ actionId: action.id, supervisorId: this.options.id, participantId, result: {
+          role: String(result.role), sessionId: nullableString(result.sessionId), actualModel: nullableString(result.actualModel), exitCode: typeof result.exitCode === "number" ? result.exitCode : null,
+          structuredResult: result.structuredResult && typeof result.structuredResult === "object" ? result.structuredResult as Record<string, unknown> : null,
+          failure: result.failure ?? null
+        } }));
+      } else completeRunAction(this.options.context, { actionId: action.id, supervisorId: this.options.id, result });
       if (action.kind === "graceful_stop" || action.kind === "force_stop") confirmRunStopped(this.options.context, action.runId);
     } catch (error) {
       failRunAction(this.options.context, { actionId: action.id, supervisorId: this.options.id, error: { message: error instanceof Error ? error.message : String(error) } });
@@ -162,7 +171,12 @@ export class Supervisor {
     if (!participant) participant = startRunParticipant(this.options.context, { run: run.id, attemptId: action.attemptId!, role, actor: engineName, adapter: engine.adapter, requestedModel: engine.model, capabilities: { ...adapter.capabilities } });
     const resolved = run.resolvedConfiguration as { issue: unknown; repositories: Array<{ baseCommit: string; instructions?: Record<string, string> }> };
     const prompt = `Execute this Issue Tracker work order. Your final response must be one JSON object (not Markdown) with role, summary, files, tests, risks, findings, verifiedTestsPassed, and riskNotes fields. Planner results must also include risk (low, medium, or high) and estimatedSize.\n${JSON.stringify({ workflow: run.workflow, phase: run.phase, role, issue: resolved.issue, immutableBaseCommit: resolved.repositories[0]?.baseCommit, repositoryInstructions: resolved.repositories[0]?.instructions ?? {}, input: action.payload })}`;
-    const result = await adapter.run({ participantId: participant.id, role, executable: engine.executable, model: engine.model, workingDirectory: run.worktreePath, prompt, options: engine, env: inheritedEnvironment(engine.envNames), onProcess: (pid) => recordParticipantProcess(this.options.context, { run: run.id, participantId: participant!.id, pid }) }, signal);
+    let result: ProviderResult;
+    try {
+      result = await adapter.run({ participantId: participant.id, role, executable: engine.executable, model: engine.model, workingDirectory: run.worktreePath, prompt, options: engine, env: inheritedEnvironment(engine.envNames), onProcess: (pid) => recordParticipantProcess(this.options.context, { run: run.id, participantId: participant!.id, pid }) }, signal);
+    } catch (error) {
+      result = { exitCode: null, sessionId: null, actualModel: null, structuredResult: null, events: [], rawLog: error instanceof Error ? error.stack ?? error.message : String(error), failure: { code: "provider_process_crashed", message: "The provider process crashed before returning a result." } };
+    }
     const ingested = this.ingestParticipantResult(run, participant, result, action.payload as Record<string, unknown>);
     return { role, ...ingested };
   }
@@ -184,8 +198,7 @@ export class Supervisor {
     }
     const addressed = (actionPayload as { addressFindingIds?: unknown }).addressFindingIds;
     if (role === "implementer" && result.structuredResult && Array.isArray(addressed)) resolveReviewFindings(this.options.context, { run: run.id, findingIds: addressed.filter((id): id is string => typeof id === "string"), resolution: "addressed_by_implementer" });
-    recordProcessExit(this.options.context, { run: run.id, participantId: participant.id, exitCode: result.exitCode, structuredResult: result.structuredResult });
-    return { sessionId: result.sessionId, actualModel: result.actualModel, exitCode: result.exitCode, structuredResult: result.structuredResult };
+    return { participantId: participant.id, sessionId: result.sessionId, actualModel: result.actualModel, exitCode: result.exitCode, structuredResult: result.structuredResult, failure: result.failure ?? null };
   }
 
   private async controlParticipant(action: NonNullable<ReturnType<typeof claimRunAction>>, signal?: AbortSignal) {
@@ -206,7 +219,12 @@ export class Supervisor {
       : action.kind === "deliver_input"
         ? `Continue the exact session using this attributed response: ${String((action.payload as { response?: unknown }).response ?? "")}`
         : String(payload.message ?? "Re-evaluate progress and continue the assigned work.");
-    const result = await operation.call(adapter, { participantId: participant.id, role: participant.role, executable: engine.executable, model: engine.model, workingDirectory: run.worktreePath, prompt, options: engine, env: inheritedEnvironment(engine.envNames), onProcess: (pid) => recordParticipantProcess(this.options.context, { run: run.id, participantId: participant.id, pid }) }, payload.providerSessionId, signal);
+    let result: ProviderResult;
+    try {
+      result = await operation.call(adapter, { participantId: participant.id, role: participant.role, executable: engine.executable, model: engine.model, workingDirectory: run.worktreePath, prompt, options: engine, env: inheritedEnvironment(engine.envNames), onProcess: (pid) => recordParticipantProcess(this.options.context, { run: run.id, participantId: participant.id, pid }) }, payload.providerSessionId, signal);
+    } catch (error) {
+      result = { exitCode: null, sessionId: payload.providerSessionId, actualModel: null, structuredResult: null, events: [], rawLog: error instanceof Error ? error.stack ?? error.message : String(error), failure: { code: "provider_process_crashed", message: "The provider process crashed before returning a result." } };
+    }
     return { role: participant.role, ...this.ingestParticipantResult(run, participant, result) };
   }
 
@@ -229,6 +247,17 @@ export class Supervisor {
     return { commitSha: results[0]?.commitSha ?? run.baseCommit, results, clean: results.every((result) => result.classification === "clean") };
   }
 
+  private async refreshEngineHealth() {
+    for (const [engineName, engine] of Object.entries(this.options.engines).sort(([left], [right]) => left.localeCompare(right))) {
+      const fingerprint = engineHealthFingerprint(engineName, engine);
+      const existing = getEngineHealth(this.options.context, engineName, fingerprint);
+      if (existing && this.options.context.clock.now().getTime() - Date.parse(existing.checkedAt) <= 15 * 60_000) continue;
+      const adapter = this.options.adapters[engine.adapter];
+      const health = adapter ? await adapter.probe({ executable: engine.executable, model: engine.model, options: engine, env: inheritedEnvironment(engine.envNames) }) : { installed: false, authenticated: false, modelAccessible: false, diagnosticCode: "provider_adapter_unavailable", remediation: `Configure adapter ${engine.adapter} in tracker-agentd.` };
+      recordEngineHealth(this.options.context, { engineName, fingerprint, ...health });
+    }
+  }
+
   private finalize(run: ReturnType<typeof getRun>) {
     const repositories = run.repositories.map((repository) => {
       const commitSha = git(repository.worktreePath, "rev-parse", "HEAD");
@@ -240,6 +269,9 @@ export class Supervisor {
     return { ...primary, repositories };
   }
 }
+
+function isParticipantAction(kind: string) { return ["run_participant", "resume_participant", "nudge_participant", "deliver_input"].includes(kind); }
+function nullableString(value: unknown) { return typeof value === "string" ? value : null; }
 
 function git(cwd: string, ...args: string[]) { return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim(); }
 

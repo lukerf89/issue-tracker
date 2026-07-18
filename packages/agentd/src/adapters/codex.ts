@@ -2,18 +2,26 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { isParticipantResult, participantResultOutputSchema, providerEnvironment, type ProviderAdapter, type ProviderLaunch } from "./contract.js";
+import { isParticipantResult, participantResultOutputSchema, providerEnvironment, providerFailure, type ProviderAdapter, type ProviderLaunch, type ProviderProbe } from "./contract.js";
 import { parseJsonLines, runProcess } from "./process.js";
 
 export class CodexAdapter implements ProviderAdapter {
   readonly name = "codex";
   readonly capabilities = { resume: true, redirect: false, interactivePermissions: false, structuredOutput: true, childParticipants: false, usage: true };
 
-  async probe(executable: string) {
+  async probe(input: ProviderProbe) {
+    const schemaDirectory = mkdtempSync(join(tmpdir(), "tracker-codex-health-"));
     try {
-      const result = await runProcess(executable, ["--version"], { cwd: process.cwd() });
-      return { installed: result.exitCode === 0, authenticated: result.exitCode === 0, diagnostic: result.exitCode === 0 ? null : result.stderr.trim() };
-    } catch (error) { return { installed: false, authenticated: false, diagnostic: error instanceof Error ? error.message : String(error) }; }
+      const schemaPath = join(schemaDirectory, "health.json");
+      writeFileSync(schemaPath, JSON.stringify(participantResultOutputSchema("codex", "orchestrator")), { mode: 0o600 });
+      const args = ["exec", "--json", "--model", input.model, "--output-schema", schemaPath];
+      appendExecutionOptions(args, input.options);
+      args.push(healthPrompt("orchestrator"));
+      const result = await runProcess(input.executable, args, { cwd: process.cwd(), env: providerEnvironment(input.env) });
+      const failure = providerFailure(result.exitCode, `${result.stdout}\n${result.stderr}`);
+      return healthFromFailure(failure);
+    } catch { return { installed: false, authenticated: false, modelAccessible: false, diagnosticCode: "engine_not_installed", remediation: "Install Codex or correct the configured executable." }; }
+    finally { rmSync(schemaDirectory, { recursive: true, force: true }); }
   }
 
   async run(launch: ProviderLaunch, signal?: AbortSignal) {
@@ -27,10 +35,10 @@ export class CodexAdapter implements ProviderAdapter {
   private async execute(launch: ProviderLaunch, sessionId: string | null, signal?: AbortSignal) {
     const schemaDirectory = mkdtempSync(join(tmpdir(), "tracker-codex-schema-"));
     const schemaPath = join(schemaDirectory, "participant-result.json");
-    writeFileSync(schemaPath, JSON.stringify(participantResultOutputSchema), { mode: 0o600 });
+    writeFileSync(schemaPath, JSON.stringify(participantResultOutputSchema("codex", launch.role)), { mode: 0o600 });
     const args = sessionId ? ["exec", "resume", sessionId] : ["exec"];
     args.push("--json", "--model", launch.model, "--output-schema", schemaPath);
-    if (!sessionId && typeof launch.options?.sandbox === "string") args.push("--sandbox", launch.options.sandbox);
+    appendExecutionOptions(args, launch.options, sessionId !== null);
     args.push(launch.prompt);
     let result;
     try {
@@ -42,15 +50,44 @@ export class CodexAdapter implements ProviderAdapter {
     const terminal = [...raw].reverse().find((event): event is Record<string, unknown> => typeof event === "object" && event !== null && ["turn.completed", "task_complete"].includes(String((event as { type?: unknown }).type)));
     const finalMessage = [...raw].reverse().find((event): event is Record<string, unknown> => typeof event === "object" && event !== null && (event as { type?: unknown }).type === "item.completed" && (event as { item?: { type?: unknown } }).item?.type === "agent_message");
     const session = raw.find((event): event is Record<string, unknown> => typeof event === "object" && event !== null && ["thread.started", "thread.created"].includes(String((event as { type?: unknown }).type)));
+    const candidate = terminal?.result ?? finalMessage?.item;
+    const structuredResult = parseStructured(candidate);
+    const failure = providerFailure(result.exitCode, `${result.stdout}\n${result.stderr}`) ?? invalidResultFailure(result.exitCode, candidate, structuredResult);
     return {
       exitCode: result.exitCode,
       sessionId: typeof session?.thread_id === "string" ? session.thread_id : typeof session?.threadId === "string" ? session.threadId : null,
-      actualModel: launch.model,
-      structuredResult: parseStructured(terminal?.result ?? finalMessage?.item),
+      actualModel: explicitModel(raw),
+      structuredResult,
       events: raw.map((event, index) => ({ providerEventId: String((event as { id?: unknown }).id ?? index + 1), type: normalizeCodexType(event), data: sanitizeCodexEvent(event), progress: normalizeCodexType(event) !== "provider.message" })),
-      rawLog: `${result.stdout}${result.stderr}`
+      rawLog: `${result.stdout}${result.stderr}`,
+      failure
     };
   }
+}
+
+function appendExecutionOptions(args: string[], options?: Record<string, unknown>, resumed = false) {
+  if (!resumed && typeof options?.sandbox === "string") args.push("--sandbox", options.sandbox);
+  if (typeof options?.reasoningEffort === "string") args.push("--config", `model_reasoning_effort=${options.reasoningEffort}`);
+}
+
+function invalidResultFailure(exitCode: number | null, candidate: unknown, structuredResult: Record<string, unknown> | null) {
+  return exitCode === 0 && candidate !== undefined && structuredResult === null ? { code: "provider_result_invalid" as const, message: "The provider returned a result that did not match the participant contract." } : null;
+}
+
+function healthPrompt(role: string) { return `Return only this structured no-op result: ${JSON.stringify({ role, summary: "Provider health check", files: [], tests: [], risks: [], findings: [], verifiedTestsPassed: true, riskNotes: [] })}`; }
+function healthFromFailure(failure: { code: string; message: string } | null) {
+  if (!failure) return { installed: true, authenticated: true, modelAccessible: true, diagnosticCode: null, remediation: null };
+  return { installed: true, authenticated: failure.code !== "provider_authentication_failed", modelAccessible: !["provider_authentication_failed", "provider_model_unavailable"].includes(failure.code), diagnosticCode: failure.code, remediation: failure.code === "provider_authentication_failed" ? "Authenticate Codex and restart tracker-agentd." : failure.code === "provider_model_unavailable" ? "Configure a Codex model available to this account." : "Update the Codex provider configuration, then restart tracker-agentd." };
+}
+
+function explicitModel(events: unknown[]) {
+  for (const event of [...events].reverse()) {
+    if (!event || typeof event !== "object") continue;
+    const value = event as { model?: unknown; response?: { model?: unknown } };
+    const model = typeof value.model === "string" ? value.model : typeof value.response?.model === "string" ? value.response.model : null;
+    if (model) return model;
+  }
+  return null;
 }
 
 function parseStructured(value: unknown): Record<string, unknown> | null {

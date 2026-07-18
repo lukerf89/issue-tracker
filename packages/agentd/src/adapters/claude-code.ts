@@ -1,15 +1,17 @@
-import { isParticipantResult, participantResultOutputSchema, providerEnvironment, type ProviderAdapter, type ProviderLaunch } from "./contract.js";
+import { isParticipantResult, participantResultOutputSchema, providerEnvironment, providerFailure, type ProviderAdapter, type ProviderLaunch, type ProviderProbe } from "./contract.js";
 import { parseJsonLines, runProcess } from "./process.js";
 
 export class ClaudeCodeAdapter implements ProviderAdapter {
   readonly name = "claude-code";
   readonly capabilities = { resume: true, redirect: false, interactivePermissions: true, structuredOutput: true, childParticipants: false, usage: true };
 
-  async probe(executable: string) {
+  async probe(input: ProviderProbe) {
     try {
-      const result = await runProcess(executable, ["--version"], { cwd: process.cwd() });
-      return { installed: result.exitCode === 0, authenticated: result.exitCode === 0, diagnostic: result.exitCode === 0 ? null : result.stderr.trim() };
-    } catch (error) { return { installed: false, authenticated: false, diagnostic: error instanceof Error ? error.message : String(error) }; }
+      const schema = participantResultOutputSchema("claude-code", "orchestrator");
+      const result = await runProcess(input.executable, ["--print", "--output-format", "json", "--model", input.model, "--json-schema", JSON.stringify(schema), healthPrompt("orchestrator")], { cwd: process.cwd(), env: providerEnvironment(input.env) });
+      const failure = providerFailure(result.exitCode, `${result.stdout}\n${result.stderr}`);
+      return healthFromFailure(failure);
+    } catch { return { installed: false, authenticated: false, modelAccessible: false, diagnosticCode: "engine_not_installed", remediation: "Install Claude Code or correct the configured executable." }; }
   }
 
   async run(launch: ProviderLaunch, signal?: AbortSignal) {
@@ -21,7 +23,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
   }
 
   private async execute(launch: ProviderLaunch, sessionId: string | null, signal?: AbortSignal) {
-    const args = ["--print", "--output-format", "stream-json", "--verbose", "--model", launch.model, "--json-schema", JSON.stringify(participantResultOutputSchema)];
+    const args = ["--print", "--output-format", "stream-json", "--verbose", "--model", launch.model, "--json-schema", JSON.stringify(participantResultOutputSchema("claude-code", launch.role))];
     if (sessionId) args.push("--resume", sessionId);
     if (launch.options?.permissionMode === "autonomous") throw new Error("Claude Code autonomous mode is unsupported without a worktree-scoped sandbox.");
     args.push("--permission-mode", "default");
@@ -29,15 +31,33 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     const result = await runProcess(launch.executable, args, { cwd: launch.workingDirectory, env: providerEnvironment(launch.env), signal, onProcess: launch.onProcess });
     const raw = parseJsonLines(result.stdout);
     const terminal = [...raw].reverse().find((event): event is Record<string, unknown> => typeof event === "object" && event !== null && (event as { type?: unknown }).type === "result");
+    const structuredResult = parseStructured(terminal?.result);
+    const failure = providerFailure(result.exitCode, `${result.stdout}\n${result.stderr}`) ?? invalidResultFailure(result.exitCode, terminal?.result, structuredResult);
     return {
       exitCode: result.exitCode,
       sessionId: typeof terminal?.session_id === "string" ? terminal.session_id : null,
-      actualModel: typeof terminal?.model === "string" ? terminal.model : launch.model,
-      structuredResult: parseStructured(terminal?.result),
+      actualModel: explicitModel(raw),
+      structuredResult,
       events: raw.map((event, index) => ({ providerEventId: String((event as { uuid?: unknown }).uuid ?? index + 1), type: normalizeClaudeType(event), data: sanitizeClaudeEvent(event), progress: normalizeClaudeType(event) !== "provider.message" })),
-      rawLog: `${result.stdout}${result.stderr}`
+      rawLog: `${result.stdout}${result.stderr}`,
+      failure
     };
   }
+}
+
+function explicitModel(events: unknown[]) {
+  for (const event of [...events].reverse()) if (event && typeof event === "object" && typeof (event as { model?: unknown }).model === "string") return (event as { model: string }).model;
+  return null;
+}
+
+function invalidResultFailure(exitCode: number | null, candidate: unknown, structuredResult: Record<string, unknown> | null) {
+  return exitCode === 0 && candidate !== undefined && structuredResult === null ? { code: "provider_result_invalid" as const, message: "The provider returned a result that did not match the participant contract." } : null;
+}
+
+function healthPrompt(role: string) { return `Return only this structured no-op result: ${JSON.stringify({ role, summary: "Provider health check", files: [], tests: [], risks: [], findings: [], verifiedTestsPassed: true, riskNotes: [] })}`; }
+function healthFromFailure(failure: { code: string; message: string } | null) {
+  if (!failure) return { installed: true, authenticated: true, modelAccessible: true, diagnosticCode: null, remediation: null };
+  return { installed: true, authenticated: failure.code !== "provider_authentication_failed", modelAccessible: !["provider_authentication_failed", "provider_model_unavailable"].includes(failure.code), diagnosticCode: failure.code, remediation: failure.code === "provider_authentication_failed" ? "Authenticate Claude Code and restart tracker-agentd." : failure.code === "provider_model_unavailable" ? "Configure a Claude model available to this account." : "Update the Claude Code provider configuration, then restart tracker-agentd." };
 }
 
 function parseStructured(value: unknown): Record<string, unknown> | null {

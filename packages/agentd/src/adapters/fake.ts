@@ -12,7 +12,7 @@ export class FakeProviderAdapter implements ProviderAdapter {
 
   constructor(private readonly scripts: FakeProviderScript[]) {}
 
-  async probe() { return { installed: true, authenticated: true, diagnostic: null }; }
+  async probe() { return { installed: true, authenticated: true, modelAccessible: true, diagnosticCode: null, remediation: null }; }
 
   async run(launch: ProviderLaunch): Promise<ProviderResult> {
     this.launches.push(launch);

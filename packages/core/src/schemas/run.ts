@@ -79,9 +79,23 @@ export const resolvePermissionInputSchema = z.object({
   run: z.string().uuid(), request: z.string().uuid(), decision: z.enum(["approved", "denied"])
 }).strict();
 export const retryRunInputSchema = z.object({ run: z.string().uuid(), engine: z.string().min(1).optional() }).strict();
+export const participantFailureCodeSchema = z.enum([
+  "provider_authentication_failed", "provider_model_unavailable", "provider_schema_rejected", "provider_exit_nonzero",
+  "provider_result_missing", "provider_result_invalid", "provider_process_crashed"
+]);
+export const completeParticipantActionInputSchema = z.object({
+  actionId: z.string().uuid(), supervisorId: z.string().min(1), participantId: z.string().uuid(),
+  result: z.object({
+    role: orchestrationRoleSchema, sessionId: z.string().min(1).nullable(), actualModel: z.string().min(1).nullable(), exitCode: z.number().int().nullable(),
+    structuredResult: z.record(z.string(), z.unknown()).nullable(),
+    failure: z.object({ code: participantFailureCodeSchema, message: z.string().min(1) }).strict().nullable().optional()
+  }).strict()
+}).strict();
 
 export type RunPhase = z.infer<typeof runPhaseSchema>;
 export type RunState = z.infer<typeof runStateSchema>;
 export type ParticipantResult = z.infer<typeof participantResultSchema>;
 export type PreviewRunInput = z.infer<typeof previewRunInputSchema>;
 export type StartRunInput = z.infer<typeof startRunInputSchema>;
+export type CompleteParticipantActionInput = z.infer<typeof completeParticipantActionInputSchema>;
+export type ParticipantFailureCode = z.infer<typeof participantFailureCodeSchema>;

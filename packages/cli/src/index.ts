@@ -1542,7 +1542,8 @@ function runRuntime() {
     inspector: createNodeRepositoryInspector(),
     dataRoot: resolve(process.env.XDG_DATA_HOME ?? resolve(homedir(), ".local", "share"), "issue-tracker"),
     engineCatalog: loadEngineCatalog(resolveEngineCatalogPath(), engineRuntime),
-    executableAvailable: engineRuntime.executableAvailable
+    executableAvailable: engineRuntime.executableAvailable,
+    requireEngineHealth: true
   };
 }
 

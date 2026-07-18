@@ -7,9 +7,9 @@ import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  addRepository, addRepositoryInputSchema, applyMigrations, assertContained, associateRepository, claimRunAction, completeRunAction, confirmRunStopped,
+  addRepository, addRepositoryInputSchema, applyMigrations, assertContained, associateRepository, claimRunAction, completeParticipantAction, completeRunAction, confirmRunStopped,
   createIssue, createNodeRepositoryInspector, createProject, errorEnvelope, exportSnapshot,
-  failRun, getProfile, getRun, importSnapshot, init, listRunEvents, listRuns, openDb, previewRun,
+  engineHealthFingerprint, failRun, getProfile, getRun, importSnapshot, init, listRunEvents, listRuns, openDb, previewRun, recordEngineHealth,
   markRunStalled, recordProcessExit, releaseExpiredRunActions, requestRunInput, respondToRunInput, retryRun, startRun, startRunParticipant,
   type Clock, type EngineCatalog, type ServiceContext
 } from "../src/index.js";
@@ -63,6 +63,29 @@ describe("autonomous coding run control plane", () => {
       const preview = previewRun(fixture.context, { issue: fixture.issue.identifier }, { ...fixture.runtime, engineCatalog });
       expect(preview.policies.permission).toBe("prompt");
       expect(Object.values(preview.roleAssignments).every((assignment) => assignment.options?.permissionMode === "prompt")).toBe(true);
+      expect(Object.values(preview.roleAssignments).every((assignment) => assignment.actualModel === null)).toBe(true);
+    } finally { fixture.close(); }
+  });
+
+  it("distinguishes missing, stale, unhealthy, healthy, and configuration-changed engine evidence", () => {
+    const fixture = setup();
+    try {
+      const engine: EngineCatalog["engines"][string] = { adapter: "codex", executable: "fictional-codex", model: "fictional-model", sandbox: "workspace-write", permissionMode: "prompt", envNames: ["FICTIONAL_TOKEN"], capabilities: { resume: true, redirect: false, interactivePermissions: false, structuredOutput: true, childParticipants: false, usage: true } };
+      const runtime = { ...fixture.runtime, engineCatalog: { schemaVersion: 1 as const, engines: { "claude-default": engine } }, requireEngineHealth: true, executableAvailable: () => true };
+      expect(previewRun(fixture.context, { issue: fixture.issue.identifier }, runtime).errors).toEqual(expect.arrayContaining([expect.stringContaining("engine_health_missing")]));
+      const fingerprint = engineHealthFingerprint("claude-default", engine);
+      recordEngineHealth(fixture.context, { engineName: "claude-default", fingerprint, installed: true, authenticated: false, modelAccessible: false, diagnosticCode: "provider_authentication_failed", remediation: "Authenticate the fictional provider.", checkedAt: "2026-07-17T12:00:00.000Z" });
+      expect(previewRun(fixture.context, { issue: fixture.issue.identifier }, runtime).errors).toEqual(expect.arrayContaining([expect.stringContaining("provider_authentication_failed")]));
+      recordEngineHealth(fixture.context, { engineName: "claude-default", fingerprint, installed: true, authenticated: true, modelAccessible: false, diagnosticCode: "provider_model_unavailable", remediation: "Choose a fictional model.", checkedAt: "2026-07-17T12:00:00.000Z" });
+      expect(previewRun(fixture.context, { issue: fixture.issue.identifier }, runtime).errors).toEqual(expect.arrayContaining([expect.stringContaining("provider_model_unavailable")]));
+      recordEngineHealth(fixture.context, { engineName: "claude-default", fingerprint, installed: true, authenticated: true, modelAccessible: true, diagnosticCode: null, remediation: null, checkedAt: "2026-07-17T10:00:00.000Z" });
+      expect(previewRun(fixture.context, { issue: fixture.issue.identifier }, runtime).errors).toEqual(expect.arrayContaining([expect.stringContaining("engine_health_stale")]));
+      recordEngineHealth(fixture.context, { engineName: "claude-default", fingerprint, installed: true, authenticated: true, modelAccessible: true, diagnosticCode: null, remediation: null, checkedAt: "2026-07-17T12:00:00.000Z" });
+      const healthy = previewRun(fixture.context, { issue: fixture.issue.identifier }, runtime);
+      expect(healthy.errors).toEqual([]);
+      expect(startRun(fixture.context, { issue: fixture.issue.identifier, previewFingerprint: healthy.previewFingerprint, confirmWarnings: healthy.warnings }, runtime).state).toBe("queued");
+      const changedRuntime = { ...runtime, engineCatalog: { schemaVersion: 1 as const, engines: { "claude-default": { ...engine, model: "fictional-model-v2" } } } };
+      expect(previewRun(fixture.context, { issue: fixture.issue.identifier, parallelGroup: "changed" }, changedRuntime).errors).toEqual(expect.arrayContaining([expect.stringContaining("engine_health_missing")]));
     } finally { fixture.close(); }
   });
 
@@ -83,7 +106,7 @@ describe("autonomous coding run control plane", () => {
     } finally { fixture.close(); }
   });
 
-  it("rejects malformed or failed participant results before advancing the reducer", () => {
+  it("atomically reconciles failed participant results and preserves the authoritative failure on replay", () => {
     const fixture = setup();
     try {
       const preview = previewRun(fixture.context, { issue: fixture.issue.identifier }, fixture.runtime);
@@ -91,14 +114,16 @@ describe("autonomous coding run control plane", () => {
       const provision = claimRunAction(fixture.context, { supervisorId: "agentd" })!;
       completeRunAction(fixture.context, { actionId: provision.id, supervisorId: "agentd", result: {} });
       const plannerAction = claimRunAction(fixture.context, { supervisorId: "agentd" })!;
-      expect(() => completeRunAction(fixture.context, { actionId: plannerAction.id, supervisorId: "agentd", result: { exitCode: 0, role: "planner", structuredResult: {} } })).toThrowError(/required structured result/);
-      expect(getRun(fixture.context, started.id)).toMatchObject({ state: "running", phase: "plan" });
-
       const planner = getRun(fixture.context, started.id).participants.find((participant) => participant.role === "planner")!;
       const structuredResult = { role: "planner", summary: "Planned fictional work", files: [], tests: [], risks: [], findings: [], verifiedTestsPassed: true, riskNotes: [], risk: "low", estimatedSize: "small" };
-      expect(recordProcessExit(fixture.context, { run: started.id, participantId: planner.id, exitCode: 1, structuredResult })).toMatchObject({ state: "failed", outcome: "provider_failed" });
-      expect(() => completeRunAction(fixture.context, { actionId: plannerAction.id, supervisorId: "agentd", result: { exitCode: 1, role: "planner", structuredResult } })).toThrowError(/became terminal/);
-      expect(getRun(fixture.context, started.id).pendingActions).toHaveLength(1);
+      const failed = completeParticipantAction(fixture.context, { actionId: plannerAction.id, supervisorId: "agentd", participantId: planner.id, result: { exitCode: 1, role: "planner", sessionId: null, actualModel: null, structuredResult, failure: { code: "provider_authentication_failed", message: "Provider authentication is unavailable." } } });
+      expect(failed).toMatchObject({ state: "failed", error: { code: "provider_authentication_failed" } });
+      expect(getRun(fixture.context, started.id)).toMatchObject({ state: "failed", outcome: "provider_authentication_failed", error: { code: "provider_authentication_failed" } });
+      const eventCount = listRunEvents(fixture.context, { run: started.id }).events.length;
+      expect(completeParticipantAction(fixture.context, { actionId: plannerAction.id, supervisorId: "agentd", participantId: planner.id, result: { exitCode: 0, role: "planner", sessionId: null, actualModel: "fictional-late-model", structuredResult } })).toEqual(failed);
+      expect(listRunEvents(fixture.context, { run: started.id }).events).toHaveLength(eventCount);
+      expect(getRun(fixture.context, started.id).participants.find((candidate) => candidate.id === planner.id)?.actualModel).toBeNull();
+      expect(listRunEvents(fixture.context, { run: started.id }).events.slice(-3).map((event) => event.type)).toEqual(["participant.exited", "action.failed", "run.failed"]);
     } finally { fixture.close(); }
   });
 

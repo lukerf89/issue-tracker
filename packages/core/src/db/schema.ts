@@ -25,6 +25,17 @@ export const config = sqliteTable("config", {
   updatedAt: text("updated_at").notNull()
 });
 
+export const engineHealth = sqliteTable("engine_health", {
+  engineName: text("engine_name").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  installed: integer("installed", { mode: "boolean" }).notNull(),
+  authenticated: integer("authenticated", { mode: "boolean" }).notNull(),
+  modelAccessible: integer("model_accessible", { mode: "boolean" }).notNull(),
+  diagnosticCode: text("diagnostic_code"),
+  remediation: text("remediation"),
+  checkedAt: text("checked_at").notNull()
+}, (table) => [primaryKey({ columns: [table.engineName, table.fingerprint] }), index("engine_health_checked_idx").on(table.checkedAt)]);
+
 export const teams = sqliteTable("teams", {
   id: text("id").primaryKey(),
   key: text("key").notNull().unique("teams_key_unique"),

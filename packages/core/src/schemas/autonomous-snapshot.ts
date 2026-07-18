@@ -48,7 +48,7 @@ export const resolvedRunConfigurationSnapshotSchema = z.strictObject({
   profile: z.strictObject({ id: z.string().min(1), name: z.string().min(1), configuration: profileConfigurationSchema }),
   roleAssignments: z.record(z.string(), z.strictObject({
     engineName: z.string().min(1), adapter: z.string().min(1), executable: nullableString, requestedModel: z.string().min(1),
-    actualModel: nullableString, options: engineDefinitionSchema.nullable(), capabilities: capabilitySnapshotSchema,
+    actualModel: nullableString, options: engineDefinitionSchema.nullable(), healthFingerprint: nullableString, capabilities: capabilitySnapshotSchema,
     validationErrors: z.array(z.string()).optional()
   })),
   repositories: z.array(resolvedRepositorySchema).min(1), parallelGroup: nullableString, overrides: jsonRecord,

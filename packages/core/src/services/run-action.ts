@@ -4,7 +4,7 @@ import { inTransaction, type ServiceContext } from "../context.js";
 import { activity, agentRuns, attachments, issues, runActions, runArtifacts, runAttempts, runInputRequests, runParticipants, runReviewFindings, supervisorInstances, workflowStates } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { uuid } from "../ids.js";
-import { participantResultSchema } from "../schemas/run.js";
+import { completeParticipantActionInputSchema, participantResultSchema, type CompleteParticipantActionInput } from "../schemas/run.js";
 import { appendRunEventInTransaction, getRun } from "./run.js";
 import { completeRunWorkflowInTransaction } from "./run-workflow.js";
 
@@ -105,6 +105,62 @@ export function completeRunAction(context: ServiceContext, input: { actionId: st
     reduceCompletedAction(txContext, action, input.result);
     return txContext.db.query.runActions.findFirst({ where: eq(runActions.id, action.id) }).sync()!;
   });
+}
+
+export function completeParticipantAction(context: ServiceContext, input: CompleteParticipantActionInput) {
+  input = completeParticipantActionInputSchema.parse(input);
+  return inTransaction(context, (txContext) => {
+    const existing = txContext.db.query.runActions.findFirst({ where: eq(runActions.id, input.actionId) }).sync();
+    if (existing && (existing.state === "completed" || existing.state === "failed")) return existing;
+    const action = requireClaimedAction(txContext, input.actionId, input.supervisorId);
+    if (action.kind !== "run_participant" && action.kind !== "resume_participant" && action.kind !== "nudge_participant" && action.kind !== "deliver_input") {
+      throw new AppError(AppErrorCode.RUN_ACTION_UNAVAILABLE, `Action ${action.id} is not a participant action.`);
+    }
+    const run = txContext.db.query.agentRuns.findFirst({ where: eq(agentRuns.id, action.runId) }).sync();
+    const participant = txContext.db.query.runParticipants.findFirst({ where: and(eq(runParticipants.id, input.participantId), eq(runParticipants.runId, action.runId), eq(runParticipants.attemptId, action.attemptId!)) }).sync();
+    const attempt = action.attemptId ? txContext.db.query.runAttempts.findFirst({ where: eq(runAttempts.id, action.attemptId) }).sync() : null;
+    if (!run) throw new AppError(AppErrorCode.RUN_NOT_FOUND, `Run ${action.runId} was not found.`);
+    if (!participant || !attempt || attempt.completedAt) throw new AppError(AppErrorCode.RUN_ACTION_UNAVAILABLE, "Participant completion targeted a stale or inactive attempt.");
+    const expectedRole = (action.payload as { role?: unknown }).role ?? participant.role;
+    const parsed = participantResultSchema.safeParse(input.result.structuredResult);
+    const validResult = parsed.success && parsed.data.role === participant.role && input.result.role === participant.role && expectedRole === participant.role;
+    const successful = input.result.exitCode === 0 && validResult;
+    const now = txContext.clock.now().toISOString();
+    txContext.db.update(runParticipants).set({
+      state: successful ? "succeeded" : input.result.exitCode === null ? "crashed" : "failed",
+      providerSessionId: input.result.sessionId ?? participant.providerSessionId,
+      actualModel: input.result.actualModel ?? participant.actualModel,
+      completedAt: now,
+      lastHeartbeatAt: now
+    }).where(eq(runParticipants.id, participant.id)).run();
+    appendRunEventInTransaction(txContext, { runId: run.id, attemptId: participant.attemptId, participantId: participant.id, type: "participant.exited", data: { exitCode: input.result.exitCode, structuredResult: validResult ? parsed.data : null }, progress: true });
+    if (successful) {
+      const actionResult = { role: input.result.role, sessionId: input.result.sessionId, actualModel: input.result.actualModel, exitCode: input.result.exitCode, structuredResult: parsed.data };
+      txContext.db.update(runActions).set({ state: "completed", result: actionResult, completedAt: now, leaseOwner: null, leaseExpiresAt: null, updatedAt: now }).where(eq(runActions.id, action.id)).run();
+      appendRunEventInTransaction(txContext, { runId: run.id, attemptId: action.attemptId, participantId: participant.id, type: "action.completed", data: { actionId: action.id, kind: action.kind, result: actionResult }, progress: true });
+      reduceCompletedAction(txContext, action, actionResult);
+    } else {
+      const failure = participantFailure(input.result);
+      txContext.db.update(runActions).set({ state: "failed", error: failure, completedAt: now, leaseOwner: null, leaseExpiresAt: null, updatedAt: now }).where(eq(runActions.id, action.id)).run();
+      appendRunEventInTransaction(txContext, { runId: run.id, attemptId: action.attemptId, participantId: participant.id, type: "action.failed", data: { actionId: action.id, kind: action.kind, error: failure }, progress: true });
+      const runState = input.result.exitCode === null ? "crashed" : "failed";
+      txContext.db.update(agentRuns).set({ state: runState, outcome: failure.code, error: failure, completedAt: now, updatedAt: now }).where(eq(agentRuns.id, run.id)).run();
+      txContext.db.update(runAttempts).set({ state: runState, error: failure, completedAt: now }).where(eq(runAttempts.id, attempt.id)).run();
+      txContext.db.update(runParticipants).set({ state: "failed", completedAt: now }).where(and(eq(runParticipants.runId, run.id), or(eq(runParticipants.state, "queued"), eq(runParticipants.state, "running"), eq(runParticipants.state, "waiting")))).run();
+      txContext.db.update(runInputRequests).set({ state: "expired", respondedAt: now }).where(and(eq(runInputRequests.runId, run.id), eq(runInputRequests.state, "pending"))).run();
+      txContext.db.update(runActions).set({ state: "canceled", error: { reason: "run_terminal", cause: failure.code }, completedAt: now, leaseOwner: null, leaseExpiresAt: null, updatedAt: now }).where(and(eq(runActions.runId, run.id), eq(runActions.state, "queued"))).run();
+      appendRunEventInTransaction(txContext, { runId: run.id, attemptId: action.attemptId, participantId: participant.id, type: `run.${runState}`, data: { actionId: action.id, kind: action.kind, error: failure }, progress: true });
+    }
+    return txContext.db.query.runActions.findFirst({ where: eq(runActions.id, action.id) }).sync()!;
+  });
+}
+
+function participantFailure(result: CompleteParticipantActionInput["result"]) {
+  if (result.failure) return { code: result.failure.code, message: result.failure.message };
+  if (result.exitCode === null) return { code: "provider_process_crashed", message: "The provider process ended without an exit status." };
+  if (result.exitCode !== 0) return { code: "provider_exit_nonzero", message: `The provider process exited with status ${result.exitCode}.` };
+  if (result.structuredResult === null) return { code: "provider_result_missing", message: "The provider did not return a structured result." };
+  return { code: "provider_result_invalid", message: "The provider returned a result that did not match the participant contract." };
 }
 
 export function failRunAction(context: ServiceContext, input: { actionId: string; supervisorId: string; error: Record<string, unknown>; retryable?: boolean }) {

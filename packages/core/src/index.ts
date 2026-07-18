@@ -17,6 +17,7 @@ export {
   type EngineCatalog,
   type EngineDefinition
 } from "./schemas/engine.js";
+export { engineHealthSnapshotSchema, engineHealthFingerprint, recordEngineHealth, getEngineHealth, listEngineHealth, engineHealthProblem, type EngineHealthSnapshot } from "./services/engine-health.js";
 export {
   commandSpecSchema,
   addRepositoryInputSchema,
@@ -54,11 +55,15 @@ export {
   respondRunInputSchema,
   resolvePermissionInputSchema,
   retryRunInputSchema,
+  participantFailureCodeSchema,
+  completeParticipantActionInputSchema,
   type RunPhase,
   type RunState,
   type ParticipantResult,
   type PreviewRunInput,
-  type StartRunInput
+  type StartRunInput,
+  type CompleteParticipantActionInput,
+  type ParticipantFailureCode
 } from "./schemas/run.js";
 export {
   inTransaction,
@@ -285,6 +290,7 @@ export {
   claimRunAction,
   heartbeatRunAction,
   completeRunAction,
+  completeParticipantAction,
   failRunAction,
   releaseExpiredRunActions,
   type ClaimRunActionInput

@@ -18,6 +18,7 @@ import { activity, actors, attachments, issues, savedViews, teams, templates, wo
 const tableNames = [
   "workspace",
   "config",
+  "engine_health",
   "teams",
   "workflow_states",
   "projects",
