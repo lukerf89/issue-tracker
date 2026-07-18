@@ -71,16 +71,24 @@ export function previewRun(context: ServiceContext, input: PreviewRunInput, runt
     const validated = engineDefinitionSchema.safeParse(effective);
     return [role, { engineName, adapter: definition.adapter, executable: definition.executable, requestedModel: definition.model, actualModel: null, options: effective, healthFingerprint: engineHealthFingerprint(engineName, definition), capabilities: definition.capabilities, validationErrors: validated.success ? [] : validated.error.issues.map((issue) => issue.message) }];
   }));
-  const errors = Object.values(roleAssignments).flatMap((assignment) => {
-    if (runtime.engineCatalog && assignment.adapter === "unresolved") return [`Engine ${assignment.engineName} is not configured.`];
-    if (assignment.executable && runtime.executableAvailable && !runtime.executableAvailable(assignment.executable)) return [`Executable ${assignment.executable} for engine ${assignment.engineName} is unavailable.`];
-    if (runtime.requireEngineHealth && assignment.options) {
-      const fingerprint = assignment.healthFingerprint!;
-      const problem = engineHealthProblem(getEngineHealth(context, assignment.engineName, fingerprint), context.clock.now(), runtime.engineHealthTtlMs ?? 15 * 60_000);
-      if (problem) return [`${problem.code}: Engine ${assignment.engineName}: ${problem.message} ${problem.remediation}`];
-    }
-    return assignment.validationErrors.map((message) => `Engine ${assignment.engineName}: ${message}`);
+  // Roles frequently share one engine, so an engine-level fault would otherwise repeat once per
+  // role. Report each distinct message once and name the affected roles instead.
+  const roleErrors = Object.entries(roleAssignments).flatMap(([role, assignment]): Array<{ role: string; message: string }> => {
+    const messages = (() => {
+      if (runtime.engineCatalog && assignment.adapter === "unresolved") return [`Engine ${assignment.engineName} is not configured.`];
+      if (assignment.executable && runtime.executableAvailable && !runtime.executableAvailable(assignment.executable)) return [`Executable ${assignment.executable} for engine ${assignment.engineName} is unavailable.`];
+      if (runtime.requireEngineHealth && assignment.options) {
+        const fingerprint = assignment.healthFingerprint!;
+        const problem = engineHealthProblem(getEngineHealth(context, assignment.engineName, fingerprint), context.clock.now(), runtime.engineHealthTtlMs ?? 15 * 60_000);
+        if (problem) return [`${problem.code}: Engine ${assignment.engineName}: ${problem.message} ${problem.remediation}`];
+      }
+      return assignment.validationErrors.map((message) => `Engine ${assignment.engineName}: ${message}`);
+    })();
+    return messages.map((message) => ({ role, message }));
   });
+  const errorRoles = new Map<string, string[]>();
+  for (const { role, message } of roleErrors) errorRoles.set(message, [...errorRoles.get(message) ?? [], role]);
+  const errors = [...errorRoles].map(([message, roles]) => roles.length > 1 ? `${message} Affected roles: ${[...roles].sort().join(", ")}.` : message);
   if (profile.configuration.reviewDepth === "full" && profile.configuration.roles.implementer === profile.configuration.roles.adversarialReviewer) errors.push("Full review depth requires an adversarial reviewer engine distinct from the implementer engine.");
   if (profile.configuration.draftPrPolicy === "automatic" && profile.configuration.pushPolicy !== "automatic") errors.push("Automatic draft pull-request publication requires automatic push policy.");
   const previewIssuedAt = runtime.fingerprintIssuedAt ?? context.clock.now().toISOString();

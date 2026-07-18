@@ -101,7 +101,10 @@ export function isParticipantResult(value: unknown): value is Record<string, unk
 }
 
 export function providerEnvironment(allowed: Record<string, string> = {}): NodeJS.ProcessEnv {
-  const base = Object.fromEntries(["PATH", "TMPDIR", "LANG", "LC_ALL"].flatMap((name) => process.env[name] === undefined ? [] : [[name, process.env[name]!]]));
+  // HOME/USER/LOGNAME are required for provider credential lookup: Claude Code resolves its
+  // OAuth session through the macOS Keychain, which reports an unrefreshable session when the
+  // calling process has no user identity. Omitting them surfaces as a spurious auth expiry.
+  const base = Object.fromEntries(["PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL"].flatMap((name) => process.env[name] === undefined ? [] : [[name, process.env[name]!]]));
   return { ...base, ...allowed };
 }
 

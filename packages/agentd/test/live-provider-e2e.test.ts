@@ -57,7 +57,14 @@ function liveTest(adapterName: "claude-code" | "codex", flag: string, adapter: C
       expect(result.filesChanged).toContain("GREETING.md");
       expect(listRunEvents(context, { run: started.id }).events.map((event) => event.sequence)).toEqual(listRunEvents(context, { run: started.id }).events.map((_, index) => index + 1));
       for (const artifact of completed.artifacts.filter((candidate) => candidate.kind === "raw_log" && candidate.localPath)) expect(statSync(artifact.localPath!).mode & 0o077).toBe(0);
-      process.stdout.write(`${JSON.stringify({ provider: adapterName, runState: completed.state, participants: completed.participants.length, filesChanged: result.filesChanged, rawLogs: "redacted" })}\n`);
+      // The requested-versus-actual audit contract: every participant that ran must report which
+      // model actually served it, so a silent provider-side substitution cannot pass unnoticed.
+      const attribution = completed.participants.map((participant) => ({ role: participant.role, requestedModel: participant.requestedModel, actualModel: participant.actualModel }));
+      for (const participant of attribution) {
+        expect(participant.requestedModel).toBe(model);
+        expect(participant.actualModel, `participant ${participant.role} reported no actual model`).toBeTruthy();
+      }
+      process.stdout.write(`${JSON.stringify({ provider: adapterName, runState: completed.state, participants: completed.participants.length, filesChanged: result.filesChanged, attribution, rawLogs: "redacted" })}\n`);
     } finally { db.$client.close(); }
   }, 20 * 60_000);
 }
