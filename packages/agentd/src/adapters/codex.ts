@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { participantResultSchema, type ProviderAdapter, type ProviderLaunch } from "./contract.js";
+import { isParticipantResult, participantResultSchema, providerEnvironment, type ProviderAdapter, type ProviderLaunch } from "./contract.js";
 import { parseJsonLines, runProcess } from "./process.js";
 
 export class CodexAdapter implements ProviderAdapter {
@@ -34,7 +34,7 @@ export class CodexAdapter implements ProviderAdapter {
     args.push(launch.prompt);
     let result;
     try {
-      result = await runProcess(launch.executable, args, { cwd: launch.workingDirectory, env: { ...process.env, ...launch.env }, signal, onProcess: launch.onProcess });
+      result = await runProcess(launch.executable, args, { cwd: launch.workingDirectory, env: providerEnvironment(launch.env), signal, onProcess: launch.onProcess });
     } finally {
       rmSync(schemaDirectory, { recursive: true, force: true });
     }
@@ -55,9 +55,8 @@ export class CodexAdapter implements ProviderAdapter {
 
 function parseStructured(value: unknown): Record<string, unknown> | null {
   const candidate = value && typeof value === "object" && "text" in value ? (value as { text?: unknown }).text : value;
-  if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) return candidate as Record<string, unknown>;
-  if (typeof candidate === "string") { try { const parsed = JSON.parse(candidate) as unknown; return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null; } catch { return null; } }
-  return null;
+  const parsed = typeof candidate === "string" ? (() => { try { return JSON.parse(candidate) as unknown; } catch { return null; } })() : candidate;
+  return isParticipantResult(parsed) ? parsed : null;
 }
 
 function normalizeCodexType(event: unknown) {

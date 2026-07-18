@@ -61,6 +61,7 @@ export class Supervisor {
 
   async runOnce(signal?: AbortSignal) {
     this.detectStalls();
+    releaseExpiredRunActions(this.options.context);
     const action = claimRunAction(this.options.context, { supervisorId: this.options.id, leaseMs: this.options.leaseMs, globalLimit: this.options.globalLimit, perRepositoryLimit: this.options.perRepositoryLimit });
     if (!action) return false;
     const heartbeat = setInterval(() => {

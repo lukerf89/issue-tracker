@@ -7,10 +7,10 @@ import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  addRepository, addRepositoryInputSchema, applyMigrations, assertContained, associateRepository, claimRunAction, completeRunAction,
+  addRepository, addRepositoryInputSchema, applyMigrations, assertContained, associateRepository, claimRunAction, completeRunAction, confirmRunStopped,
   createIssue, createNodeRepositoryInspector, createProject, errorEnvelope, exportSnapshot,
   failRun, getProfile, getRun, importSnapshot, init, listRunEvents, listRuns, openDb, previewRun,
-  markRunStalled, recordProcessExit, requestRunInput, respondToRunInput, retryRun, startRun, startRunParticipant,
+  markRunStalled, recordProcessExit, releaseExpiredRunActions, requestRunInput, respondToRunInput, retryRun, startRun, startRunParticipant,
   type Clock, type ServiceContext
 } from "../src/index.js";
 import { runParticipants } from "../src/db/schema.js";
@@ -91,6 +91,43 @@ describe("autonomous coding run control plane", () => {
       const terminal = failRun(fixture.context, run.id, "failed", { reason: "fictional_failure" }, "fictional_failure");
       expect(terminal.completedAt).not.toBeNull();
       expect(() => failRun(fixture.context, run.id, "failed", { reason: "again" }, "again")).toThrowError(/Terminal runs/);
+    } finally { fixture.close(); }
+  });
+
+  it("cancels waiting participants and requests, then rejects late input", () => {
+    const fixture = setup();
+    try {
+      const preview = previewRun(fixture.context, { issue: fixture.issue.identifier }, fixture.runtime);
+      const started = startRun(fixture.context, { issue: fixture.issue.identifier, previewFingerprint: preview.previewFingerprint, confirmWarnings: preview.warnings }, fixture.runtime);
+      const provision = claimRunAction(fixture.context, { supervisorId: "agentd" })!;
+      completeRunAction(fixture.context, { actionId: provision.id, supervisorId: "agentd", result: {} });
+      const planner = getRun(fixture.context, started.id).participants.find((participant) => participant.role === "planner")!;
+      fixture.db.update(runParticipants).set({ state: "waiting", providerSessionId: "waiting-fictional" }).where(eq(runParticipants.id, planner.id)).run();
+      const request = requestRunInput(fixture.context, { run: started.id, participantId: planner.id, kind: "input", prompt: "Choose a fictional module." });
+      confirmRunStopped(fixture.context, started.id);
+      const canceled = getRun(fixture.context, started.id);
+      expect(canceled.state).toBe("canceled");
+      expect(canceled.participants.find((participant) => participant.id === planner.id)?.state).toBe("stopped");
+      expect(canceled.inputRequests.find((candidate) => candidate.id === request.id)?.state).toBe("expired");
+      expect(() => respondToRunInput(fixture.context, { run: started.id, request: request.id, response: "Too late." })).toThrowError(/terminal run/i);
+    } finally { fixture.close(); }
+  });
+
+  it("blocks expired externally-effectful actions instead of retrying them", () => {
+    const fixture = setup();
+    try {
+      const preview = previewRun(fixture.context, { issue: fixture.issue.identifier }, fixture.runtime);
+      const started = startRun(fixture.context, { issue: fixture.issue.identifier, previewFingerprint: preview.previewFingerprint, confirmWarnings: preview.warnings }, fixture.runtime);
+      const action = claimRunAction(fixture.context, { supervisorId: "crashed", leaseMs: -1 })!;
+      expect(action.kind).toBe("provision_worktree");
+      expect(releaseExpiredRunActions(fixture.context)).toBe(1);
+      const provision = claimRunAction(fixture.context, { supervisorId: "agentd" })!;
+      completeRunAction(fixture.context, { actionId: provision.id, supervisorId: "agentd", result: {} });
+      const participantAction = claimRunAction(fixture.context, { supervisorId: "crashed", leaseMs: -1 })!;
+      expect(participantAction.kind).toBe("run_participant");
+      expect(releaseExpiredRunActions(fixture.context)).toBe(1);
+      expect(getRun(fixture.context, started.id)).toMatchObject({ state: "blocked", outcome: "action_reconciliation_required" });
+      expect(claimRunAction(fixture.context, { supervisorId: "agentd" })).toBeNull();
     } finally { fixture.close(); }
   });
 

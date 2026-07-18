@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 
 import { inTransaction, type ServiceContext } from "../context.js";
 import { agentRuns, runActions, runAttempts, runInputRequests, runParticipants } from "../db/schema.js";
@@ -34,6 +34,8 @@ export function resolveRunPermission(context: ServiceContext, input: { run: stri
 function resolveRequest(context: ServiceContext, runId: string, requestId: string, state: "answered" | "approved" | "denied", response: string) {
   if (!context.actor) throw new AppError(AppErrorCode.ACTOR_NOT_FOUND, "Responding to a run requires an actor.");
   return inTransaction(context, (txContext) => {
+    const run = getRun(txContext, runId);
+    if (TERMINAL.includes(run.state)) throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "A terminal run cannot accept input.");
     const request = txContext.db.query.runInputRequests.findFirst({ where: and(eq(runInputRequests.id, requestId), eq(runInputRequests.runId, runId)) }).sync();
     if (!request) throw new AppError(AppErrorCode.CONSTRAINT_VIOLATION, `Run request ${requestId} was not found.`);
     if (request.state !== "pending") {
@@ -70,7 +72,9 @@ export function confirmRunStopped(context: ServiceContext, runId: string) {
     const now = txContext.clock.now().toISOString();
     txContext.db.update(agentRuns).set({ state: "canceled", outcome: "stopped", completedAt: now, updatedAt: now }).where(eq(agentRuns.id, runId)).run();
     txContext.db.update(runAttempts).set({ state: "canceled", completedAt: now }).where(and(eq(runAttempts.runId, runId), eq(runAttempts.state, "running"))).run();
-    txContext.db.update(runParticipants).set({ state: "stopped", completedAt: now }).where(and(eq(runParticipants.runId, runId), eq(runParticipants.state, "running"))).run();
+    txContext.db.update(runParticipants).set({ state: "stopped", completedAt: now }).where(and(eq(runParticipants.runId, runId), or(eq(runParticipants.state, "running"), eq(runParticipants.state, "waiting")))).run();
+    txContext.db.update(runInputRequests).set({ state: "expired", respondedAt: now }).where(and(eq(runInputRequests.runId, runId), eq(runInputRequests.state, "pending"))).run();
+    txContext.db.update(runActions).set({ state: "canceled", error: { reason: "run_canceled" }, completedAt: now, leaseOwner: null, leaseExpiresAt: null, updatedAt: now }).where(and(eq(runActions.runId, runId), or(eq(runActions.state, "queued"), eq(runActions.state, "claimed")))).run();
     appendRunEventInTransaction(txContext, { runId, type: "run.canceled", data: { preserved: ["branch", "worktree", "logs"] }, progress: true });
     return getRun(txContext, runId);
   });

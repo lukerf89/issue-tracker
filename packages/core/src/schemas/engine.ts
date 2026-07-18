@@ -30,6 +30,9 @@ export const engineDefinitionSchema = z.object({
   if (engine.adapter === "claude-code" && (engine.reasoningEffort || engine.sandbox)) {
     context.addIssue({ code: "custom", message: "Claude Code does not support reasoningEffort or sandbox." });
   }
+  if (engine.adapter === "claude-code" && engine.permissionMode === "autonomous") {
+    context.addIssue({ code: "custom", message: "Claude Code autonomous mode is unsupported because this supervisor cannot enforce a worktree-scoped sandbox." });
+  }
   if (engine.adapter === "codex" && engine.permissionMode === "autonomous" && engine.sandbox === "read-only") {
     context.addIssue({ code: "custom", message: "Autonomous Codex requires a writable sandbox." });
   }

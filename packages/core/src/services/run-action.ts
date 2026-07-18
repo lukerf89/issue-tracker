@@ -34,7 +34,7 @@ export function claimRunAction(context: ServiceContext, input: ClaimRunActionInp
     const nowDate = txContext.clock.now();
     const now = nowDate.toISOString();
     const candidates = txContext.db.query.runActions.findMany({
-      where: or(eq(runActions.state, "queued"), and(eq(runActions.state, "claimed"), lte(runActions.leaseExpiresAt, now))),
+      where: eq(runActions.state, "queued"),
       orderBy: [asc(runActions.createdAt), asc(runActions.id)]
     }).sync();
     const claimed = txContext.db.query.runActions.findMany({ where: and(eq(runActions.state, "claimed"), gt(runActions.leaseExpiresAt, now)) }).sync();
@@ -119,8 +119,15 @@ export function releaseExpiredRunActions(context: ServiceContext) {
     const now = txContext.clock.now().toISOString();
     const expired = txContext.db.query.runActions.findMany({ where: and(eq(runActions.state, "claimed"), lte(runActions.leaseExpiresAt, now)), orderBy: [asc(runActions.createdAt), asc(runActions.id)] }).sync();
     for (const action of expired) {
-      txContext.db.update(runActions).set({ state: "queued", leaseOwner: null, leaseExpiresAt: null, updatedAt: now }).where(eq(runActions.id, action.id)).run();
-      appendRunEventInTransaction(txContext, { runId: action.runId, attemptId: action.attemptId, type: "action.lease_expired", data: { actionId: action.id, kind: action.kind } });
+      if (action.kind === "provision_worktree") {
+        txContext.db.update(runActions).set({ state: "queued", leaseOwner: null, leaseExpiresAt: null, updatedAt: now }).where(eq(runActions.id, action.id)).run();
+        appendRunEventInTransaction(txContext, { runId: action.runId, attemptId: action.attemptId, type: "action.lease_expired", data: { actionId: action.id, kind: action.kind, reconciliation: "safe_to_adopt" } });
+        continue;
+      }
+      const error = { reason: "unknown_external_effect", actionId: action.id, kind: action.kind };
+      txContext.db.update(runActions).set({ state: "failed", error, completedAt: now, leaseOwner: null, leaseExpiresAt: null, updatedAt: now }).where(eq(runActions.id, action.id)).run();
+      txContext.db.update(agentRuns).set({ state: "blocked", outcome: "action_reconciliation_required", error, updatedAt: now }).where(and(eq(agentRuns.id, action.runId), or(eq(agentRuns.state, "queued"), eq(agentRuns.state, "provisioning"), eq(agentRuns.state, "running"), eq(agentRuns.state, "waiting_for_input"), eq(agentRuns.state, "stalled")))).run();
+      appendRunEventInTransaction(txContext, { runId: action.runId, attemptId: action.attemptId, type: "action.reconciliation_required", data: { actionId: action.id, kind: action.kind, reason: error.reason }, progress: true });
     }
     return expired.length;
   });

@@ -43,7 +43,7 @@ describe("durable coding-run supervisor", () => {
 
       clock.advance(2000);
       const fake = new FakeProviderAdapter(["planner", "implementer", "bindingReviewer", "adversarialReviewer"].map((role, index) => ({
-        result: { exitCode: 0, sessionId: `fictional-session-${index + 1}`, actualModel: "fictional-model", structuredResult: { role, files: [], tests: [], risks: [] }, events: [{ providerEventId: `${role}-progress`, type: "participant.progress", data: { role }, progress: true }] },
+        result: { exitCode: 0, sessionId: `fictional-session-${index + 1}`, actualModel: "fictional-model", structuredResult: { role, summary: `${role} completed fictional work`, files: [], tests: [], risks: [], findings: [], verifiedTestsPassed: true, riskNotes: [] }, events: [{ providerEventId: `${role}-progress`, type: "participant.progress", data: { role }, progress: true }] },
         rawLog: index === 0 ? "private-fictional-prompt-text" : undefined
       })));
       const engine: EngineDefinition = { adapter: "fake", executable: "fixture", model: "fictional-model", permissionMode: "autonomous", envNames: [], capabilities: fake.capabilities };

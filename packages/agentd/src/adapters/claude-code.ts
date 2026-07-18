@@ -1,4 +1,4 @@
-import { participantResultSchema, type ProviderAdapter, type ProviderLaunch } from "./contract.js";
+import { isParticipantResult, participantResultSchema, providerEnvironment, type ProviderAdapter, type ProviderLaunch } from "./contract.js";
 import { parseJsonLines, runProcess } from "./process.js";
 
 export class ClaudeCodeAdapter implements ProviderAdapter {
@@ -23,10 +23,10 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
   private async execute(launch: ProviderLaunch, sessionId: string | null, signal?: AbortSignal) {
     const args = ["--print", "--output-format", "stream-json", "--verbose", "--model", launch.model, "--json-schema", JSON.stringify(participantResultSchema)];
     if (sessionId) args.push("--resume", sessionId);
-    if (launch.options?.permissionMode === "autonomous") args.push("--dangerously-skip-permissions");
-    else args.push("--permission-mode", "default");
+    if (launch.options?.permissionMode === "autonomous") throw new Error("Claude Code autonomous mode is unsupported without a worktree-scoped sandbox.");
+    args.push("--permission-mode", "default");
     args.push(launch.prompt);
-    const result = await runProcess(launch.executable, args, { cwd: launch.workingDirectory, env: { ...process.env, ...launch.env }, signal, onProcess: launch.onProcess });
+    const result = await runProcess(launch.executable, args, { cwd: launch.workingDirectory, env: providerEnvironment(launch.env), signal, onProcess: launch.onProcess });
     const raw = parseJsonLines(result.stdout);
     const terminal = [...raw].reverse().find((event): event is Record<string, unknown> => typeof event === "object" && event !== null && (event as { type?: unknown }).type === "result");
     return {
@@ -41,9 +41,8 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
 }
 
 function parseStructured(value: unknown): Record<string, unknown> | null {
-  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
-  if (typeof value === "string") { try { const parsed = JSON.parse(value) as unknown; return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null; } catch { return null; } }
-  return null;
+  const parsed = typeof value === "string" ? (() => { try { return JSON.parse(value) as unknown; } catch { return null; } })() : value;
+  return isParticipantResult(parsed) ? parsed : null;
 }
 
 function normalizeClaudeType(event: unknown) {
