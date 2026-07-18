@@ -154,14 +154,14 @@ export class Supervisor {
     const role = String((action.payload as { role?: unknown }).role);
     const snapshot = run.resolvedConfiguration as { profile: { configuration: { roles: Record<string, string> } }; roleAssignments?: Record<string, { engineName: string; options: EngineDefinition | null }> };
     const engineName = String(snapshot.profile.configuration.roles[role]);
-    const engine = snapshot.roleAssignments?.[role]?.options ?? this.options.engines[engineName];
-    if (!engine) throw new Error(`Engine ${engineName} is unavailable.`);
+    const engine = snapshot.roleAssignments?.[role]?.options;
+    if (!engine) throw new Error(`The immutable engine snapshot for ${engineName} is unavailable.`);
     const adapter = this.options.adapters[engine.adapter];
     if (!adapter) throw new Error(`Adapter ${engine.adapter} is unavailable.`);
     let participant = run.participants.find((candidate) => candidate.attemptId === action.attemptId && candidate.role === role && !candidate.completedAt);
     if (!participant) participant = startRunParticipant(this.options.context, { run: run.id, attemptId: action.attemptId!, role, actor: engineName, adapter: engine.adapter, requestedModel: engine.model, capabilities: { ...adapter.capabilities } });
     const resolved = run.resolvedConfiguration as { issue: unknown; repositories: Array<{ baseCommit: string; instructions?: Record<string, string> }> };
-    const prompt = `Execute this Issue Tracker work order. Your final response must be one JSON object (not Markdown) with role, summary, files, tests, risks, findings, verifiedTestsPassed, and riskNotes fields as applicable.\n${JSON.stringify({ workflow: run.workflow, phase: run.phase, role, issue: resolved.issue, immutableBaseCommit: resolved.repositories[0]?.baseCommit, repositoryInstructions: resolved.repositories[0]?.instructions ?? {}, input: action.payload })}`;
+    const prompt = `Execute this Issue Tracker work order. Your final response must be one JSON object (not Markdown) with role, summary, files, tests, risks, findings, verifiedTestsPassed, and riskNotes fields. Planner results must also include risk (low, medium, or high) and estimatedSize.\n${JSON.stringify({ workflow: run.workflow, phase: run.phase, role, issue: resolved.issue, immutableBaseCommit: resolved.repositories[0]?.baseCommit, repositoryInstructions: resolved.repositories[0]?.instructions ?? {}, input: action.payload })}`;
     const result = await adapter.run({ participantId: participant.id, role, executable: engine.executable, model: engine.model, workingDirectory: run.worktreePath, prompt, options: engine, env: inheritedEnvironment(engine.envNames), onProcess: (pid) => recordParticipantProcess(this.options.context, { run: run.id, participantId: participant!.id, pid }) }, signal);
     const ingested = this.ingestParticipantResult(run, participant, result, action.payload as Record<string, unknown>);
     return { role, ...ingested };
@@ -195,7 +195,7 @@ export class Supervisor {
     if (!participant || typeof payload.providerSessionId !== "string" || participant.providerSessionId !== payload.providerSessionId) throw new Error("The participant session is no longer current.");
     const snapshot = run.resolvedConfiguration as { roleAssignments?: Record<string, { engineName: string; options: EngineDefinition | null }> };
     const assignment = snapshot.roleAssignments?.[participant.role];
-    const engine = assignment?.options ?? (assignment ? this.options.engines[assignment.engineName] : undefined);
+    const engine = assignment?.options;
     if (!engine) throw new Error(`The immutable engine snapshot for ${participant.role} is unavailable.`);
     const adapter = this.options.adapters[engine.adapter];
     if (!adapter) throw new Error(`Adapter ${engine.adapter} is unavailable.`);

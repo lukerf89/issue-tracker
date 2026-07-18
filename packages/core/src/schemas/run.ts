@@ -1,9 +1,37 @@
 import { z } from "zod";
 
+import { orchestrationRoleSchema } from "./profile.js";
+
 export const runPhaseSchema = z.enum(["preflight", "plan", "implement", "verify", "review", "finalize", "complete"]);
 export const runStateSchema = z.enum(["queued", "provisioning", "running", "waiting_for_input", "blocked", "stalled", "succeeded", "partial", "failed", "canceled", "crashed"]);
 export const terminalRunStateSchema = z.enum(["succeeded", "partial", "failed", "canceled", "crashed"]);
 export const verificationClassificationSchema = z.enum(["clean", "honest_partial", "fixable_partial", "audit_drift", "blocked", "engine_failure"]);
+
+export const reviewFindingResultSchema = z.object({
+  severity: z.enum(["info", "warning", "blocking"]),
+  file: z.string().nullable().optional(),
+  location: z.string().nullable().optional(),
+  summary: z.string().min(1),
+  evidence: z.string().min(1)
+}).strict();
+
+export const participantResultSchema = z.object({
+  role: orchestrationRoleSchema,
+  summary: z.string().min(1),
+  files: z.array(z.string()),
+  tests: z.array(z.string()),
+  risks: z.array(z.string()),
+  findings: z.array(reviewFindingResultSchema),
+  verifiedTestsPassed: z.boolean(),
+  riskNotes: z.array(z.string()),
+  risk: z.enum(["low", "medium", "high"]).optional(),
+  estimatedSize: z.string().min(1).optional()
+}).strict().superRefine((result, context) => {
+  if (result.role === "planner" && !result.risk) context.addIssue({ code: "custom", path: ["risk"], message: "Planner results require an overall risk level." });
+  if (result.role === "planner" && !result.estimatedSize) context.addIssue({ code: "custom", path: ["estimatedSize"], message: "Planner results require an estimated size." });
+});
+
+export const participantResultJsonSchema = z.toJSONSchema(participantResultSchema);
 
 export const previewRunInputSchema = z.object({
   issue: z.string().min(1),
@@ -54,5 +82,6 @@ export const retryRunInputSchema = z.object({ run: z.string().uuid(), engine: z.
 
 export type RunPhase = z.infer<typeof runPhaseSchema>;
 export type RunState = z.infer<typeof runStateSchema>;
+export type ParticipantResult = z.infer<typeof participantResultSchema>;
 export type PreviewRunInput = z.infer<typeof previewRunInputSchema>;
 export type StartRunInput = z.infer<typeof startRunInputSchema>;

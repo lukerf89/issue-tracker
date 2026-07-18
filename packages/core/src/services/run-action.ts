@@ -1,9 +1,10 @@
 import { and, asc, eq, gt, lte, or } from "drizzle-orm";
 
 import { inTransaction, type ServiceContext } from "../context.js";
-import { activity, agentRuns, attachments, issues, runActions, runArtifacts, runAttempts, runReviewFindings, supervisorInstances, workflowStates } from "../db/schema.js";
+import { activity, agentRuns, attachments, issues, runActions, runArtifacts, runAttempts, runInputRequests, runParticipants, runReviewFindings, supervisorInstances, workflowStates } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { uuid } from "../ids.js";
+import { participantResultSchema } from "../schemas/run.js";
 import { appendRunEventInTransaction, getRun } from "./run.js";
 import { completeRunWorkflowInTransaction } from "./run-workflow.js";
 
@@ -46,7 +47,7 @@ export function claimRunAction(context: ServiceContext, input: ClaimRunActionInp
     }
     const action = candidates.sort((left, right) => Number(right.state === "claimed") - Number(left.state === "claimed") || left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)).find((candidate) => {
       const candidateRun = txContext.db.query.agentRuns.findFirst({ where: eq(agentRuns.id, candidate.runId) }).sync();
-      return candidateRun && (repositoryCounts.get(candidateRun.primaryRepositoryId) ?? 0) < (input.perRepositoryLimit ?? 2);
+      return candidateRun && !["succeeded", "partial", "failed", "canceled", "crashed"].includes(candidateRun.state) && (repositoryCounts.get(candidateRun.primaryRepositoryId) ?? 0) < (input.perRepositoryLimit ?? 2);
     });
     if (!action) return null;
     const leaseExpiresAt = new Date(nowDate.getTime() + (input.leaseMs ?? 30_000)).toISOString();
@@ -74,6 +75,12 @@ export function completeRunAction(context: ServiceContext, input: { actionId: st
     const existing = txContext.db.query.runActions.findFirst({ where: eq(runActions.id, input.actionId) }).sync();
     if (existing?.state === "completed") return existing;
     const action = requireClaimedAction(txContext, input.actionId, input.supervisorId);
+    const run = txContext.db.query.agentRuns.findFirst({ where: eq(agentRuns.id, action.runId) }).sync();
+    if (!run) throw new AppError(AppErrorCode.RUN_NOT_FOUND, `Run ${action.runId} was not found.`);
+    if (["succeeded", "partial", "failed", "canceled", "crashed"].includes(run.state) && !["remove_raw_logs", "remove_worktree"].includes(action.kind)) {
+      throw new AppError(AppErrorCode.RUN_ACTION_UNAVAILABLE, `Action ${action.id} cannot complete after run ${run.id} became terminal.`, { actionId: action.id, runId: run.id, runState: run.state });
+    }
+    validateCompletedActionResult(action, input.result);
     const now = txContext.clock.now().toISOString();
     txContext.db.update(runActions).set({ state: "completed", result: input.result, completedAt: now, leaseOwner: null, leaseExpiresAt: null, updatedAt: now }).where(eq(runActions.id, action.id)).run();
     if (action.kind === "remove_raw_logs" || action.kind === "remove_worktree") {
@@ -107,6 +114,9 @@ export function failRunAction(context: ServiceContext, input: { actionId: string
         const publicationFailure = action.kind === "push_branch" || action.kind === "publish_draft_pr";
         txContext.db.update(agentRuns).set({ state: publicationFailure ? "partial" : "failed", error: input.error, outcome: publicationFailure ? "publication_failed_verified_branch_preserved" : "action_failed", completedAt: now, updatedAt: now }).where(eq(agentRuns.id, action.runId)).run();
         txContext.db.update(runAttempts).set({ state: "failed", error: input.error, completedAt: now }).where(and(eq(runAttempts.runId, action.runId), eq(runAttempts.id, action.attemptId!))).run();
+        txContext.db.update(runParticipants).set({ state: "failed", completedAt: now }).where(and(eq(runParticipants.runId, action.runId), or(eq(runParticipants.state, "queued"), eq(runParticipants.state, "running"), eq(runParticipants.state, "waiting")))).run();
+        txContext.db.update(runInputRequests).set({ state: "expired", respondedAt: now }).where(and(eq(runInputRequests.runId, action.runId), eq(runInputRequests.state, "pending"))).run();
+        txContext.db.update(runActions).set({ state: "canceled", error: { reason: "run_terminal" }, completedAt: now, leaseOwner: null, leaseExpiresAt: null, updatedAt: now }).where(and(eq(runActions.runId, action.runId), eq(runActions.state, "queued"))).run();
         appendRunEventInTransaction(txContext, { runId: action.runId, attemptId: action.attemptId, type: publicationFailure ? "run.partial" : "run.failed", data: { actionId: action.id, kind: action.kind, error: input.error, preserved: publicationFailure ? ["branch", "worktree", "verification"] : [] }, progress: true });
       }
     }
@@ -278,5 +288,19 @@ function enqueue(context: ServiceContext, parent: typeof runActions.$inferSelect
 }
 
 function requireStructuredResult(result: Record<string, unknown>) {
-  if (!result.structuredResult || typeof result.structuredResult !== "object") throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "A clean process exit without the required structured result cannot advance the workflow.");
+  const parsed = participantResultSchema.safeParse(result.structuredResult);
+  if (!parsed.success) throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "A clean process exit without the required structured result cannot advance the workflow.", { issues: parsed.error.issues });
+  return parsed.data;
+}
+
+function validateCompletedActionResult(action: typeof runActions.$inferSelect, result: Record<string, unknown>) {
+  if (action.kind !== "run_participant") return;
+  const expectedRole = (action.payload as { role?: unknown }).role;
+  const structured = requireStructuredResult(result);
+  if (result.exitCode !== 0) {
+    throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "A participant action cannot complete successfully after a non-zero or unknown process exit.", { actionId: action.id, exitCode: result.exitCode ?? null });
+  }
+  if (typeof expectedRole !== "string" || result.role !== expectedRole || structured.role !== expectedRole) {
+    throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "Participant result role does not match the durable action assignment.", { actionId: action.id, expectedRole: expectedRole ?? null, actionRole: result.role ?? null, structuredRole: structured.role });
+  }
 }

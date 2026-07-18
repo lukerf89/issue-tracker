@@ -13,6 +13,7 @@ export class WorktreeManager {
       const actualCommit = this.git(spec.worktreePath, "rev-parse", "HEAD");
       const actualBranch = this.git(spec.worktreePath, "branch", "--show-current");
       if (actualBranch !== spec.branch) throw new Error(`Existing worktree ${spec.worktreePath} belongs to branch ${actualBranch}, not ${spec.branch}.`);
+      if (actualCommit !== spec.baseCommit) throw new Error(`Existing worktree ${spec.worktreePath} is at ${actualCommit}, not immutable base commit ${spec.baseCommit}.`);
       return { adopted: true, path: realpathSync(spec.worktreePath), branch: actualBranch, commit: actualCommit };
     }
     mkdirSync(dirname(spec.worktreePath), { recursive: true });

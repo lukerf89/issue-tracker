@@ -41,6 +41,9 @@ export {
   runStateSchema,
   terminalRunStateSchema,
   verificationClassificationSchema,
+  reviewFindingResultSchema,
+  participantResultSchema,
+  participantResultJsonSchema,
   previewRunInputSchema,
   startRunInputSchema,
   runRefSchema,
@@ -53,6 +56,7 @@ export {
   retryRunInputSchema,
   type RunPhase,
   type RunState,
+  type ParticipantResult,
   type PreviewRunInput,
   type StartRunInput
 } from "./schemas/run.js";

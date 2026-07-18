@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, or } from "drizzle-orm";
 
 import { inTransaction, type ServiceContext } from "../context.js";
-import { activity, agentRuns, attachments, runActions, runAttempts, runParticipants, runReviewFindings, runVerifications } from "../db/schema.js";
+import { activity, agentRuns, attachments, runActions, runAttempts, runInputRequests, runParticipants, runReviewFindings, runVerifications } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { uuid } from "../ids.js";
 import type { CommandSpec } from "../schemas/repository.js";
-import type { RunState } from "../schemas/run.js";
+import { participantResultSchema, type RunState } from "../schemas/run.js";
 import { appendRunEventInTransaction, getRun } from "./run.js";
 
 export function startRunParticipant(context: ServiceContext, input: { run: string; attemptId: string; role: string; actor: string; adapter: string; requestedModel: string; capabilities: Record<string, unknown> }) {
@@ -70,14 +70,20 @@ export function recordProcessExit(context: ServiceContext, input: { run: string;
     const activeAttempt = run.attempts.find((attempt) => !attempt.completedAt);
     if (activeAttempt && participant.attemptId !== activeAttempt.id) throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "Process exit came from a stale run attempt and was rejected.", { participantAttemptId: participant.attemptId, activeAttemptId: activeAttempt.id });
     const now = txContext.clock.now().toISOString();
-    const clean = input.exitCode === 0 && Boolean(input.structuredResult);
+    const parsedResult = participantResultSchema.safeParse(input.structuredResult);
+    const structuredResult = parsedResult.success && parsedResult.data.role === participant.role ? parsedResult.data : null;
+    const clean = input.exitCode === 0 && structuredResult !== null;
     txContext.db.update(runParticipants).set({ state: clean ? "succeeded" : input.exitCode === null ? "crashed" : "failed", completedAt: now }).where(eq(runParticipants.id, participant.id)).run();
-    appendRunEventInTransaction(txContext, { runId: run.id, attemptId: participant.attemptId, participantId: participant.id, type: "participant.exited", data: { exitCode: input.exitCode, structuredResult: input.structuredResult ?? null }, progress: true });
+    appendRunEventInTransaction(txContext, { runId: run.id, attemptId: participant.attemptId, participantId: participant.id, type: "participant.exited", data: { exitCode: input.exitCode, structuredResult }, progress: true });
     if (!clean && !["succeeded", "partial", "failed", "canceled", "crashed"].includes(run.state)) {
       const state: RunState = input.exitCode === null ? "crashed" : "failed";
-      txContext.db.update(agentRuns).set({ state, outcome: input.structuredResult ? "provider_failed" : "missing_structured_result", error: { exitCode: input.exitCode }, completedAt: now, updatedAt: now }).where(eq(agentRuns.id, run.id)).run();
+      const outcome = input.exitCode !== 0 ? "provider_failed" : input.structuredResult == null ? "missing_structured_result" : "invalid_structured_result";
+      txContext.db.update(agentRuns).set({ state, outcome, error: { exitCode: input.exitCode, ...(parsedResult.success ? { expectedRole: participant.role, receivedRole: parsedResult.data.role } : { structuredResultIssues: parsedResult.error.issues }) }, completedAt: now, updatedAt: now }).where(eq(agentRuns.id, run.id)).run();
       txContext.db.update(runAttempts).set({ state, error: { exitCode: input.exitCode }, completedAt: now }).where(eq(runAttempts.id, participant.attemptId)).run();
-      appendRunEventInTransaction(txContext, { runId: run.id, attemptId: participant.attemptId, participantId: participant.id, type: `run.${state}`, data: { reason: input.structuredResult ? "provider_failed" : "missing_structured_result" }, progress: true });
+      txContext.db.update(runParticipants).set({ state: "failed", completedAt: now }).where(and(eq(runParticipants.runId, run.id), or(eq(runParticipants.state, "queued"), eq(runParticipants.state, "running"), eq(runParticipants.state, "waiting")))).run();
+      txContext.db.update(runInputRequests).set({ state: "expired", respondedAt: now }).where(and(eq(runInputRequests.runId, run.id), eq(runInputRequests.state, "pending"))).run();
+      txContext.db.update(runActions).set({ state: "canceled", error: { reason: outcome }, completedAt: now, leaseOwner: null, leaseExpiresAt: null, updatedAt: now }).where(and(eq(runActions.runId, run.id), eq(runActions.state, "queued"))).run();
+      appendRunEventInTransaction(txContext, { runId: run.id, attemptId: participant.attemptId, participantId: participant.id, type: `run.${state}`, data: { reason: outcome }, progress: true });
     }
     return getRun(txContext, run.id);
   });
@@ -161,14 +167,22 @@ export function completeRunWorkflowInTransaction(txContext: ServiceContext, inpu
     const verificationResults = verificationAction?.result && typeof verificationAction.result === "object" && Array.isArray((verificationAction.result as { results?: unknown }).results) ? (verificationAction.result as { results: Array<{ verificationId?: unknown; repositoryId?: unknown; commitSha?: unknown; classification?: unknown; exitCode?: unknown }> }).results : [];
     const expectedVerificationCount = run.repositories.length * 2;
     if (verificationResults.length !== expectedVerificationCount || verificationResults.some((result) => result.classification !== "clean" || result.exitCode !== 0) || verificationResults[0]?.commitSha !== input.commitSha) throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "Success requires the latest independent test and verification commands to be clean for every repository at the finalized commits.", { commitSha: input.commitSha, expectedVerificationCount, results: verificationResults });
-    const verification = txContext.db.query.runVerifications.findFirst({ where: eq(runVerifications.id, String(verificationResults[0]!.verificationId)) }).sync();
-    if (!verification) throw new AppError(AppErrorCode.DATA_INTEGRITY, "Latest verification action references missing evidence.");
+    const verificationIds = verificationResults.map((result) => String(result.verificationId));
+    if (new Set(verificationIds).size !== verificationIds.length) throw new AppError(AppErrorCode.DATA_INTEGRITY, "Latest verification action references duplicate evidence rows.");
+    const verificationRows = verificationResults.map((result) => {
+      const row = txContext.db.query.runVerifications.findFirst({ where: eq(runVerifications.id, String(result.verificationId)) }).sync();
+      if (!row || row.runId !== run.id || row.attemptId !== verificationAction?.attemptId || row.commitSha !== result.commitSha || row.classification !== result.classification || row.exitCode !== result.exitCode) {
+        throw new AppError(AppErrorCode.DATA_INTEGRITY, "Latest verification action references missing or mismatched evidence.", { verificationId: result.verificationId ?? null });
+      }
+      return row;
+    });
+    const verification = verificationRows[0]!;
     const reviewers = txContext.db.query.runParticipants.findMany({ where: eq(runParticipants.runId, run.id) }).sync().filter((participant) => ["bindingReviewer", "adversarialReviewer"].includes(participant.role) && participant.state === "succeeded" && participant.providerSessionId);
     const implementers = txContext.db.query.runParticipants.findMany({ where: and(eq(runParticipants.runId, run.id), eq(runParticipants.role, "implementer")) }).sync();
     const hasBinding = reviewers.some((reviewer) => reviewer.role === "bindingReviewer");
     const hasAdversarial = reviewers.some((reviewer) => reviewer.role === "adversarialReviewer");
-    const independent = reviewers.some((reviewer) => !implementers.some((implementer) => implementer.id === reviewer.id || (implementer.providerSessionId && implementer.providerSessionId === reviewer.providerSessionId)));
-    if (!hasBinding || !hasAdversarial || !independent) throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "Success requires binding and adversarial review from sessions independent of the implementer.");
+    const independentRoles = ["bindingReviewer", "adversarialReviewer"].every((role) => reviewers.some((reviewer) => reviewer.role === role && !implementers.some((implementer) => implementer.id === reviewer.id || (implementer.providerSessionId && implementer.providerSessionId === reviewer.providerSessionId))));
+    if (!hasBinding || !hasAdversarial || !independentRoles) throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "Success requires binding and adversarial review from sessions independent of the implementer.");
     const blocking = txContext.db.query.runReviewFindings.findMany({ where: and(eq(runReviewFindings.runId, run.id), eq(runReviewFindings.severity, "blocking")) }).sync().filter((finding) => !finding.resolution);
     if (blocking.length) throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "Unresolved blocking review findings prevent success.", { findings: blocking.map((finding) => finding.id) });
     const unreconciled = txContext.db.query.runReviewFindings.findMany({ where: eq(runReviewFindings.runId, run.id) }).sync().filter((finding) => !finding.reconciliation);
@@ -226,6 +240,10 @@ export function failRun(context: ServiceContext, runId: string, state: Extract<R
     txContext.db.update(agentRuns).set({ state, outcome, error, completedAt: now, updatedAt: now }).where(eq(agentRuns.id, runId)).run();
     const attempt = run.attempts.find((candidate) => !candidate.completedAt);
     if (attempt) txContext.db.update(runAttempts).set({ state: state === "partial" ? "failed" : state, error, completedAt: now }).where(eq(runAttempts.id, attempt.id)).run();
+    const participantState = state === "canceled" ? "stopped" : state === "crashed" ? "crashed" : "failed";
+    txContext.db.update(runParticipants).set({ state: participantState, completedAt: now }).where(and(eq(runParticipants.runId, runId), or(eq(runParticipants.state, "queued"), eq(runParticipants.state, "running"), eq(runParticipants.state, "waiting")))).run();
+    txContext.db.update(runInputRequests).set({ state: "expired", respondedAt: now }).where(and(eq(runInputRequests.runId, runId), eq(runInputRequests.state, "pending"))).run();
+    txContext.db.update(runActions).set({ state: "canceled", error: { reason: "run_terminal", outcome }, completedAt: now, leaseOwner: null, leaseExpiresAt: null, updatedAt: now }).where(and(eq(runActions.runId, runId), or(eq(runActions.state, "queued"), eq(runActions.state, "claimed")))).run();
     appendRunEventInTransaction(txContext, { runId, attemptId: attempt?.id, type: `run.${state}`, data: { outcome, error }, progress: true });
     return getRun(txContext, runId);
   });

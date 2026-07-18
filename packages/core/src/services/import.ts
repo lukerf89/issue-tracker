@@ -38,6 +38,24 @@ import {
 import { AppError, AppErrorCode } from "../errors.js";
 import { attachmentKindSchema } from "../schemas/attachment.js";
 import { actorTypeSchema } from "../schemas/actor.js";
+import {
+  agentRunSnapshotSchema,
+  issueRepositorySnapshotSchema,
+  orchestrationProfileSnapshotSchema,
+  projectRepositorySnapshotSchema,
+  rawLogSnapshotSchema,
+  repositorySnapshotSchema,
+  runActionSnapshotSchema,
+  runArtifactSnapshotSchema,
+  runAttemptSnapshotSchema,
+  runEventSnapshotSchema,
+  runInputRequestSnapshotSchema,
+  runParticipantSnapshotSchema,
+  runRepositorySnapshotSchema,
+  runReviewFindingSnapshotSchema,
+  runVerificationSnapshotSchema,
+  supervisorInstanceSnapshotSchema
+} from "../schemas/autonomous-snapshot.js";
 import { dateOnlyStringSchema } from "../schemas/common.js";
 import { listIssueFiltersSchema, prioritySchema } from "../schemas/issue.js";
 import { projectStatusSchema } from "../schemas/project.js";
@@ -265,23 +283,23 @@ export const importSnapshotSchema = z.strictObject({
   attachments: z.array(attachmentSnapshotSchema),
   activity: z.array(activitySnapshotSchema),
   savedViews: z.array(savedViewSnapshotSchema),
-  templates: z.array(templateSnapshotSchema)
-  ,repositories: z.array(z.unknown()).default([])
-  ,projectRepositories: z.array(z.unknown()).default([])
-  ,issueRepositories: z.array(z.unknown()).default([])
-  ,orchestrationProfiles: z.array(z.unknown()).default([])
-  ,agentRuns: z.array(z.unknown()).default([])
-  ,runRepositories: z.array(z.unknown()).default([])
-  ,runAttempts: z.array(z.unknown()).default([])
-  ,runParticipants: z.array(z.unknown()).default([])
-  ,runEvents: z.array(z.unknown()).default([])
-  ,runArtifacts: z.array(z.unknown()).default([])
-  ,runInputRequests: z.array(z.unknown()).default([])
-  ,runVerifications: z.array(z.unknown()).default([])
-  ,runReviewFindings: z.array(z.unknown()).default([])
-  ,runActions: z.array(z.unknown()).default([])
-  ,supervisorInstances: z.array(z.unknown()).default([])
-  ,rawLogs: z.array(z.unknown()).optional()
+  templates: z.array(templateSnapshotSchema),
+  repositories: z.array(repositorySnapshotSchema).default([]),
+  projectRepositories: z.array(projectRepositorySnapshotSchema).default([]),
+  issueRepositories: z.array(issueRepositorySnapshotSchema).default([]),
+  orchestrationProfiles: z.array(orchestrationProfileSnapshotSchema).default([]),
+  agentRuns: z.array(agentRunSnapshotSchema).default([]),
+  runRepositories: z.array(runRepositorySnapshotSchema).default([]),
+  runAttempts: z.array(runAttemptSnapshotSchema).default([]),
+  runParticipants: z.array(runParticipantSnapshotSchema).default([]),
+  runEvents: z.array(runEventSnapshotSchema).default([]),
+  runArtifacts: z.array(runArtifactSnapshotSchema).default([]),
+  runInputRequests: z.array(runInputRequestSnapshotSchema).default([]),
+  runVerifications: z.array(runVerificationSnapshotSchema).default([]),
+  runReviewFindings: z.array(runReviewFindingSnapshotSchema).default([]),
+  runActions: z.array(runActionSnapshotSchema).default([]),
+  supervisorInstances: z.array(supervisorInstanceSnapshotSchema).default([]),
+  rawLogs: z.array(rawLogSnapshotSchema).optional()
 });
 
 export type ImportSnapshot = z.infer<typeof importSnapshotSchema>;
@@ -293,6 +311,7 @@ export function importSnapshot(
 ): ImportSnapshotSummary {
   const parsed = importSnapshotSchema.parse(snapshot);
   assertAcyclicIssueDependencies(parsed.issueDependencies);
+  assertAutonomousRunGraph(parsed);
 
   return inTransaction(context, (txContext) => {
     if (options.force) {
@@ -356,6 +375,71 @@ export function importSnapshot(
 
     return summarizeSnapshot(parsed);
   });
+}
+
+function assertAutonomousRunGraph(snapshot: ImportSnapshot): void {
+  const issueIds = new Set(snapshot.issues.map((row) => row.id));
+  const repositoryIds = new Set(snapshot.repositories.map((row) => row.id));
+  const profileIds = new Set(snapshot.orchestrationProfiles.map((row) => row.id));
+  const runs = new Map(snapshot.agentRuns.map((row) => [row.id, row]));
+  const attempts = new Map(snapshot.runAttempts.map((row) => [row.id, row]));
+  const participants = new Map(snapshot.runParticipants.map((row) => [row.id, row]));
+  const artifacts = new Map(snapshot.runArtifacts.map((row) => [row.id, row]));
+
+  const invalid = (message: string, details: Record<string, unknown>) => {
+    throw new AppError(AppErrorCode.DATA_INTEGRITY, message, details);
+  };
+  const requireRun = (runId: string, relation: string) => {
+    const run = runs.get(runId);
+    if (!run) invalid(`Imported ${relation} references missing run ${runId}.`, { relation, runId });
+    return run!;
+  };
+  const requireAttempt = (attemptId: string, runId: string, relation: string) => {
+    const attempt = attempts.get(attemptId);
+    if (!attempt || attempt.runId !== runId) invalid(`Imported ${relation} references an attempt outside run ${runId}.`, { relation, runId, attemptId });
+    return attempt!;
+  };
+  const requireParticipant = (participantId: string, runId: string, relation: string) => {
+    const participant = participants.get(participantId);
+    if (!participant || participant.runId !== runId) invalid(`Imported ${relation} references a participant outside run ${runId}.`, { relation, runId, participantId });
+    return participant!;
+  };
+
+  for (const run of snapshot.agentRuns) {
+    if (!issueIds.has(run.issueId) || !repositoryIds.has(run.primaryRepositoryId) || (run.profileId && !profileIds.has(run.profileId))) invalid(`Imported run ${run.id} has a missing parent reference.`, { runId: run.id });
+    const runAttemptsForRun = snapshot.runAttempts.filter((row) => row.runId === run.id);
+    const runEventsForRun = snapshot.runEvents.filter((row) => row.runId === run.id);
+    if (Math.max(0, ...runAttemptsForRun.map((row) => row.number)) !== run.attemptCounter) invalid(`Imported run ${run.id} attempt counter is inconsistent.`, { runId: run.id, attemptCounter: run.attemptCounter });
+    if (Math.max(0, ...runEventsForRun.map((row) => row.sequence)) !== run.eventCounter) invalid(`Imported run ${run.id} event counter is inconsistent.`, { runId: run.id, eventCounter: run.eventCounter });
+  }
+  for (const row of snapshot.runRepositories) {
+    requireRun(row.runId, "run repository");
+    if (!repositoryIds.has(row.repositoryId)) invalid(`Imported run repository references missing repository ${row.repositoryId}.`, { runId: row.runId, repositoryId: row.repositoryId });
+  }
+  for (const row of snapshot.runAttempts) requireRun(row.runId, "run attempt");
+  for (const row of snapshot.runParticipants) requireAttempt(row.attemptId, row.runId, "run participant");
+  for (const row of snapshot.runEvents) {
+    requireRun(row.runId, "run event");
+    if (row.attemptId) requireAttempt(row.attemptId, row.runId, "run event");
+    if (row.participantId) {
+      const participant = requireParticipant(row.participantId, row.runId, "run event");
+      if (row.attemptId && participant.attemptId !== row.attemptId) invalid(`Imported run event participant and attempt disagree.`, { eventId: row.id });
+    }
+  }
+  for (const row of snapshot.runArtifacts) {
+    requireRun(row.runId, "run artifact");
+    if (row.attemptId) requireAttempt(row.attemptId, row.runId, "run artifact");
+  }
+  for (const row of snapshot.runInputRequests) requireParticipant(row.participantId, row.runId, "run input request");
+  for (const row of snapshot.runVerifications) {
+    requireAttempt(row.attemptId, row.runId, "run verification");
+    if (row.logArtifactId && artifacts.get(row.logArtifactId)?.runId !== row.runId) invalid(`Imported run verification references an artifact outside its run.`, { verificationId: row.id, artifactId: row.logArtifactId });
+  }
+  for (const row of snapshot.runReviewFindings) requireParticipant(row.participantId, row.runId, "run review finding");
+  for (const row of snapshot.runActions) {
+    requireRun(row.runId, "run action");
+    if (row.attemptId) requireAttempt(row.attemptId, row.runId, "run action");
+  }
 }
 
 function assertAcyclicIssueDependencies(dependencies: ImportSnapshot["issueDependencies"]): void {

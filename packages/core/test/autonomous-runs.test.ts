@@ -11,7 +11,7 @@ import {
   createIssue, createNodeRepositoryInspector, createProject, errorEnvelope, exportSnapshot,
   failRun, getProfile, getRun, importSnapshot, init, listRunEvents, listRuns, openDb, previewRun,
   markRunStalled, recordProcessExit, releaseExpiredRunActions, requestRunInput, respondToRunInput, retryRun, startRun, startRunParticipant,
-  type Clock, type ServiceContext
+  type Clock, type EngineCatalog, type ServiceContext
 } from "../src/index.js";
 import { runParticipants } from "../src/db/schema.js";
 
@@ -56,6 +56,16 @@ describe("autonomous coding run control plane", () => {
     } finally { fixture.close(); }
   });
 
+  it("binds the immutable engine launch mode to the profile permission policy", () => {
+    const fixture = setup();
+    try {
+      const engineCatalog: EngineCatalog = { schemaVersion: 1, engines: { "claude-default": { adapter: "codex", executable: "fictional-codex", model: "fictional-model", sandbox: "workspace-write", permissionMode: "autonomous", envNames: [], capabilities: { resume: true, redirect: false, interactivePermissions: false, structuredOutput: true, childParticipants: false, usage: true } } } };
+      const preview = previewRun(fixture.context, { issue: fixture.issue.identifier }, { ...fixture.runtime, engineCatalog });
+      expect(preview.policies.permission).toBe("prompt");
+      expect(Object.values(preview.roleAssignments).every((assignment) => assignment.options?.permissionMode === "prompt")).toBe(true);
+    } finally { fixture.close(); }
+  });
+
   it("leases each durable action once and makes completion idempotent", () => {
     const fixture = setup();
     try {
@@ -70,6 +80,25 @@ describe("autonomous coding run control plane", () => {
       expect(listRunEvents(fixture.context, { run: run.id }).events).toHaveLength(eventCount);
       expect(getRun(fixture.context, run.id)).toMatchObject({ state: "running", phase: "plan" });
       expect(getRun(fixture.context, run.id).pendingActions.map((pending) => pending.kind)).toEqual(["run_participant"]);
+    } finally { fixture.close(); }
+  });
+
+  it("rejects malformed or failed participant results before advancing the reducer", () => {
+    const fixture = setup();
+    try {
+      const preview = previewRun(fixture.context, { issue: fixture.issue.identifier }, fixture.runtime);
+      const started = startRun(fixture.context, { issue: fixture.issue.identifier, previewFingerprint: preview.previewFingerprint, confirmWarnings: preview.warnings }, fixture.runtime);
+      const provision = claimRunAction(fixture.context, { supervisorId: "agentd" })!;
+      completeRunAction(fixture.context, { actionId: provision.id, supervisorId: "agentd", result: {} });
+      const plannerAction = claimRunAction(fixture.context, { supervisorId: "agentd" })!;
+      expect(() => completeRunAction(fixture.context, { actionId: plannerAction.id, supervisorId: "agentd", result: { exitCode: 0, role: "planner", structuredResult: {} } })).toThrowError(/required structured result/);
+      expect(getRun(fixture.context, started.id)).toMatchObject({ state: "running", phase: "plan" });
+
+      const planner = getRun(fixture.context, started.id).participants.find((participant) => participant.role === "planner")!;
+      const structuredResult = { role: "planner", summary: "Planned fictional work", files: [], tests: [], risks: [], findings: [], verifiedTestsPassed: true, riskNotes: [], risk: "low", estimatedSize: "small" };
+      expect(recordProcessExit(fixture.context, { run: started.id, participantId: planner.id, exitCode: 1, structuredResult })).toMatchObject({ state: "failed", outcome: "provider_failed" });
+      expect(() => completeRunAction(fixture.context, { actionId: plannerAction.id, supervisorId: "agentd", result: { exitCode: 1, role: "planner", structuredResult } })).toThrowError(/became terminal/);
+      expect(getRun(fixture.context, started.id).pendingActions).toHaveLength(1);
     } finally { fixture.close(); }
   });
 
@@ -144,6 +173,20 @@ describe("autonomous coding run control plane", () => {
       expect(errorEnvelope(addRepositoryInputError())).toMatchObject({ error: { code: "VALIDATION_FAILED" } });
       fixture.db.$client.prepare("update orchestration_profiles set configuration = ? where name = ?").run("[]", "issue-delivery");
       expect(errorEnvelope(captureError(() => getProfile(fixture.context, "issue-delivery")))).toMatchObject({ error: { code: "DATA_INTEGRITY" } });
+    } finally { fixture.close(); target.close(); }
+  });
+
+  it("rejects malformed autonomous action payloads before importing any rows", () => {
+    const fixture = setup();
+    const target = emptyContext();
+    try {
+      const preview = previewRun(fixture.context, { issue: fixture.issue.identifier }, fixture.runtime);
+      startRun(fixture.context, { issue: fixture.issue.identifier, previewFingerprint: preview.previewFingerprint, confirmWarnings: preview.warnings }, fixture.runtime);
+      const snapshot = exportSnapshot(fixture.context);
+      const action = snapshot.runActions[0] as { payload: { repositories: Array<Record<string, unknown>> } };
+      action.payload.repositories[0]!.worktreePath = 42;
+      expect(() => importSnapshot(target.context, snapshot)).toThrow();
+      expect(exportSnapshot(target.context).agentRuns).toEqual([]);
     } finally { fixture.close(); target.close(); }
   });
 

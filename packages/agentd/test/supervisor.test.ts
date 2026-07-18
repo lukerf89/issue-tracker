@@ -19,6 +19,20 @@ const tempDirs: string[] = [];
 afterEach(() => { for (const directory of tempDirs.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
 describe("durable coding-run supervisor", () => {
+  it("refuses to adopt a same-named worktree that moved from the immutable base commit", () => {
+    const root = mkdtempSync(join(tmpdir(), "issue-tracker-agentd-adopt-")); tempDirs.push(root);
+    const repositoryPath = createRepository(root);
+    const manager = new WorktreeManager(join(root, "data", "worktrees"));
+    const baseCommit = execFileSync("git", ["-C", repositoryPath, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    const worktreePath = join(root, "data", "worktrees", "fictional-run", "repository");
+    const spec = { repositoryPath, worktreePath, branch: "agent/fictional-run", baseCommit };
+    manager.provision(spec);
+    writeFileSync(join(worktreePath, "CHANGE.md"), "fictional change\n");
+    execFileSync("git", ["-C", worktreePath, "add", "CHANGE.md"]);
+    execFileSync("git", ["-C", worktreePath, "-c", "user.name=Fictional User", "-c", "user.email=fictional@example.test", "commit", "-m", "Move managed branch"]);
+    expect(() => manager.provision(spec)).toThrowError(/immutable base commit/);
+  });
+
   it("adopts a worktree after lease expiry and completes a verified workflow without duplicate effects", async () => {
     const root = mkdtempSync(join(tmpdir(), "issue-tracker-agentd-")); tempDirs.push(root);
     const db = openDb(join(root, "tracker.db")); applyMigrations(db);
@@ -32,7 +46,9 @@ describe("durable coding-run supervisor", () => {
       const command = { executable: process.execPath, args: ["-e", "process.exit(0)"], envNames: [] };
       const repository = addRepository(context, { name: "Runtime", path: repositoryPath, testCommand: command, verificationCommand: command }, createNodeRepositoryInspector());
       associateRepository(context, { repository: repository.id, project: project.id, position: 0, isDefault: true, overrideKind: "replace" });
-      const runtime = { inspector: createNodeRepositoryInspector(), dataRoot: join(root, "data") };
+      const capabilities = { resume: true, redirect: true, interactivePermissions: true, structuredOutput: true, childParticipants: false, usage: true };
+      const engine: EngineDefinition = { adapter: "fake", executable: "fixture", model: "fictional-model", permissionMode: "autonomous", envNames: [], capabilities };
+      const runtime = { inspector: createNodeRepositoryInspector(), dataRoot: join(root, "data"), engineCatalog: { schemaVersion: 1 as const, engines: { "claude-default": engine } } };
       const preview = previewRun(context, { issue: issue.identifier }, runtime);
       const started = startRun(context, { issue: issue.identifier, previewFingerprint: preview.previewFingerprint, confirmWarnings: preview.warnings }, runtime);
 
@@ -42,18 +58,21 @@ describe("durable coding-run supervisor", () => {
       expect(firstEffect.adopted).toBe(false);
 
       clock.advance(2000);
-      const fake = new FakeProviderAdapter(["planner", "implementer", "bindingReviewer", "adversarialReviewer"].map((role, index) => ({
-        result: { exitCode: 0, sessionId: `fictional-session-${index + 1}`, actualModel: "fictional-model", structuredResult: { role, summary: `${role} completed fictional work`, files: [], tests: [], risks: [], findings: [], verifiedTestsPassed: true, riskNotes: [] }, events: [{ providerEventId: `${role}-progress`, type: "participant.progress", data: { role }, progress: true }] },
+      const fake = new FakeProviderAdapter([0, 1, 2, 3].map((index) => ({
+        result: (launch: { role: string }) => { const role = launch.role; return { exitCode: 0, sessionId: `fictional-session-${index + 1}`, actualModel: "fictional-model", structuredResult: { role, summary: `${role} completed fictional work`, files: [], tests: [], risks: [], findings: [], verifiedTestsPassed: true, riskNotes: [], ...(role === "planner" ? { risk: "low" as const, estimatedSize: "small" } : {}) }, events: [{ providerEventId: `${role}-progress`, type: "participant.progress", data: { role }, progress: true }] }; },
         rawLog: index === 0 ? "private-fictional-prompt-text" : undefined
       })));
-      const engine: EngineDefinition = { adapter: "fake", executable: "fixture", model: "fictional-model", permissionMode: "autonomous", envNames: [], capabilities: fake.capabilities };
       const supervisor = new Supervisor({ id: "restarted-agentd", context, dataRoot: join(root, "data"), adapters: { fake }, engines: { "claude-default": engine }, publisher: async () => ({ url: "https://example.test/fictional/pull/42" }) });
 
       expect(await supervisor.runOnce()).toBe(true);
       expect(getRun(context, started.id)).toMatchObject({ state: "running", phase: "plan" });
       expect(listRunEvents(context, { run: started.id }).events.filter((event) => event.type === "action.completed" && (event.data as { kind?: string }).kind === "provision_worktree")).toHaveLength(1);
 
-      for (let index = 0; index < 6; index += 1) expect(await supervisor.runOnce()).toBe(true);
+      for (let index = 0; index < 6; index += 1) {
+        const worked = await supervisor.runOnce();
+        const observed = getRun(context, started.id);
+        expect(worked, `iteration ${index}: ${observed.phase}/${observed.state}; pending=${observed.pendingActions.map((action) => action.kind).join(",")}`).toBe(true);
+      }
       const finalized = getRun(context, started.id);
       expect(finalized.phase).toBe("finalize");
       expect(finalized.pendingActions).toHaveLength(0);

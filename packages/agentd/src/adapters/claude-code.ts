@@ -1,4 +1,4 @@
-import { isParticipantResult, participantResultSchema, providerEnvironment, type ProviderAdapter, type ProviderLaunch } from "./contract.js";
+import { isParticipantResult, participantResultOutputSchema, providerEnvironment, type ProviderAdapter, type ProviderLaunch } from "./contract.js";
 import { parseJsonLines, runProcess } from "./process.js";
 
 export class ClaudeCodeAdapter implements ProviderAdapter {
@@ -21,7 +21,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
   }
 
   private async execute(launch: ProviderLaunch, sessionId: string | null, signal?: AbortSignal) {
-    const args = ["--print", "--output-format", "stream-json", "--verbose", "--model", launch.model, "--json-schema", JSON.stringify(participantResultSchema)];
+    const args = ["--print", "--output-format", "stream-json", "--verbose", "--model", launch.model, "--json-schema", JSON.stringify(participantResultOutputSchema)];
     if (sessionId) args.push("--resume", sessionId);
     if (launch.options?.permissionMode === "autonomous") throw new Error("Claude Code autonomous mode is unsupported without a worktree-scoped sandbox.");
     args.push("--permission-mode", "default");

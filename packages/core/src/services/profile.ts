@@ -17,7 +17,7 @@ export function builtinProfileInput(): AddProfileInput {
         orchestrator: "claude-default", planner: "claude-default", implementer: "claude-default",
         verifier: "claude-default", bindingReviewer: "claude-default", adversarialReviewer: "claude-default"
       },
-      permissionPolicy: "worktree-autonomous",
+      permissionPolicy: "prompt",
       pushPolicy: "approved",
       draftPrPolicy: "approved",
       issueStartedState: "__started__"

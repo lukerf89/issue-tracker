@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { isParticipantResult, participantResultSchema, providerEnvironment, type ProviderAdapter, type ProviderLaunch } from "./contract.js";
+import { isParticipantResult, participantResultOutputSchema, providerEnvironment, type ProviderAdapter, type ProviderLaunch } from "./contract.js";
 import { parseJsonLines, runProcess } from "./process.js";
 
 export class CodexAdapter implements ProviderAdapter {
@@ -27,7 +27,7 @@ export class CodexAdapter implements ProviderAdapter {
   private async execute(launch: ProviderLaunch, sessionId: string | null, signal?: AbortSignal) {
     const schemaDirectory = mkdtempSync(join(tmpdir(), "tracker-codex-schema-"));
     const schemaPath = join(schemaDirectory, "participant-result.json");
-    writeFileSync(schemaPath, JSON.stringify(participantResultSchema), { mode: 0o600 });
+    writeFileSync(schemaPath, JSON.stringify(participantResultOutputSchema), { mode: 0o600 });
     const args = sessionId ? ["exec", "resume", sessionId] : ["exec"];
     args.push("--json", "--model", launch.model, "--output-schema", schemaPath);
     if (!sessionId && typeof launch.options?.sandbox === "string") args.push("--sandbox", launch.options.sandbox);

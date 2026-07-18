@@ -11,7 +11,7 @@ import {
 import { AppError, AppErrorCode } from "../errors.js";
 import { uuid } from "../ids.js";
 import { profileConfigurationSchema } from "../schemas/profile.js";
-import type { EngineCatalog } from "../schemas/engine.js";
+import { engineDefinitionSchema, type EngineCatalog, type EngineDefinition } from "../schemas/engine.js";
 import { type PreviewRunInput, type RunPhase, type RunState, type StartRunInput } from "../schemas/run.js";
 import { getIssue } from "./issue.js";
 import { getProfile } from "./profile.js";
@@ -60,14 +60,18 @@ export function previewRun(context: ServiceContext, input: PreviewRunInput, runt
     ...(resolvedRepositories.length > 1 ? ["multi_repository"] : []),
     ...(resolvedRepositories.some((repository) => repository.dirty) ? ["dirty_checkout"] : [])
   ];
-  const roleAssignments = Object.fromEntries(Object.entries(profile.configuration.roles).sort(([left], [right]) => left.localeCompare(right)).map(([role, engineName]) => {
+  type RoleAssignment = { engineName: string; adapter: string; executable: string | null; requestedModel: string; actualModel: string | null; options: EngineDefinition | null; capabilities: Record<string, unknown>; validationErrors: string[] };
+  const roleAssignments: Record<string, RoleAssignment> = Object.fromEntries(Object.entries(profile.configuration.roles).sort(([left], [right]) => left.localeCompare(right)).map(([role, engineName]): [string, RoleAssignment] => {
     const definition = runtime.engineCatalog?.engines[engineName];
-    return [role, definition ? { engineName, adapter: definition.adapter, executable: definition.executable, requestedModel: definition.model, actualModel: definition.model, options: definition, capabilities: definition.capabilities } : { engineName, adapter: "unresolved", executable: null, requestedModel: engineName, actualModel: null, options: null, capabilities: {} }];
+    if (!definition) return [role, { engineName, adapter: "unresolved", executable: null, requestedModel: engineName, actualModel: null, options: null, capabilities: {}, validationErrors: [] }];
+    const effective = { ...definition, permissionMode: profile.configuration.permissionPolicy === "worktree-autonomous" ? "autonomous" as const : "prompt" as const };
+    const validated = engineDefinitionSchema.safeParse(effective);
+    return [role, { engineName, adapter: definition.adapter, executable: definition.executable, requestedModel: definition.model, actualModel: definition.model, options: effective, capabilities: definition.capabilities, validationErrors: validated.success ? [] : validated.error.issues.map((issue) => issue.message) }];
   }));
   const errors = Object.values(roleAssignments).flatMap((assignment) => {
     if (runtime.engineCatalog && assignment.adapter === "unresolved") return [`Engine ${assignment.engineName} is not configured.`];
     if (assignment.executable && runtime.executableAvailable && !runtime.executableAvailable(assignment.executable)) return [`Executable ${assignment.executable} for engine ${assignment.engineName} is unavailable.`];
-    return [];
+    return assignment.validationErrors.map((message) => `Engine ${assignment.engineName}: ${message}`);
   });
   if (profile.configuration.reviewDepth === "full" && profile.configuration.roles.implementer === profile.configuration.roles.adversarialReviewer) errors.push("Full review depth requires an adversarial reviewer engine distinct from the implementer engine.");
   if (profile.configuration.draftPrPolicy === "automatic" && profile.configuration.pushPolicy !== "automatic") errors.push("Automatic draft pull-request publication requires automatic push policy.");
