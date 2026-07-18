@@ -280,7 +280,22 @@ describe("tracker CLI", () => {
       "attachments",
       "activity",
       "savedViews",
-      "templates"
+      "templates",
+      "repositories",
+      "projectRepositories",
+      "issueRepositories",
+      "orchestrationProfiles",
+      "agentRuns",
+      "runRepositories",
+      "runAttempts",
+      "runParticipants",
+      "runEvents",
+      "runArtifacts",
+      "runInputRequests",
+      "runVerifications",
+      "runReviewFindings",
+      "runActions",
+      "supervisorInstances"
     ]);
     expect(snapshot.workspace.name).toBe("Local Workspace");
     expect(snapshot.config.map((entry) => entry.key)).toEqual([

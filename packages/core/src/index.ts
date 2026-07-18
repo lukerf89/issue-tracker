@@ -10,6 +10,53 @@ export {
 } from "./errors.js";
 export { identifier, uuid } from "./ids.js";
 export {
+  engineAdapterSchema,
+  engineCapabilitiesSchema,
+  engineCatalogSchema,
+  engineDefinitionSchema,
+  type EngineCatalog,
+  type EngineDefinition
+} from "./schemas/engine.js";
+export {
+  commandSpecSchema,
+  addRepositoryInputSchema,
+  repositoryRefSchema,
+  listRepositoriesInputSchema,
+  associateRepositoryInputSchema,
+  type CommandSpec,
+  type AddRepositoryInput,
+  type AssociateRepositoryInput
+} from "./schemas/repository.js";
+export {
+  orchestrationRoleSchema,
+  profileConfigurationSchema,
+  addProfileInputSchema,
+  profileRefSchema,
+  listProfilesInputSchema,
+  type ProfileConfiguration,
+  type AddProfileInput
+} from "./schemas/profile.js";
+export {
+  runPhaseSchema,
+  runStateSchema,
+  terminalRunStateSchema,
+  verificationClassificationSchema,
+  previewRunInputSchema,
+  startRunInputSchema,
+  runRefSchema,
+  listRunsInputSchema,
+  listRunEventsInputSchema,
+  transitionRunInputSchema,
+  recordProviderEventInputSchema,
+  respondRunInputSchema,
+  resolvePermissionInputSchema,
+  retryRunInputSchema,
+  type RunPhase,
+  type RunState,
+  type PreviewRunInput,
+  type StartRunInput
+} from "./schemas/run.js";
+export {
   inTransaction,
   type ServiceContext,
   type ServiceDb,
@@ -186,6 +233,88 @@ export {
   type ArchiveTeamInput,
   type CreateTeamInput
 } from "./services/team.js";
+export {
+  addRepository,
+  listRepositories,
+  getRepository,
+  archiveRepository,
+  associateRepository,
+  resolveIssueRepositories,
+  createNodeRepositoryInspector,
+  type RepositoryInspection,
+  type RepositoryInspector
+} from "./services/repository.js";
+export {
+  BUILTIN_PROFILE_NAME,
+  builtinProfileInput,
+  ensureBuiltinProfile,
+  addProfile,
+  listProfiles,
+  getProfile,
+  archiveProfile,
+  setDefaultProfile
+} from "./services/profile.js";
+export {
+  loadEngineCatalog,
+  resolveEngineCatalogPath,
+  createNodeEngineCatalogRuntime,
+  validateEngineCatalog,
+  getEngine,
+  type EngineCatalogRuntime,
+  type EngineDiagnostic
+} from "./services/engine.js";
+export {
+  previewRun,
+  startRun,
+  getRun,
+  listRuns,
+  listRunEvents,
+  appendRunEvent,
+  recordArtifact,
+  archiveRun,
+  type RunResolutionRuntime
+} from "./services/run.js";
+export {
+  registerSupervisor,
+  heartbeatSupervisor,
+  getSupervisorHealth,
+  claimRunAction,
+  heartbeatRunAction,
+  completeRunAction,
+  failRunAction,
+  releaseExpiredRunActions,
+  type ClaimRunActionInput
+} from "./services/run-action.js";
+export {
+  requestRunInput,
+  respondToRunInput,
+  resolveRunPermission,
+  requestRunStop,
+  confirmRunStopped,
+  markRunStalled,
+  retryRun,
+  startFallbackAttempt,
+  resumeRun,
+  nudgeRun
+} from "./services/run-input.js";
+export {
+  startRunParticipant,
+  recordProviderEvent,
+  recordParticipantProcess,
+  heartbeatRunParticipant,
+  recordProcessExit,
+  recordVerification,
+  recordReviewFinding,
+  reconcileReview,
+  resolveReviewFindings,
+  completeRunWorkflow,
+  requestRunPublication,
+  failRun,
+  cancelRun,
+  markRunCrashed
+} from "./services/run-workflow.js";
+export { requestRunCleanup, assertContained } from "./services/run-cleanup.js";
+export { getRunMetrics } from "./services/run-metrics.js";
 export {
   listActivityInputSchema,
   listActivitySinceInputSchema,

@@ -10,7 +10,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -b && chmod +x packages/cli/dist/index.js && npm run build -w @issue-tracker/web",
+    "build": "tsc -b && chmod +x packages/cli/dist/index.js packages/agentd/dist/index.js && npm run build -w @issue-tracker/web",
     "test": "vitest run --config vitest.workspace.ts",
     "typecheck": "tsc -b --pretty false && npm run typecheck -w @issue-tracker/web",
     "lint": "eslint .",

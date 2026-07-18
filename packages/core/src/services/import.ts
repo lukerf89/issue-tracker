@@ -3,18 +3,33 @@ import { z } from "zod";
 import { inTransaction, type ServiceContext, type ServiceTransaction } from "../context.js";
 import {
   activity,
+  agentRuns,
   actors,
   attachments,
   comments,
   config,
   cycles,
   issueDependencies,
+  issueRepositories,
   issueLabels,
   issues,
   labels,
   milestones,
+  orchestrationProfiles,
+  projectRepositories,
   projects,
+  repositories,
+  runActions,
+  runArtifacts,
+  runAttempts,
+  runEvents,
+  runInputRequests,
+  runParticipants,
+  runRepositories,
+  runReviewFindings,
+  runVerifications,
   savedViews,
+  supervisorInstances,
   teams,
   templates,
   workflowStates,
@@ -50,6 +65,10 @@ export interface ImportSnapshotSummary {
   activity: number;
   savedViews: number;
   templates: number;
+  repositories: number;
+  orchestrationProfiles: number;
+  agentRuns: number;
+  runEvents: number;
 }
 
 const workflowStateTypeSchema = z.enum([
@@ -247,6 +266,22 @@ export const importSnapshotSchema = z.strictObject({
   activity: z.array(activitySnapshotSchema),
   savedViews: z.array(savedViewSnapshotSchema),
   templates: z.array(templateSnapshotSchema)
+  ,repositories: z.array(z.unknown()).default([])
+  ,projectRepositories: z.array(z.unknown()).default([])
+  ,issueRepositories: z.array(z.unknown()).default([])
+  ,orchestrationProfiles: z.array(z.unknown()).default([])
+  ,agentRuns: z.array(z.unknown()).default([])
+  ,runRepositories: z.array(z.unknown()).default([])
+  ,runAttempts: z.array(z.unknown()).default([])
+  ,runParticipants: z.array(z.unknown()).default([])
+  ,runEvents: z.array(z.unknown()).default([])
+  ,runArtifacts: z.array(z.unknown()).default([])
+  ,runInputRequests: z.array(z.unknown()).default([])
+  ,runVerifications: z.array(z.unknown()).default([])
+  ,runReviewFindings: z.array(z.unknown()).default([])
+  ,runActions: z.array(z.unknown()).default([])
+  ,supervisorInstances: z.array(z.unknown()).default([])
+  ,rawLogs: z.array(z.unknown()).optional()
 });
 
 export type ImportSnapshot = z.infer<typeof importSnapshotSchema>;
@@ -276,6 +311,8 @@ export function importSnapshot(
       txContext.db.insert(workflowStates).values(parsed.workflowStates).run();
     }
     if (parsed.projects.length > 0) txContext.db.insert(projects).values(parsed.projects).run();
+    if (parsed.repositories.length > 0) txContext.db.insert(repositories).values(parsed.repositories as Array<typeof repositories.$inferInsert>).run();
+    if (parsed.orchestrationProfiles.length > 0) txContext.db.insert(orchestrationProfiles).values(parsed.orchestrationProfiles as Array<typeof orchestrationProfiles.$inferInsert>).run();
     if (parsed.milestones.length > 0) {
       txContext.db.insert(milestones).values(parsed.milestones).run();
     }
@@ -296,6 +333,8 @@ export function importSnapshot(
     if (parsed.issueDependencies.length > 0) {
       txContext.db.insert(issueDependencies).values(parsed.issueDependencies).run();
     }
+    if (parsed.projectRepositories.length > 0) txContext.db.insert(projectRepositories).values(parsed.projectRepositories as Array<typeof projectRepositories.$inferInsert>).run();
+    if (parsed.issueRepositories.length > 0) txContext.db.insert(issueRepositories).values(parsed.issueRepositories as Array<typeof issueRepositories.$inferInsert>).run();
 
     const orderedComments = orderByParent(parsed.comments, "comment");
     if (orderedComments.length > 0) txContext.db.insert(comments).values(orderedComments).run();
@@ -303,6 +342,17 @@ export function importSnapshot(
       txContext.db.insert(attachments).values(parsed.attachments).run();
     }
     if (parsed.activity.length > 0) txContext.db.insert(activity).values(parsed.activity).run();
+    if (parsed.agentRuns.length > 0) txContext.db.insert(agentRuns).values(parsed.agentRuns as Array<typeof agentRuns.$inferInsert>).run();
+    if (parsed.runRepositories.length > 0) txContext.db.insert(runRepositories).values(parsed.runRepositories as Array<typeof runRepositories.$inferInsert>).run();
+    if (parsed.runAttempts.length > 0) txContext.db.insert(runAttempts).values(parsed.runAttempts as Array<typeof runAttempts.$inferInsert>).run();
+    if (parsed.runParticipants.length > 0) txContext.db.insert(runParticipants).values(parsed.runParticipants as Array<typeof runParticipants.$inferInsert>).run();
+    if (parsed.runEvents.length > 0) txContext.db.insert(runEvents).values(parsed.runEvents as Array<typeof runEvents.$inferInsert>).run();
+    if (parsed.runArtifacts.length > 0) txContext.db.insert(runArtifacts).values(parsed.runArtifacts as Array<typeof runArtifacts.$inferInsert>).run();
+    if (parsed.runInputRequests.length > 0) txContext.db.insert(runInputRequests).values(parsed.runInputRequests as Array<typeof runInputRequests.$inferInsert>).run();
+    if (parsed.runVerifications.length > 0) txContext.db.insert(runVerifications).values(parsed.runVerifications as Array<typeof runVerifications.$inferInsert>).run();
+    if (parsed.runReviewFindings.length > 0) txContext.db.insert(runReviewFindings).values(parsed.runReviewFindings as Array<typeof runReviewFindings.$inferInsert>).run();
+    if (parsed.runActions.length > 0) txContext.db.insert(runActions).values(parsed.runActions as Array<typeof runActions.$inferInsert>).run();
+    if (parsed.supervisorInstances.length > 0) txContext.db.insert(supervisorInstances).values(parsed.supervisorInstances as Array<typeof supervisorInstances.$inferInsert>).run();
 
     return summarizeSnapshot(parsed);
   });
@@ -394,12 +444,27 @@ function existingWorkspaceTables(context: ServiceContext & { db: ServiceTransact
     ["activity", context.db.query.activity.findFirst().sync()],
     ["saved_views", context.db.query.savedViews.findFirst().sync()],
     ["templates", context.db.query.templates.findFirst().sync()]
+    ,["repositories", context.db.query.repositories.findFirst().sync()]
+    ,["agent_runs", context.db.query.agentRuns.findFirst().sync()]
   ];
 
   return checks.filter(([, row]) => row !== undefined).map(([name]) => name);
 }
 
 function clearWorkspace(context: ServiceContext & { db: ServiceTransaction }): void {
+  context.db.delete(runActions).run();
+  context.db.delete(runReviewFindings).run();
+  context.db.delete(runVerifications).run();
+  context.db.delete(runInputRequests).run();
+  context.db.delete(runArtifacts).run();
+  context.db.delete(runEvents).run();
+  context.db.delete(runParticipants).run();
+  context.db.delete(runAttempts).run();
+  context.db.delete(runRepositories).run();
+  context.db.delete(agentRuns).run();
+  context.db.delete(supervisorInstances).run();
+  context.db.delete(issueRepositories).run();
+  context.db.delete(projectRepositories).run();
   context.db.delete(activity).run();
   context.db.delete(attachments).run();
   context.db.delete(comments).run();
@@ -410,6 +475,8 @@ function clearWorkspace(context: ServiceContext & { db: ServiceTransaction }): v
   context.db.delete(savedViews).run();
   context.db.delete(milestones).run();
   context.db.delete(projects).run();
+  context.db.delete(orchestrationProfiles).run();
+  context.db.delete(repositories).run();
   context.db.delete(cycles).run();
   context.db.delete(workflowStates).run();
   context.db.delete(labels).run();
@@ -486,5 +553,9 @@ function summarizeSnapshot(snapshot: ImportSnapshot): ImportSnapshotSummary {
     activity: snapshot.activity.length,
     savedViews: snapshot.savedViews.length,
     templates: snapshot.templates.length
+    ,repositories: snapshot.repositories.length
+    ,orchestrationProfiles: snapshot.orchestrationProfiles.length
+    ,agentRuns: snapshot.agentRuns.length
+    ,runEvents: snapshot.runEvents.length
   };
 }

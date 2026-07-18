@@ -1,11 +1,12 @@
 import { eq } from "drizzle-orm";
 
 import { inTransaction, type ServiceContext } from "../context.js";
-import { actors, config, workspace } from "../db/schema.js";
+import { actors, config, orchestrationProfiles, workspace } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { uuid } from "../ids.js";
 import { ConfigKey, setConfigInTransaction } from "./config.js";
 import { createTeamInTransaction } from "./team.js";
+import { builtinProfileInput } from "./profile.js";
 
 export interface InitInput {
   workspaceName?: string;
@@ -56,6 +57,12 @@ export function init(context: ServiceContext, input: InitInput = {}) {
     };
 
     txContext.db.insert(actors).values(actor).run();
+    const profile = builtinProfileInput();
+    txContext.db.insert(orchestrationProfiles).values({
+      id: uuid(), name: profile.name, workflow: profile.workflow, schemaVersion: 1,
+      configuration: profile.configuration, isDefault: true, isBuiltin: true,
+      archivedAt: null, createdAt: now, updatedAt: now
+    }).run();
     setConfigInTransaction(txContext, ConfigKey.DEFAULT_TEAM, team.id);
     setConfigInTransaction(txContext, ConfigKey.DEFAULT_ACTOR, actor.id);
 

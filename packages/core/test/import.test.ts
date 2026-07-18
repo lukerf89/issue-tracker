@@ -71,7 +71,11 @@ describe("importSnapshot", () => {
         attachments: 1,
         activity: snapshot.activity.length,
         savedViews: 1,
-        templates: 1
+        templates: 1,
+        repositories: 0,
+        orchestrationProfiles: 1,
+        agentRuns: 0,
+        runEvents: 0
       });
       expect(exportSnapshot(destination.context)).toEqual(snapshot);
 
@@ -136,7 +140,22 @@ describe("importSnapshot", () => {
         attachments: [],
         activity: [],
         savedViews: [],
-        templates: []
+        templates: [],
+        repositories: [],
+        projectRepositories: [],
+        issueRepositories: [],
+        orchestrationProfiles: [],
+        agentRuns: [],
+        runRepositories: [],
+        runAttempts: [],
+        runParticipants: [],
+        runEvents: [],
+        runArtifacts: [],
+        runInputRequests: [],
+        runVerifications: [],
+        runReviewFindings: [],
+        runActions: [],
+        supervisorInstances: []
       });
     } finally {
       destination.close();

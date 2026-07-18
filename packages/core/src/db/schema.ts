@@ -1,11 +1,14 @@
 import { relations, sql, type InferInsertModel, type InferSelectModel } from "drizzle-orm";
 import {
+  check,
+  index,
   integer,
   primaryKey,
   real,
   sqliteTable,
   text,
   unique,
+  uniqueIndex,
   type AnySQLiteColumn
 } from "drizzle-orm/sqlite-core";
 
@@ -233,6 +236,257 @@ export const templates = sqliteTable("templates", {
   updatedAt: text("updated_at").notNull()
 });
 
+export const repositories = sqliteTable(
+  "repositories",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    canonicalPath: text("canonical_path").notNull(),
+    commonDir: text("common_dir").notNull(),
+    defaultBranch: text("default_branch").notNull(),
+    remote: text("remote"),
+    setupCommand: text("setup_command", { mode: "json" }),
+    testCommand: text("test_command", { mode: "json" }).notNull(),
+    verificationCommand: text("verification_command", { mode: "json" }).notNull(),
+    archivedAt: text("archived_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull()
+  },
+  (table) => [
+    unique("repositories_name_unique").on(table.name),
+    unique("repositories_canonical_path_unique").on(table.canonicalPath),
+    unique("repositories_common_dir_unique").on(table.commonDir)
+  ]
+);
+
+export const projectRepositories = sqliteTable(
+  "project_repositories",
+  {
+    projectId: text("project_id").notNull().references(() => projects.id),
+    repositoryId: text("repository_id").notNull().references(() => repositories.id),
+    position: integer("position").notNull(),
+    isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false)
+  },
+  (table) => [
+    primaryKey({ columns: [table.projectId, table.repositoryId] }),
+    unique("project_repositories_position_unique").on(table.projectId, table.position),
+    uniqueIndex("project_repositories_one_default")
+      .on(table.projectId)
+      .where(sql`${table.isDefault} = 1`)
+  ]
+);
+
+export const issueRepositories = sqliteTable(
+  "issue_repositories",
+  {
+    issueId: text("issue_id").notNull().references(() => issues.id),
+    repositoryId: text("repository_id").notNull().references(() => repositories.id),
+    position: integer("position").notNull(),
+    overrideKind: text("override_kind", { enum: ["replace", "additional"] }).notNull().default("replace")
+  },
+  (table) => [
+    primaryKey({ columns: [table.issueId, table.repositoryId] }),
+    unique("issue_repositories_position_unique").on(table.issueId, table.position)
+  ]
+);
+
+export const orchestrationProfiles = sqliteTable("orchestration_profiles", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull().unique("orchestration_profiles_name_unique"),
+  workflow: text("workflow").notNull(),
+  schemaVersion: integer("schema_version").notNull(),
+  configuration: text("configuration", { mode: "json" }).notNull(),
+  isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+  isBuiltin: integer("is_builtin", { mode: "boolean" }).notNull().default(false),
+  archivedAt: text("archived_at"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull()
+}, (table) => [uniqueIndex("orchestration_profiles_one_default").on(table.isDefault).where(sql`${table.isDefault} = 1 AND ${table.archivedAt} IS NULL`)]);
+
+export const agentRuns = sqliteTable(
+  "agent_runs",
+  {
+    id: text("id").primaryKey(),
+    issueId: text("issue_id").notNull().references(() => issues.id),
+    profileId: text("profile_id").references(() => orchestrationProfiles.id),
+    workflow: text("workflow").notNull(),
+    workflowVersion: integer("workflow_version").notNull(),
+    schemaVersion: integer("schema_version").notNull(),
+    resolvedConfiguration: text("resolved_configuration", { mode: "json" }).notNull(),
+    phase: text("phase", { enum: ["preflight", "plan", "implement", "verify", "review", "finalize", "complete"] }).notNull(),
+    state: text("state", { enum: ["queued", "provisioning", "running", "waiting_for_input", "blocked", "stalled", "succeeded", "partial", "failed", "canceled", "crashed"] }).notNull(),
+    primaryRepositoryId: text("primary_repository_id").notNull().references(() => repositories.id),
+    baseRef: text("base_ref").notNull(),
+    baseCommit: text("base_commit").notNull(),
+    branch: text("branch").notNull(),
+    worktreePath: text("worktree_path").notNull(),
+    parallelGroup: text("parallel_group"),
+    eventCounter: integer("event_counter").notNull().default(0),
+    attemptCounter: integer("attempt_counter").notNull().default(0),
+    startedAt: text("started_at"),
+    lastEventAt: text("last_event_at").notNull(),
+    lastProgressAt: text("last_progress_at").notNull(),
+    completedAt: text("completed_at"),
+    outcome: text("outcome"),
+    error: text("error", { mode: "json" }),
+    archivedAt: text("archived_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull()
+  },
+  (table) => [
+    unique("agent_runs_worktree_unique").on(table.worktreePath),
+    uniqueIndex("agent_runs_one_active_per_issue").on(table.issueId).where(sql`${table.completedAt} IS NULL AND ${table.parallelGroup} IS NULL`),
+    uniqueIndex("agent_runs_parallel_group_unique").on(table.issueId, table.parallelGroup).where(sql`${table.parallelGroup} IS NOT NULL`),
+    index("agent_runs_state_created_idx").on(table.state, table.createdAt),
+    check("agent_runs_terminal_timestamp", sql`(${table.state} IN ('succeeded','partial','failed','canceled','crashed') AND ${table.completedAt} IS NOT NULL) OR (${table.state} NOT IN ('succeeded','partial','failed','canceled','crashed') AND ${table.completedAt} IS NULL)`)
+  ]
+);
+
+export const runRepositories = sqliteTable("run_repositories", {
+  runId: text("run_id").notNull().references(() => agentRuns.id),
+  repositoryId: text("repository_id").notNull().references(() => repositories.id),
+  position: integer("position").notNull(),
+  baseRef: text("base_ref").notNull(),
+  baseCommit: text("base_commit").notNull(),
+  worktreePath: text("worktree_path").notNull(),
+  branch: text("branch").notNull(),
+  isPrimary: integer("is_primary", { mode: "boolean" }).notNull()
+}, (table) => [primaryKey({ columns: [table.runId, table.repositoryId] }), unique("run_repositories_path_unique").on(table.worktreePath)]);
+
+export const runAttempts = sqliteTable("run_attempts", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => agentRuns.id),
+  number: integer("number").notNull(),
+  reason: text("reason").notNull(),
+  requestedEngine: text("requested_engine", { mode: "json" }).notNull(),
+  actualEngine: text("actual_engine", { mode: "json" }),
+  state: text("state", { enum: ["queued", "running", "succeeded", "failed", "canceled", "crashed"] }).notNull(),
+  startedAt: text("started_at"),
+  completedAt: text("completed_at"),
+  result: text("result", { mode: "json" }),
+  error: text("error", { mode: "json" }),
+  createdAt: text("created_at").notNull()
+}, (table) => [unique("run_attempts_number_unique").on(table.runId, table.number), uniqueIndex("run_attempts_one_active").on(table.runId).where(sql`${table.completedAt} IS NULL`)]);
+
+export const runParticipants = sqliteTable("run_participants", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => agentRuns.id),
+  attemptId: text("attempt_id").notNull().references(() => runAttempts.id),
+  actor: text("actor").notNull(),
+  role: text("role").notNull(),
+  adapter: text("adapter").notNull(),
+  requestedModel: text("requested_model").notNull(),
+  actualModel: text("actual_model"),
+  providerSessionId: text("provider_session_id"),
+  capabilities: text("capabilities", { mode: "json" }).notNull(),
+  processIdentity: text("process_identity", { mode: "json" }),
+  state: text("state", { enum: ["queued", "running", "waiting", "succeeded", "failed", "stopped", "crashed"] }).notNull(),
+  startedAt: text("started_at"),
+  lastHeartbeatAt: text("last_heartbeat_at"),
+  completedAt: text("completed_at")
+});
+
+export const runEvents = sqliteTable("run_events", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => agentRuns.id),
+  sequence: integer("sequence").notNull(),
+  attemptId: text("attempt_id").references(() => runAttempts.id),
+  participantId: text("participant_id").references(() => runParticipants.id),
+  type: text("type").notNull(),
+  schemaVersion: integer("schema_version").notNull(),
+  data: text("data", { mode: "json" }).notNull(),
+  providerEventId: text("provider_event_id"),
+  createdAt: text("created_at").notNull()
+}, (table) => [unique("run_events_sequence_unique").on(table.runId, table.sequence), uniqueIndex("run_events_provider_unique").on(table.participantId, table.providerEventId).where(sql`${table.providerEventId} IS NOT NULL`)]);
+
+export const runArtifacts = sqliteTable("run_artifacts", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => agentRuns.id),
+  attemptId: text("attempt_id").references(() => runAttempts.id),
+  kind: text("kind").notNull(),
+  title: text("title").notNull(),
+  localPath: text("local_path"),
+  url: text("url"),
+  sha256: text("sha256"),
+  metadata: text("metadata", { mode: "json" }).notNull(),
+  attachmentId: text("attachment_id").references(() => attachments.id),
+  removedAt: text("removed_at"),
+  createdAt: text("created_at").notNull()
+});
+
+export const runInputRequests = sqliteTable("run_input_requests", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => agentRuns.id),
+  participantId: text("participant_id").notNull().references(() => runParticipants.id),
+  kind: text("kind", { enum: ["input", "permission"] }).notNull(),
+  prompt: text("prompt").notNull(),
+  operation: text("operation", { mode: "json" }),
+  blocking: integer("blocking", { mode: "boolean" }).notNull(),
+  state: text("state", { enum: ["pending", "approved", "denied", "answered", "expired"] }).notNull(),
+  response: text("response"),
+  requestedBy: text("requested_by").notNull(),
+  respondedBy: text("responded_by"),
+  requestedAt: text("requested_at").notNull(),
+  respondedAt: text("responded_at")
+});
+
+export const runVerifications = sqliteTable("run_verifications", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => agentRuns.id),
+  attemptId: text("attempt_id").notNull().references(() => runAttempts.id),
+  commitSha: text("commit_sha").notNull(),
+  command: text("command", { mode: "json" }).notNull(),
+  startedAt: text("started_at").notNull(),
+  completedAt: text("completed_at").notNull(),
+  exitCode: integer("exit_code"),
+  classification: text("classification", { enum: ["clean", "honest_partial", "fixable_partial", "audit_drift", "blocked", "engine_failure"] }).notNull(),
+  logArtifactId: text("log_artifact_id").references(() => runArtifacts.id),
+  summary: text("summary", { mode: "json" }).notNull()
+});
+
+export const runReviewFindings = sqliteTable("run_review_findings", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => agentRuns.id),
+  participantId: text("participant_id").notNull().references(() => runParticipants.id),
+  fingerprint: text("fingerprint").notNull(),
+  severity: text("severity", { enum: ["info", "warning", "blocking"] }).notNull(),
+  source: text("source", { enum: ["binding", "adversarial"] }).notNull(),
+  file: text("file"),
+  location: text("location"),
+  summary: text("summary").notNull(),
+  evidence: text("evidence").notNull(),
+  resolution: text("resolution"),
+  reconciliation: text("reconciliation", { enum: ["agreed", "binding_only", "adversary_only"] }),
+  createdAt: text("created_at").notNull()
+}, (table) => [unique("run_review_findings_fingerprint_unique").on(table.runId, table.participantId, table.fingerprint)]);
+
+export const runActions = sqliteTable("run_actions", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => agentRuns.id),
+  attemptId: text("attempt_id").references(() => runAttempts.id),
+  kind: text("kind").notNull(),
+  idempotencyKey: text("idempotency_key").notNull().unique("run_actions_idempotency_unique"),
+  payload: text("payload", { mode: "json" }).notNull(),
+  state: text("state", { enum: ["queued", "claimed", "completed", "failed", "canceled"] }).notNull(),
+  leaseOwner: text("lease_owner"),
+  leaseExpiresAt: text("lease_expires_at"),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  result: text("result", { mode: "json" }),
+  error: text("error", { mode: "json" }),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+  completedAt: text("completed_at")
+}, (table) => [index("run_actions_claim_idx").on(table.state, table.createdAt)]);
+
+export const supervisorInstances = sqliteTable("supervisor_instances", {
+  id: text("id").primaryKey(),
+  processIdentity: text("process_identity", { mode: "json" }).notNull(),
+  version: text("version").notNull(),
+  capabilities: text("capabilities", { mode: "json" }).notNull(),
+  startedAt: text("started_at").notNull(),
+  lastHeartbeatAt: text("last_heartbeat_at").notNull()
+});
+
 export const workspaceRelations = relations(workspace, () => ({}));
 
 export const configRelations = relations(config, () => ({}));
@@ -424,3 +678,16 @@ export type SavedView = InferSelectModel<typeof savedViews>;
 export type NewSavedView = InferInsertModel<typeof savedViews>;
 export type Template = InferSelectModel<typeof templates>;
 export type NewTemplate = InferInsertModel<typeof templates>;
+export type Repository = InferSelectModel<typeof repositories>;
+export type NewRepository = InferInsertModel<typeof repositories>;
+export type OrchestrationProfile = InferSelectModel<typeof orchestrationProfiles>;
+export type AgentRun = InferSelectModel<typeof agentRuns>;
+export type RunAttempt = InferSelectModel<typeof runAttempts>;
+export type RunParticipant = InferSelectModel<typeof runParticipants>;
+export type RunEvent = InferSelectModel<typeof runEvents>;
+export type RunArtifact = InferSelectModel<typeof runArtifacts>;
+export type RunInputRequest = InferSelectModel<typeof runInputRequests>;
+export type RunVerification = InferSelectModel<typeof runVerifications>;
+export type RunReviewFinding = InferSelectModel<typeof runReviewFindings>;
+export type RunAction = InferSelectModel<typeof runActions>;
+export type SupervisorInstance = InferSelectModel<typeof supervisorInstances>;

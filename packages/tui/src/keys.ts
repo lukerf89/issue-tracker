@@ -27,6 +27,9 @@ export type LinekeeperKeyAction =
   | { type: "openSelected" }
   | { type: "pageSelection"; delta: -1 | 1 }
   | { type: "toggleHelp" }
+  | { type: "previewRun" }
+  | { type: "stopRun" }
+  | { type: "toggleFleet" }
   | { type: "none" };
 
 const normalModeKeys: Record<string, LinekeeperCommandKind> = {
@@ -41,6 +44,7 @@ const normalModeKeys: Record<string, LinekeeperCommandKind> = {
   c: "comment",
   s: "subIssue",
   b: "link"
+  ,e: "runResponse"
 };
 
 export function mapKeyToLinekeeperAction(
@@ -61,6 +65,9 @@ export function mapKeyToLinekeeperAction(
   if (input === "q") return { type: "quit" };
   if (key.tab) return key.shift ? { type: "focusPrevious" } : { type: "focusNext" };
   if (input === "?") return { type: "toggleHelp" };
+  if (input === "r") return { type: "previewRun" };
+  if (input === "x") return { type: "stopRun" };
+  if (input === "F") return { type: "toggleFleet" };
 
   // Focus-specific navigation. The list is the default full-screen view; the
   // detail view is opened with Enter and scrolls its own body.

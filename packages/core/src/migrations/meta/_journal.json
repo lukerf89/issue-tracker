@@ -43,6 +43,20 @@
       "when": 1784570000000,
       "tag": "0005_add_issue_fts",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1784347258460,
+      "tag": "0006_parched_power_pack",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1784349851335,
+      "tag": "0007_boring_lady_ursula",
+      "breakpoints": true
     }
   ]
 }

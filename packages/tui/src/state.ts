@@ -1,9 +1,10 @@
 export type LinekeeperFocus = "list" | "detail";
 
-export type LinekeeperSection = "metadata" | "subIssues" | "description" | "comments";
+export type LinekeeperSection = "metadata" | "runs" | "subIssues" | "description" | "comments";
 
 export const linekeeperSections: LinekeeperSection[] = [
   "metadata",
+  "runs",
   "subIssues",
   "description",
   "comments"
@@ -20,7 +21,8 @@ export type LinekeeperCommandKind =
   | "labels"
   | "comment"
   | "subIssue"
-  | "link";
+  | "link"
+  | "runResponse";
 
 export interface LinekeeperCommandMode {
   kind: LinekeeperCommandKind;

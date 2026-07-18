@@ -10,7 +10,7 @@ export default defineConfig({
         test: {
           environment: "node",
           hookTimeout: 30000,
-          include: ["packages/{core,cli,mcp,tui}/test/**/*.test.ts"],
+          include: ["packages/{core,cli,mcp,tui,agentd}/test/**/*.test.ts"],
           name: "backend",
           testTimeout: 30000
         }

@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `agent_runs_parallel_group_unique` ON `agent_runs` (`issue_id`,`parallel_group`) WHERE "agent_runs"."parallel_group" IS NOT NULL;

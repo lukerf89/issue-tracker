@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { applyMigrations, openDb } from "../src/index.js";
-import { actors, issues, savedViews, teams, templates, workflowStates } from "../src/db/schema.js";
+import { activity, actors, attachments, issues, savedViews, teams, templates, workflowStates } from "../src/db/schema.js";
 
 const tableNames = [
   "workspace",
@@ -27,6 +27,21 @@ const tableNames = [
   "labels",
   "issue_labels",
   "issue_dependencies",
+  "repositories",
+  "project_repositories",
+  "issue_repositories",
+  "orchestration_profiles",
+  "agent_runs",
+  "run_repositories",
+  "run_attempts",
+  "run_participants",
+  "run_events",
+  "run_artifacts",
+  "run_input_requests",
+  "run_verifications",
+  "run_review_findings",
+  "run_actions",
+  "supervisor_instances",
   "issues_fts",
   "comments",
   "actors",
@@ -231,6 +246,22 @@ describe("core database foundation", () => {
     } finally {
       db.$client.close();
     }
+  });
+
+  it("upgrades a populated pre-run database without changing issue history", () => {
+    const db = openTempDb();
+    try {
+      applyMigrations(db, { migrationsFolder: partialMigrationsFolder(["0000_initial", "0001_nebulous_medusa", "0002_puzzling_red_skull", "0003_add_blocked_workflow_state", "0004_add_issue_dependencies", "0005_add_issue_fts"]) });
+      insertIssueFixture(db);
+      db.insert(attachments).values({ id: "attachment-before-runs", issueId: "issue-eng-1", kind: "link", title: "Fictional design", url: "https://example.test/design", repoPath: null, remote: null, branchName: null, commitSha: null, createdAt: "2026-01-01T00:01:00.000Z" }).run();
+      db.insert(activity).values({ id: "activity-before-runs", issueId: "issue-eng-1", actorId: "actor-human", action: "linked", data: { title: "Fictional design" }, createdAt: "2026-01-01T00:01:00.000Z" }).run();
+
+      applyMigrations(db);
+
+      expect(db.query.issues.findFirst().sync()).toMatchObject({ id: "issue-eng-1", title: "Set up CI" });
+      expect(db.query.attachments.findFirst().sync()).toMatchObject({ id: "attachment-before-runs", title: "Fictional design" });
+      expect(db.query.activity.findFirst().sync()).toMatchObject({ id: "activity-before-runs", action: "linked", data: { title: "Fictional design" } });
+    } finally { db.$client.close(); }
   });
 });
 
