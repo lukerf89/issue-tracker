@@ -62,10 +62,12 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     const settings = launch.permissionHook ? writePermissionSettings(launch.permissionHook) : null;
     if (settings) args.push("--settings", settings.path);
     // The mode stays `default` deliberately: the hook grants permission per call, so nothing is
-    // pre-approved and no blanket acceptEdits or bypassPermissions grant is ever issued.
+    // pre-approved and no blanket acceptEdits or bypassPermissions grant is ever issued. The hook
+    // resolves read operands against the worktree root below; omitting it silently disables all
+    // read-only auto-approval, so every launch path that installs the hook must provide this root.
     args.push("--permission-mode", "default");
     args.push(launch.prompt);
-    const env = { ...providerEnvironment(launch.env), ...settings?.env, ...(settings ? { ISSUE_TRACKER_PARTICIPANT_ID: launch.participantId } : {}) };
+    const env = { ...providerEnvironment(launch.env), ...settings?.env, ...(settings ? { ISSUE_TRACKER_PARTICIPANT_ID: launch.participantId, ISSUE_TRACKER_WORKTREE_ROOT: launch.workingDirectory } : {}) };
     try {
       return await this.collect(launch, args, env, signal);
     } finally {

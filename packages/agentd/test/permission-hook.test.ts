@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -127,8 +127,8 @@ function setup() {
   db.$client.prepare("update run_participants set state = ?, started_at = ? where id = ?").run("running", context.clock.now().toISOString(), planner.id);
 
   return {
-    context, runId: started.id, participantId: planner.id,
-    env: () => ({ ISSUE_TRACKER_DB: dbPath, ISSUE_TRACKER_RUN_ID: started.id, ISSUE_TRACKER_PARTICIPANT_ID: planner.id }),
+    context, runId: started.id, participantId: planner.id, worktreeRoot: root,
+    env: () => ({ ISSUE_TRACKER_DB: dbPath, ISSUE_TRACKER_RUN_ID: started.id, ISSUE_TRACKER_PARTICIPANT_ID: planner.id, ISSUE_TRACKER_WORKTREE_ROOT: root }),
     close: () => db.$client.close()
   };
 }
@@ -266,6 +266,17 @@ describe("read-only auto-approval", () => {
     }
   });
 
+  it("gates recursive readers whose -R dereferences an in-tree symlink out of the worktree", () => {
+    // Operand confinement resolves only the literal operand; `grep -R . `/`ls -R .` then follow an
+    // in-tree symlink pointing outside. `-R` is therefore not a safe flag for grep or ls.
+    for (const command of ["grep -R AKIA .", "grep -R secret src", "ls -R", "ls -R ."]) {
+      expect(isReadOnlyCommand(command), `${command} must NOT be auto-approved`).toBe(false);
+    }
+    // `-r` stays: it recurses within the worktree without dereferencing symlinks.
+    expect(isReadOnlyCommand("grep -r AKIA src")).toBe(true);
+    expect(isReadOnlyCommand("ls -r")).toBe(true);
+  });
+
   it("gates every non-Bash mutating tool regardless of the allowlist", () => {
     expect(isAutoApprovable({ tool_name: "Write", tool_input: { file_path: "/x", content: "y" } })).toBe(false);
     expect(isAutoApprovable({ tool_name: "Edit", tool_input: { file_path: "/x" } })).toBe(false);
@@ -277,7 +288,7 @@ describe("read-only auto-approval", () => {
   it("records an audit event for an auto-approval without queueing a human decision", async () => {
     const fixture = setup();
     try {
-      const call = JSON.stringify({ session_id: "s", tool_name: "Bash", tool_input: { command: "git status" } });
+      const call = JSON.stringify({ session_id: "s", tool_name: "Bash", cwd: fixture.worktreeRoot, tool_input: { command: "git status" } });
       expect(decisionOf(await runPermissionHook(call, fixture.env()))).toMatchObject({ permissionDecision: "allow" });
 
       const run = getRun(fixture.context, fixture.runId);
@@ -297,5 +308,54 @@ describe("read-only auto-approval", () => {
       expect(result).toMatchObject({ permissionDecision: "deny" });
       expect(getRun(fixture.context, fixture.runId).inputRequests.filter((request) => request.kind === "permission")).toHaveLength(1);
     } finally { fixture.close(); }
+  });
+});
+
+describe("worktree-confined auto-approval (resolution)", () => {
+  function worktree() {
+    const outside = mkdtempSync(join(tmpdir(), "issue-tracker-outside-")); tempDirs.push(outside);
+    writeFileSync(join(outside, "secret.txt"), "AKIA-fictional\n");
+    const root = mkdtempSync(join(tmpdir(), "issue-tracker-wt-")); tempDirs.push(root);
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "GREETING.md"), "hi\n");
+    writeFileSync(join(root, "src", "index.ts"), "export {}\n");
+    symlinkSync(join(outside, "secret.txt"), join(root, "escape"));        // in-tree link -> outside worktree
+    symlinkSync(join(root, "src", "index.ts"), join(root, "inside-link")); // in-tree link -> inside worktree
+    return { root, outside };
+  }
+  const bash = (command: string, cwd: string) => ({ tool_name: "Bash", cwd, tool_input: { command } });
+
+  it("approves an in-worktree read and rejects one that resolves outside", () => {
+    const { root } = worktree();
+    expect(isAutoApprovable(bash("cat GREETING.md", root), root)).toBe(true);
+    expect(isAutoApprovable(bash("cat src/index.ts", root), root)).toBe(true);
+    expect(isAutoApprovable(bash("cat escape", root), root)).toBe(false);      // symlink escapes the worktree
+    expect(isAutoApprovable(bash("cat /etc/passwd", root), root)).toBe(false); // absolute path
+  });
+
+  it("still approves a symlink that resolves back inside the worktree", () => {
+    const { root } = worktree();
+    expect(isAutoApprovable(bash("cat inside-link", root), root)).toBe(true);
+  });
+
+  it("confines operand-less readers by cwd, not just operands", () => {
+    const { root, outside } = worktree();
+    expect(isAutoApprovable(bash("git status", root), root)).toBe(true);
+    expect(isAutoApprovable(bash("ls -la", join(root, "src")), root)).toBe(true); // in-tree subdir cwd
+    expect(isAutoApprovable(bash("ls -la", outside), root)).toBe(false);          // cwd outside the worktree
+    expect(isAutoApprovable(bash("git log", outside), root)).toBe(false);
+  });
+
+  it("resolves operands against the cwd, so a subdir cannot climb out", () => {
+    const { root } = worktree();
+    expect(isAutoApprovable(bash("cat index.ts", join(root, "src")), root)).toBe(true);
+    expect(isAutoApprovable(bash("cat ../escape", join(root, "src")), root)).toBe(false);
+  });
+
+  it("fails closed without a worktree root or with an out-of-tree cwd", () => {
+    const { root } = worktree();
+    expect(isAutoApprovable(bash("cat GREETING.md", root))).toBe(false);                       // no worktree root
+    expect(isAutoApprovable(bash("cat GREETING.md", root), "/tracker-nonexistent-root")).toBe(false);
+    expect(isAutoApprovable({ tool_name: "Bash", tool_input: { command: "git status" } }, root)).toBe(false); // no cwd
   });
 });
