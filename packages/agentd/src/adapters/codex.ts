@@ -2,8 +2,23 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { ProviderSandbox } from "../sandbox.js";
 import { isParticipantResult, participantResultOutputSchema, providerEnvironment, providerFailure, type ProviderAdapter, type ProviderLaunch, type ProviderProbe } from "./contract.js";
 import { parseJsonLines, runProcess } from "./process.js";
+
+/**
+ * Codex is never wrapped in the osSandbox Seatbelt jail: `codex exec` installs its own inner
+ * `--sandbox` Seatbelt profile, and nested Seatbelt profiles cannot be installed, so an outer
+ * sandbox-exec would break Codex's sandbox init or deny its helper's reads. The engine schema
+ * rejects `osSandbox: true` for codex engines; this returns null as defense-in-depth even if a
+ * launch somehow carries the flag.
+ */
+export function codexSandbox(launch: ProviderLaunch): ProviderSandbox | null {
+  // Read the flag only to make intent explicit: an osSandbox launch reaching the Codex adapter is
+  // a wiring bug (the engine schema rejects the combination), never a request to double-jail.
+  void launch.options?.osSandbox;
+  return null;
+}
 
 export class CodexAdapter implements ProviderAdapter {
   readonly name = "codex";
@@ -42,7 +57,7 @@ export class CodexAdapter implements ProviderAdapter {
     args.push(launch.prompt);
     let result;
     try {
-      result = await runProcess(launch.executable, args, { cwd: launch.workingDirectory, env: providerEnvironment(launch.env), signal, onProcess: launch.onProcess });
+      result = await runProcess(launch.executable, args, { cwd: launch.workingDirectory, env: providerEnvironment(launch.env), signal, onProcess: launch.onProcess, sandbox: codexSandbox(launch) });
     } finally {
       rmSync(schemaDirectory, { recursive: true, force: true });
     }
