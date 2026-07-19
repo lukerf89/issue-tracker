@@ -16,6 +16,7 @@ export const engineDefinitionSchema = z.object({
   model: z.string().min(1),
   reasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).optional(),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).optional(),
+  writableRoots: z.array(z.string().min(1)).optional(),
   permissionMode: z.enum(["prompt", "autonomous"]).default("prompt"),
   envNames: z.array(z.string().regex(/^[A-Z_][A-Z0-9_]*$/)).default([]),
   capabilities: engineCapabilitiesSchema.default({
@@ -29,6 +30,9 @@ export const engineDefinitionSchema = z.object({
 }).strict().superRefine((engine, context) => {
   if (engine.adapter === "claude-code" && (engine.reasoningEffort || engine.sandbox)) {
     context.addIssue({ code: "custom", message: "Claude Code does not support reasoningEffort or sandbox." });
+  }
+  if (engine.writableRoots && (engine.adapter !== "codex" || engine.sandbox !== "workspace-write")) {
+    context.addIssue({ code: "custom", message: "writableRoots requires Codex with the workspace-write sandbox." });
   }
   // Claude Code has no OS-level worktree sandbox, so autonomous mode is admissible only when the
   // engine declares interactive permissions: every mutating tool call is then adjudicated through a

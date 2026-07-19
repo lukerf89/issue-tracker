@@ -75,6 +75,13 @@ function appendExecutionOptions(args: string[], options?: Record<string, unknown
     if (resumed) args.push("--config", `sandbox_mode=${options.sandbox}`);
     else args.push("--sandbox", options.sandbox);
   }
+  const writableRoots = Array.isArray(options?.writableRoots) ? options.writableRoots.filter((root): root is string => typeof root === "string" && root.length > 0) : [];
+  if (writableRoots.length > 0) {
+    // `codex exec resume` also rejects --add-dir, so re-assert extra workspace-write roots through
+    // the config override accepted by resume instead of dropping them after the initial turn.
+    if (resumed) args.push("--config", `sandbox_workspace_write.writable_roots=${JSON.stringify(writableRoots)}`);
+    else for (const root of writableRoots) args.push("--add-dir", root);
+  }
   if (typeof options?.reasoningEffort === "string") args.push("--config", `model_reasoning_effort=${options.reasoningEffort}`);
 }
 

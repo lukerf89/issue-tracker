@@ -81,6 +81,27 @@ describe("provider participant-result transport schemas", () => {
     expect(resumed).toContain("sandbox_mode=read-only");
     expect(resumed.slice(0, 3)).toEqual(["exec", "resume", "session-1"]);
   });
+
+  it("forwards workspace-write extra writable roots on initial and resumed Codex turns", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tracker-codex-args-")); tempDirectories.push(directory);
+    const executable = join(directory, "provider");
+    const argsFile = join(directory, "args.txt");
+    writeFileSync(executable, `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsFile}'\necho '{"type":"item.completed","item":{"type":"agent_message","text":"{}"}}'\n`); chmodSync(executable, 0o700);
+    const launch = { participantId: "fictional", role: "implementer", executable, model: "m", workingDirectory: directory, prompt: "Fictional prompt", options: { sandbox: "workspace-write", writableRoots: ["/tmp/root-a", "/tmp/root-b"] } };
+
+    await new CodexAdapter().run(launch);
+    const initial = readFileSync(argsFile, "utf8").split("\n");
+    expect(initial.filter((arg) => arg === "--add-dir")).toHaveLength(2);
+    for (const root of launch.options.writableRoots) expect(initial[initial.indexOf(root) - 1]).toBe("--add-dir");
+
+    await new CodexAdapter().resume(launch, "session-1");
+    const resumed = readFileSync(argsFile, "utf8").split("\n");
+    expect(resumed).not.toContain("--add-dir");
+    const writableRootsConfig = 'sandbox_workspace_write.writable_roots=["/tmp/root-a","/tmp/root-b"]';
+    expect(resumed).toContain("--config");
+    expect(resumed[resumed.indexOf(writableRootsConfig) - 1]).toBe("--config");
+    expect(resumed).toContain("sandbox_mode=workspace-write");
+  });
 });
 
 function assertStrict(schema: Record<string, unknown>) {

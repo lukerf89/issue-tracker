@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,6 +9,7 @@ import { addRepository, applyMigrations, associateRepository, completeRunWorkflo
 
 import { ClaudeCodeAdapter } from "../src/adapters/claude-code.js";
 import { CodexAdapter } from "../src/adapters/codex.js";
+import { providerEnvironment, type ProviderLaunch } from "../src/adapters/contract.js";
 import { Supervisor } from "../src/supervisor.js";
 
 const temporaryDirectories: string[] = [];
@@ -17,6 +18,37 @@ afterEach(() => { for (const directory of temporaryDirectories.splice(0)) rmSync
 describe("live provider issue-delivery acceptance", () => {
   liveTest("claude-code", "ISSUE_TRACKER_E2E_CLAUDE", new ClaudeCodeAdapter());
   liveTest("codex", "ISSUE_TRACKER_E2E_CODEX", new CodexAdapter());
+
+  const enabled = process.env.ISSUE_TRACKER_E2E_CODEX === "1";
+  (enabled ? it : it.skip)("codex preserves the effective sandbox across an initial and resumed turn", async () => {
+    const root = mkdtempSync(join(tmpdir(), "issue-tracker-live-codex-sandbox-")); temporaryDirectories.push(root);
+    const workingDirectory = createRepository(root);
+    const launch: ProviderLaunch = {
+      participantId: "fictional-sandbox-participant",
+      role: "implementer",
+      executable: process.env.ISSUE_TRACKER_E2E_CODEX_EXECUTABLE ?? "codex",
+      model: process.env.ISSUE_TRACKER_E2E_CODEX_MODEL ?? "gpt-5.3-codex",
+      workingDirectory,
+      prompt: `Return only this structured no-op result: ${JSON.stringify({ role: "implementer", summary: "Sandbox acceptance check", files: [], tests: [], risks: [], findings: [], verifiedTestsPassed: true, riskNotes: [] })}`,
+      options: { sandbox: "read-only" },
+      env: providerEnvironment()
+    };
+    const adapter = new CodexAdapter();
+    const first = await adapter.run(launch);
+    if (first.failure && ["provider_authentication_failed", "provider_model_unavailable", "provider_process_crashed"].includes(first.failure.code)) return;
+    if (!first.sessionId) return;
+    expect(first.sessionId).toBeTruthy();
+    await adapter.resume(launch, first.sessionId);
+
+    const codexHome = process.env.CODEX_HOME ?? join(homedir(), ".codex");
+    const rolloutFile = findRolloutFile(join(codexHome, "sessions"), first.sessionId);
+    expect(rolloutFile, `no rollout file found for Codex session ${first.sessionId}`).toBeTruthy();
+    const turnContexts = parseRolloutSandboxModes(rolloutFile!);
+    // The requested-versus-effective sandbox contract: both the initial and resumed turn must use
+    // the operator's requested sandbox, so a silent resume-time widening cannot pass unnoticed.
+    expect(turnContexts.length, "no resumed turn was recorded; the resume assertion would be vacuous").toBeGreaterThanOrEqual(2);
+    for (const mode of turnContexts) expect(mode).toBe("read-only");
+  }, 20 * 60_000);
 });
 
 function liveTest(adapterName: "claude-code" | "codex", flag: string, adapter: ClaudeCodeAdapter | CodexAdapter) {
@@ -102,4 +134,25 @@ function createRepository(root: string) {
   execFileSync("git", ["-C", repository, "add", "README.md"]);
   execFileSync("git", ["-C", repository, "-c", "user.name=Fictional User", "-c", "user.email=fictional@example.test", "commit", "-m", "Set up fictional acceptance repository"]);
   return repository;
+}
+
+function findRolloutFile(directory: string, sessionId: string): string | null {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      const found = findRolloutFile(path, sessionId);
+      if (found) return found;
+    } else if (entry.isFile() && entry.name.startsWith("rollout-") && entry.name.includes(sessionId) && entry.name.endsWith(".jsonl")) return path;
+  }
+  return null;
+}
+
+function parseRolloutSandboxModes(path: string): Array<string | null> {
+  return readFileSync(path, "utf8").split("\n").filter(Boolean).flatMap((line) => {
+    const record = JSON.parse(line) as { type?: unknown; sandbox_policy?: unknown; payload?: { sandbox_policy?: unknown } };
+    if (record.type !== "turn_context") return [];
+    const policy = record.sandbox_policy ?? record.payload?.sandbox_policy;
+    const rawMode = typeof policy === "string" ? policy : policy && typeof policy === "object" ? (policy as { mode?: unknown; type?: unknown }).mode ?? (policy as { type?: unknown }).type : null;
+    return [typeof rawMode === "string" ? rawMode.replaceAll("_", "-") : null];
+  });
 }
