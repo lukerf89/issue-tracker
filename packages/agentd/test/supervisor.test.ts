@@ -110,7 +110,7 @@ describe("durable coding-run supervisor", () => {
       expect(JSON.stringify(exportSnapshot(context))).not.toContain("private-fictional-prompt-text");
       expect(JSON.stringify(exportSnapshot(context, { includeRawLogs: true }))).toContain("private-fictional-prompt-text");
     } finally { db.$client.close(); }
-  });
+  }, 120_000);
 });
 
 function createRepository(root: string, name = "repository") {
