@@ -1,6 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { expireHookPermissionWait, getRunInputRequest, openDb, recordPermissionWaitProgress, requestRunInput, systemClock, type ServiceContext } from "@issue-tracker/core";
+import { expireHookPermissionWait, getRunInputRequest, openDb, recordPermissionAutoApproval, recordPermissionWaitProgress, requestRunInput, systemClock, type ServiceContext } from "@issue-tracker/core";
 
 /**
  * PreToolUse hook invoked by a supervised Claude Code subprocess. Claude Code blocks the tool call
@@ -29,6 +29,72 @@ interface HookPayload {
   tool_input?: unknown;
   tool_use_id?: unknown;
   cwd?: unknown;
+}
+
+/**
+ * Command prefixes that cannot alter the worktree, the repository, or anything outside them. Each
+ * entry must be read-only *including every flag it accepts*, which is why several obvious
+ * candidates are absent: `git branch` deletes with -D, `git remote` mutates with `add`, `find`
+ * writes with -delete and -exec, `sed` edits in place with -i, and `sort` writes with -o.
+ */
+const READ_ONLY_COMMANDS = [
+  ["git", "status"], ["git", "log"], ["git", "show"], ["git", "diff"], ["git", "ls-tree"],
+  ["git", "ls-files"], ["git", "rev-parse"], ["git", "cat-file"], ["git", "blame"],
+  ["git", "describe"], ["git", "shortlog"],
+  ["ls"], ["pwd"], ["cat"], ["head"], ["tail"], ["wc"], ["od"], ["stat"], ["file"],
+  ["basename"], ["dirname"], ["echo"], ["which"], ["grep"], ["rg"], ["diff"], ["true"]
+];
+
+/**
+ * Shell syntax that can chain, substitute, or redirect. Any of these means the command is more than
+ * the program its first token names, so prefix matching would no longer describe what runs. Such a
+ * command is never auto-approved regardless of how it starts.
+ */
+const SHELL_CONTROL = /[;&|`$(){}<>\n\r\\!*?[\]]/;
+
+/**
+ * Flags accepted on an auto-approved command. Matching the command name alone is not sound: several
+ * read-only programs execute or write when given the right flag — `rg --pre <cmd>` runs an arbitrary
+ * preprocessor binary, and `git diff --output=<path>` creates a file. Anything not named here is
+ * gated for a human rather than guessed at, so an unrecognized flag fails closed.
+ */
+const SAFE_FLAGS = new Set([
+  "-a", "-A", "-b", "-B", "-c", "-C", "-e", "-h", "-i", "-l", "-L", "-n", "-p", "-q", "-r", "-R",
+  "-s", "-S", "-t", "-u", "-v", "-w", "-la", "-al", "-lh", "-ll", "-lr", "-rl",
+  "--all", "--abbrev-commit", "--branch", "--cached", "--color", "--decorate", "--graph",
+  "--human-readable", "--ignore-case", "--long", "--name-only", "--name-status", "--no-color",
+  "--no-pager", "--numstat", "--oneline", "--porcelain", "--reverse", "--short", "--staged",
+  "--stat", "--summary", "--word-diff"
+]);
+
+/** Value-bearing flags that cannot redirect output or execute a program. */
+const SAFE_VALUE_FLAGS = /^--(format|pretty|max-count|since|until|author|grep)=/;
+
+function isSafeFlag(token: string) {
+  if (!token.startsWith("-")) return true;
+  if (/^-\d+$/.test(token)) return true; // count shorthand such as `git log -5`
+  return SAFE_FLAGS.has(token) || SAFE_VALUE_FLAGS.test(token);
+}
+
+export function isReadOnlyCommand(command: unknown): boolean {
+  if (typeof command !== "string") return false;
+  const trimmed = command.trim();
+  if (!trimmed || SHELL_CONTROL.test(trimmed)) return false;
+  // Quoted arguments can hide separators from a naive token split, so only bare tokens qualify.
+  if (/["']/.test(trimmed)) return false;
+  const tokens = trimmed.split(/\s+/);
+  if (tokens.some((token) => token === "--")) return false;
+  const prefix = READ_ONLY_COMMANDS.find((candidate) => candidate.every((word, index) => tokens[index] === word));
+  if (!prefix) return false;
+  // Every argument past the matched command must be a known-safe flag or a plain operand.
+  return tokens.slice(prefix.length).every(isSafeFlag);
+}
+
+/** Read-only inspection is auto-approved; everything that can mutate or leave the machine is not. */
+export function isAutoApprovable(payload: HookPayload): boolean {
+  if (payload.tool_name !== "Bash") return false;
+  const input = payload.tool_input && typeof payload.tool_input === "object" ? payload.tool_input as Record<string, unknown> : {};
+  return isReadOnlyCommand(input.command);
 }
 
 export function decision(permissionDecision: "allow" | "deny", permissionDecisionReason: string) {
@@ -61,6 +127,10 @@ export async function runPermissionHook(input: string, env: PermissionHookEnviro
   const db = openDb(dbPath);
   const context: ServiceContext = { db, actor: null, clock: systemClock };
   try {
+    if (isAutoApprovable(payload)) {
+      recordPermissionAutoApproval(context, { run, participantId, operation: { tool: operation.tool, scope: operation.scope, autoApproved: "read_only" } });
+      return decision("allow", `Read-only inspection auto-approved by tracker: ${operation.summary}`);
+    }
     const request = requestRunInput(context, {
       run, participantId, kind: "permission", blocking: true, delivery: "hook",
       providerSessionId: typeof payload.session_id === "string" ? payload.session_id : null,

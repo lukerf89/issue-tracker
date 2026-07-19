@@ -49,6 +49,20 @@ export function recordPermissionWaitProgress(context: ServiceContext, runId: str
 }
 
 /**
+ * Records a read-only operation the hook approved without human involvement. These never enter the
+ * decision queue, because burying three mutating calls among twenty inspections trains an operator
+ * to approve reflexively. They stay in the event log so the full tool history remains auditable.
+ */
+export function recordPermissionAutoApproval(context: ServiceContext, input: { run: string; participantId: string; operation: Record<string, unknown> }) {
+  return inTransaction(context, (txContext) => {
+    const participant = txContext.db.query.runParticipants.findFirst({ where: and(eq(runParticipants.id, input.participantId), eq(runParticipants.runId, input.run)) }).sync();
+    if (!participant) throw new AppError(AppErrorCode.RUN_TRANSITION_INVALID, "Only a live participant can perform an auto-approved operation.");
+    appendRunEventInTransaction(txContext, { runId: input.run, attemptId: participant.attemptId, participantId: participant.id, type: "permission.auto_approved", data: { operation: input.operation }, progress: true });
+    return participant;
+  });
+}
+
+/**
  * Ends the provider-side blocking wait when the bounded hook timeout expires, converting the
  * still-pending request to resume delivery so a later approval reaches the provider by restarting
  * the session instead of by a hook that is no longer listening. Returns the request if it was

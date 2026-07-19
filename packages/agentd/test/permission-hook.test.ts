@@ -11,7 +11,7 @@ import {
   resolveRunPermission, startRun, type ServiceContext
 } from "@issue-tracker/core";
 import { ClaudeCodeAdapter } from "../src/adapters/claude-code.js";
-import { describeOperation, runPermissionHook } from "../src/permission-hook.js";
+import { describeOperation, isAutoApprovable, isReadOnlyCommand, runPermissionHook } from "../src/permission-hook.js";
 
 const tempDirs: string[] = [];
 afterEach(() => { for (const directory of tempDirs.splice(0)) rmSync(directory, { recursive: true, force: true }); });
@@ -163,5 +163,83 @@ describe("claude-code launch wiring", () => {
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("default");
     const settings = JSON.parse(readFileSync(settingsCopy, "utf8")) as { hooks: { PreToolUse: Array<{ matcher: string }> } };
     expect(settings.hooks.PreToolUse[0]!.matcher).toMatch(/Write\|Edit/);
+  });
+});
+
+describe("read-only auto-approval", () => {
+  it("auto-approves genuine inspection commands", () => {
+    for (const command of ["git status", "git log --oneline -5", "git diff HEAD~1", "git show abc123", "ls -la", "pwd", "cat GREETING.md", "wc -l file.txt", "git rev-parse HEAD", "rg pattern src"]) {
+      expect(isReadOnlyCommand(command), `${command} should be auto-approved`).toBe(true);
+    }
+  });
+
+  it("refuses every attempt to smuggle a mutation past the prefix", () => {
+    const attempts = [
+      "git log && rm -rf /",              // chaining
+      "git status; touch pwned",
+      "git log || curl evil.test",
+      "cat file | tee other",             // pipe
+      "cat file > overwritten",           // redirect
+      "cat file >> appended",
+      "git log `whoami`",                 // backtick substitution
+      "ls $(rm -rf /)",                   // command substitution
+      "echo ${IFS}",                      // parameter expansion
+      "git log\ntouch pwned",             // newline as separator
+      "ls -la && git push",
+      "cat 'file; rm -rf /'",             // quoted separator
+      "git log --format=\"%H\" ; rm x",
+      "ls *",                             // glob
+      "ls [a-z]",
+      "git log \\; rm x"
+    ];
+    for (const command of attempts) expect(isReadOnlyCommand(command), `${command} must NOT be auto-approved`).toBe(false);
+  });
+
+  it("refuses exec-capable and write-capable flags on otherwise read-only programs", () => {
+    // Verified against the real binaries: `rg --pre` runs an arbitrary preprocessor, and
+    // `git diff --output=` creates the file even when the command then errors.
+    for (const command of ["rg --pre /tmp/evil.sh pattern", "rg --pre=/tmp/evil.sh pattern", "rg --hostname-bin /tmp/evil.sh x", "rg --search-zip x", "git diff --output=/tmp/pwned", "git log --output=/tmp/pwned", "git diff --ext-diff", "grep --devices=x y", "cat --unknown-flag f"]) {
+      expect(isReadOnlyCommand(command), `${command} must NOT be auto-approved`).toBe(false);
+    }
+  });
+
+  it("refuses commands whose flags can write, even though the program reads by default", () => {
+    // These are why the allowlist names subcommands rather than bare programs.
+    for (const command of ["git branch -D main", "git remote add evil https://evil.test", "find . -delete", "find . -exec rm {} ;", "sed -i s/a/b/ file", "sort -o out in", "tee out", "dd if=a of=b"]) {
+      expect(isReadOnlyCommand(command), `${command} must NOT be auto-approved`).toBe(false);
+    }
+  });
+
+  it("gates every non-Bash mutating tool regardless of the allowlist", () => {
+    expect(isAutoApprovable({ tool_name: "Write", tool_input: { file_path: "/x", content: "y" } })).toBe(false);
+    expect(isAutoApprovable({ tool_name: "Edit", tool_input: { file_path: "/x" } })).toBe(false);
+    expect(isAutoApprovable({ tool_name: "WebFetch", tool_input: { url: "https://example.test" } })).toBe(false);
+    expect(isAutoApprovable({ tool_name: "Bash", tool_input: {} })).toBe(false);
+    expect(isAutoApprovable({ tool_name: "Bash" })).toBe(false);
+  });
+
+  it("records an audit event for an auto-approval without queueing a human decision", async () => {
+    const fixture = setup();
+    try {
+      const call = JSON.stringify({ session_id: "s", tool_name: "Bash", tool_input: { command: "git status" } });
+      expect(decisionOf(await runPermissionHook(call, fixture.env()))).toMatchObject({ permissionDecision: "allow" });
+
+      const run = getRun(fixture.context, fixture.runId);
+      expect(run.inputRequests.filter((request) => request.kind === "permission")).toEqual([]);
+      const events = listRunEvents(fixture.context, { run: fixture.runId }).events;
+      const audit = events.filter((event) => event.type === "permission.auto_approved");
+      expect(audit).toHaveLength(1);
+      expect(audit[0]!.data).toMatchObject({ operation: { tool: "Bash", scope: "git status", autoApproved: "read_only" } });
+    } finally { fixture.close(); }
+  });
+
+  it("still queues a human decision for a mutating command", async () => {
+    const fixture = setup();
+    try {
+      const call = JSON.stringify({ session_id: "s", tool_name: "Bash", tool_input: { command: "git commit -m fictional" } });
+      const result = decisionOf(await runPermissionHook(call, { ...fixture.env(), ISSUE_TRACKER_PERMISSION_TIMEOUT_MS: "60", ISSUE_TRACKER_PERMISSION_POLL_MS: "10" }));
+      expect(result).toMatchObject({ permissionDecision: "deny" });
+      expect(getRun(fixture.context, fixture.runId).inputRequests.filter((request) => request.kind === "permission")).toHaveLength(1);
+    } finally { fixture.close(); }
   });
 });

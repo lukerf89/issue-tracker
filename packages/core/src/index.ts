@@ -299,6 +299,7 @@ export {
   requestRunInput,
   getRunInputRequest,
   recordPermissionWaitProgress,
+  recordPermissionAutoApproval,
   expireHookPermissionWait,
   respondToRunInput,
   resolveRunPermission,
