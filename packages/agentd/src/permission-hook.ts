@@ -35,13 +35,15 @@ interface HookPayload {
  * Command prefixes that cannot alter the worktree, the repository, or anything outside them. Each
  * entry must be read-only *including every flag it accepts*, which is why several obvious
  * candidates are absent: `git branch` deletes with -D, `git remote` mutates with `add`, `find`
- * writes with -delete and -exec, `sed` edits in place with -i, and `sort` writes with -o.
+ * writes with -delete and -exec, `sed` edits in place with -i, `sort` writes with -o, and `file`
+ * writes a compiled magic table with -C (a flag otherwise benign for `ls`, so it survives the
+ * shared SAFE_FLAGS set — the program, not the flag, is what makes it dangerous here).
  */
 const READ_ONLY_COMMANDS = [
   ["git", "status"], ["git", "log"], ["git", "show"], ["git", "diff"], ["git", "ls-tree"],
   ["git", "ls-files"], ["git", "rev-parse"], ["git", "cat-file"], ["git", "blame"],
   ["git", "describe"], ["git", "shortlog"],
-  ["ls"], ["pwd"], ["cat"], ["head"], ["tail"], ["wc"], ["od"], ["stat"], ["file"],
+  ["ls"], ["pwd"], ["cat"], ["head"], ["tail"], ["wc"], ["od"], ["stat"],
   ["basename"], ["dirname"], ["echo"], ["which"], ["grep"], ["rg"], ["diff"], ["true"]
 ];
 
@@ -71,9 +73,26 @@ const SAFE_FLAGS = new Set([
 const SAFE_VALUE_FLAGS = /^--(format|pretty|max-count|since|until|author|grep)=/;
 
 function isSafeFlag(token: string) {
-  if (!token.startsWith("-")) return true;
   if (/^-\d+$/.test(token)) return true; // count shorthand such as `git log -5`
   return SAFE_FLAGS.has(token) || SAFE_VALUE_FLAGS.test(token);
+}
+
+/**
+ * A plain operand can name a file. Matching the flags alone left the read half of the invariant
+ * unenforced: every allowlisted reader (`cat`, `grep -r`, `od`, `stat`, `git show`…) would accept an
+ * absolute or parent-relative path and exfiltrate anything the process can read — `cat /etc/passwd`,
+ * `cat ~/.ssh/id_ed25519`, `grep -r AKIA /`. So an operand that escapes the worktree is refused: no
+ * absolute path, no home-relative path, no `..` traversal. A bare relative operand (a filename, a
+ * git rev like `HEAD~1`, a search pattern) resolves inside the worktree and is allowed; shell
+ * metacharacters that could smuggle a path out are already rejected before we get here.
+ */
+function isConfinedOperand(token: string) {
+  if (token.startsWith("/") || token.startsWith("~")) return false;
+  return !token.split("/").includes("..");
+}
+
+function isSafeArgument(token: string) {
+  return token.startsWith("-") ? isSafeFlag(token) : isConfinedOperand(token);
 }
 
 export function isReadOnlyCommand(command: unknown): boolean {
@@ -86,8 +105,8 @@ export function isReadOnlyCommand(command: unknown): boolean {
   if (tokens.some((token) => token === "--")) return false;
   const prefix = READ_ONLY_COMMANDS.find((candidate) => candidate.every((word, index) => tokens[index] === word));
   if (!prefix) return false;
-  // Every argument past the matched command must be a known-safe flag or a plain operand.
-  return tokens.slice(prefix.length).every(isSafeFlag);
+  // Every argument past the matched command must be a known-safe flag or a worktree-confined operand.
+  return tokens.slice(prefix.length).every(isSafeArgument);
 }
 
 /** Read-only inspection is auto-approved; everything that can mutate or leave the machine is not. */

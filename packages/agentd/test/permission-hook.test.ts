@@ -210,6 +210,42 @@ describe("read-only auto-approval", () => {
     }
   });
 
+  it("refuses reads that escape the worktree, so auto-approval cannot exfiltrate secrets", () => {
+    // A matched reader still accepts arbitrary operands; without confinement `cat /etc/passwd`
+    // would be auto-approved and its contents pulled into the agent's context. Absolute paths,
+    // home-relative paths, and `..` traversal must all gate to a human.
+    for (const command of [
+      "cat /etc/passwd",
+      "cat /Users/someone/.ssh/id_ed25519",
+      "head -c 4096 /Users/someone/.aws/credentials",
+      "od -c /etc/passwd",
+      "stat /etc/shadow",
+      "grep -r AKIA /",
+      "rg root /etc/passwd",
+      "diff /etc/passwd /dev/null",
+      "cat ~/.aws/credentials",
+      "cat ../../secret",
+      "cat ../outside.txt",
+      "git show HEAD:../../../etc/passwd"
+    ]) {
+      expect(isReadOnlyCommand(command), `${command} must NOT be auto-approved`).toBe(false);
+    }
+  });
+
+  it("still auto-approves in-worktree reads with relative operands", () => {
+    for (const command of ["cat GREETING.md", "cat src/index.ts", "cat ./notes.md", "head -n 5 file.txt", "rg pattern src", "git show HEAD~1:src/index.ts"]) {
+      expect(isReadOnlyCommand(command), `${command} should be auto-approved`).toBe(true);
+    }
+  });
+
+  it("no longer treats `file` as read-only, since -C compiles a magic table to disk", () => {
+    // `-C` is benign for `ls` but write-capable for BSD/macOS `file`; the shared SAFE_FLAGS set
+    // let `file -C` through, so `file` is dropped from the allowlist entirely.
+    for (const command of ["file -C", "file GREETING.md", "file -C magic"]) {
+      expect(isReadOnlyCommand(command), `${command} must NOT be auto-approved`).toBe(false);
+    }
+  });
+
   it("gates every non-Bash mutating tool regardless of the allowlist", () => {
     expect(isAutoApprovable({ tool_name: "Write", tool_input: { file_path: "/x", content: "y" } })).toBe(false);
     expect(isAutoApprovable({ tool_name: "Edit", tool_input: { file_path: "/x" } })).toBe(false);
