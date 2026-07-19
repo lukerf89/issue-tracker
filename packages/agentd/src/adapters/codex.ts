@@ -66,7 +66,15 @@ export class CodexAdapter implements ProviderAdapter {
 }
 
 function appendExecutionOptions(args: string[], options?: Record<string, unknown>, resumed = false) {
-  if (!resumed && typeof options?.sandbox === "string") args.push("--sandbox", options.sandbox);
+  // `codex exec resume` rejects --sandbox, and a resumed turn otherwise silently reverts to the
+  // config-default sandbox rather than inheriting the session's. Verified against codex-cli 0.144:
+  // a session launched `--sandbox read-only` resumed as `danger-full-access`, widening confinement
+  // mid-run with no flag on the argv. Re-assert the operator's sandbox as a `--config` override,
+  // which resume does accept, so every turn runs under the sandbox the first turn was given.
+  if (typeof options?.sandbox === "string") {
+    if (resumed) args.push("--config", `sandbox_mode=${options.sandbox}`);
+    else args.push("--sandbox", options.sandbox);
+  }
   if (typeof options?.reasoningEffort === "string") args.push("--config", `model_reasoning_effort=${options.reasoningEffort}`);
 }
 

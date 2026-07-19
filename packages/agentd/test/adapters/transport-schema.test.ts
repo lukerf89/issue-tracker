@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -58,6 +58,28 @@ describe("provider participant-result transport schemas", () => {
     writeFileSync(executable, `#!/bin/sh\necho '${line}'\n`); chmodSync(executable, 0o700);
     const result = await adapter.run({ participantId: "fictional", role: "implementer", executable, model: "requested-fictional-model", workingDirectory: directory, prompt: "Fictional prompt" });
     expect(result).toMatchObject({ exitCode: 0, actualModel: null, structuredResult: null, failure: { code: "provider_result_invalid" } });
+  });
+
+  it("re-asserts the operator sandbox on resume, since `codex exec resume` reverts to the config default otherwise", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tracker-codex-args-")); tempDirectories.push(directory);
+    const executable = join(directory, "provider");
+    const argsFile = join(directory, "args.txt");
+    // Record argv, then emit a minimal valid stream so the adapter parses without error.
+    writeFileSync(executable, `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsFile}'\necho '{"type":"item.completed","item":{"type":"agent_message","text":"{}"}}'\n`); chmodSync(executable, 0o700);
+    const launch = { participantId: "fictional", role: "implementer", executable, model: "m", workingDirectory: directory, prompt: "Fictional prompt", options: { sandbox: "read-only" } };
+
+    await new CodexAdapter().run(launch);
+    const initial = readFileSync(argsFile, "utf8").split("\n");
+    // First turn confines with the native flag.
+    expect(initial).toContain("--sandbox");
+    expect(initial[initial.indexOf("--sandbox") + 1]).toBe("read-only");
+
+    await new CodexAdapter().resume(launch, "session-1");
+    const resumed = readFileSync(argsFile, "utf8").split("\n");
+    // Resume rejects --sandbox, so the sandbox must ride in as a config override — never dropped.
+    expect(resumed).not.toContain("--sandbox");
+    expect(resumed).toContain("sandbox_mode=read-only");
+    expect(resumed.slice(0, 3)).toEqual(["exec", "resume", "session-1"]);
   });
 });
 
