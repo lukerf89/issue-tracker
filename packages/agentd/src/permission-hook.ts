@@ -1,3 +1,5 @@
+import { lstatSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { expireHookPermissionWait, getRunInputRequest, openDb, recordPermissionAutoApproval, recordPermissionWaitProgress, requestRunInput, systemClock, type ServiceContext } from "@issue-tracker/core";
@@ -18,6 +20,7 @@ export interface PermissionHookEnvironment {
   ISSUE_TRACKER_DB?: string;
   ISSUE_TRACKER_RUN_ID?: string;
   ISSUE_TRACKER_PARTICIPANT_ID?: string;
+  ISSUE_TRACKER_WORKTREE_ROOT?: string;
   ISSUE_TRACKER_PERMISSION_TIMEOUT_MS?: string;
   ISSUE_TRACKER_PERMISSION_POLL_MS?: string;
   ISSUE_TRACKER_PERMISSION_PROGRESS_MS?: string;
@@ -58,7 +61,12 @@ const READ_ONLY_RULES: CommandRule[] = [
   { prefix: ["git", "blame"], flags: new Set(["-l", "-s", "-L"]) },
   { prefix: ["git", "describe"], flags: new Set(["--long", "--all"]) },
   { prefix: ["git", "shortlog"], flags: new Set(["-s", "-n", "-e"]) },
-  { prefix: ["ls"], flags: new Set(["-a", "-A", "-l", "-L", "-h", "-r", "-R", "-t", "-S", "-c", "-u", "-b", "-p", "-q", "-s", "-i", "-la", "-al", "-lh", "-ll", "-lr", "-rl", "--all", "--human-readable", "--long", "--reverse", "--color", "--no-color"]) },
+  // `-R` is intentionally absent from ls and grep: operand confinement resolves only the literal
+  // operand, but a recursive read (`grep -R . `, `ls -R .`) descends into an in-tree symlink that
+  // points outside the worktree and escapes containment (verified: `grep -R` follows it, `grep -r`
+  // does not). So recursive-with-symlink-follow flags gate to a human. `-r` stays — it recurses
+  // within the worktree without dereferencing symlinks.
+  { prefix: ["ls"], flags: new Set(["-a", "-A", "-l", "-L", "-h", "-r", "-t", "-S", "-c", "-u", "-b", "-p", "-q", "-s", "-i", "-la", "-al", "-lh", "-ll", "-lr", "-rl", "--all", "--human-readable", "--long", "--reverse", "--color", "--no-color"]) },
   { prefix: ["pwd"], flags: new Set() },
   { prefix: ["cat"], flags: new Set(["-n", "-b", "-s", "-e", "-v"]) },
   { prefix: ["head"], flags: new Set(["-n", "-c", "-q", "-v"]), numericShorthand: true },
@@ -70,7 +78,7 @@ const READ_ONLY_RULES: CommandRule[] = [
   { prefix: ["dirname"], flags: new Set() },
   { prefix: ["echo"], flags: new Set(["-n", "-e", "-E"]) },
   { prefix: ["which"], flags: new Set(["-a"]) },
-  { prefix: ["grep"], flags: new Set(["-i", "-n", "-r", "-R", "-l", "-L", "-c", "-v", "-w", "-e", "-h", "-q", "-s"]) },
+  { prefix: ["grep"], flags: new Set(["-i", "-n", "-r", "-l", "-L", "-c", "-v", "-w", "-e", "-h", "-q", "-s"]) },
   { prefix: ["rg"], flags: new Set(["-i", "-n", "-l", "-w", "-v", "-c", "-e", "-s", "-S"]) },
   { prefix: ["diff"], flags: new Set(["-u", "-r", "-i", "-w", "-b", "-q", "-c", "-a"]) },
   { prefix: ["true"], flags: new Set() }
@@ -105,25 +113,79 @@ function isSafeArgument(rule: CommandRule, token: string) {
   return token.startsWith("-") ? isSafeFlag(rule, token) : isConfinedOperand(token);
 }
 
-export function isReadOnlyCommand(command: unknown): boolean {
-  if (typeof command !== "string") return false;
+function parseReadOnlyCommand(command: unknown): { operands: string[] } | null {
+  if (typeof command !== "string") return null;
   const trimmed = command.trim();
-  if (!trimmed || SHELL_CONTROL.test(trimmed)) return false;
+  if (!trimmed || SHELL_CONTROL.test(trimmed)) return null;
   // Quoted arguments can hide separators from a naive token split, so only bare tokens qualify.
-  if (/["']/.test(trimmed)) return false;
+  if (/["']/.test(trimmed)) return null;
   const tokens = trimmed.split(/\s+/);
-  if (tokens.some((token) => token === "--")) return false;
+  if (tokens.some((token) => token === "--")) return null;
   const rule = READ_ONLY_RULES.find((candidate) => candidate.prefix.every((word, index) => tokens[index] === word));
-  if (!rule) return false;
+  if (!rule) return null;
   // Every argument past the matched command must be a known-safe flag or a worktree-confined operand.
-  return tokens.slice(rule.prefix.length).every((token) => isSafeArgument(rule, token));
+  const trailing = tokens.slice(rule.prefix.length);
+  if (!trailing.every((token) => isSafeArgument(rule, token))) return null;
+  return { operands: trailing.filter((token) => !token.startsWith("-")) };
+}
+
+export function isReadOnlyCommand(command: unknown): boolean {
+  return parseReadOnlyCommand(command) !== null;
+}
+
+function isWithin(realRoot: string, candidate: string): boolean {
+  const rel = relative(realRoot, candidate);
+  return rel === "" || (rel !== ".." && !rel.startsWith(".." + sep) && !isAbsolute(rel));
+}
+
+// Resolve an operand against the base directory, following symlinks on the portion that exists so an
+// in-tree link pointing outside the worktree is caught, then re-append the not-yet-created tail. The
+// lexical check already rejected absolute/`~`/`..` operands; this closes the symlink escape it can't see.
+function resolveWithinBase(base: string, operand: string): string {
+  let current = resolve(base, operand);
+  const tail: string[] = [];
+  while (true) {
+    try {
+      lstatSync(current);
+      break;
+    } catch (error) {
+      if (!error || typeof error !== "object" || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const parent = dirname(current);
+      if (parent === current) break;
+      tail.unshift(basename(current));
+      current = parent;
+    }
+  }
+  const real = realpathSync(current);
+  return tail.length ? join(real, ...tail) : real;
+}
+
+function isConfinedResolved(operand: string, base: string, realRoot: string): boolean {
+  try { return isWithin(realRoot, resolveWithinBase(base, operand)); }
+  catch { return false; }
 }
 
 /** Read-only inspection is auto-approved; everything that can mutate or leave the machine is not. */
-export function isAutoApprovable(payload: HookPayload): boolean {
+export function isAutoApprovable(payload: HookPayload, worktreeRoot?: string): boolean {
   if (payload.tool_name !== "Bash") return false;
   const input = payload.tool_input && typeof payload.tool_input === "object" ? payload.tool_input as Record<string, unknown> : {};
-  return isReadOnlyCommand(input.command);
+  const parsed = parseReadOnlyCommand(input.command);
+  if (!parsed) return false;
+  // Read confinement needs a worktree root and an in-worktree cwd. Fail closed when either is missing:
+  // without the root there is no boundary, and an out-of-tree cwd would let even an operand-less
+  // reader (`ls`, `git log`) disclose state from outside the worktree, so both are required first.
+  if (!worktreeRoot) return false;
+  let realRoot: string;
+  try { realRoot = realpathSync(worktreeRoot); }
+  catch { return false; }
+  if (typeof payload.cwd !== "string") return false;
+  let base: string;
+  try { base = realpathSync(payload.cwd); }
+  catch { return false; }
+  if (!isWithin(realRoot, base)) return false;
+  // Operand-bearing readers must additionally keep every path operand inside the worktree; an
+  // operand-less reader is already confined by the cwd check above.
+  return parsed.operands.every((operand) => isConfinedResolved(operand, base, realRoot));
 }
 
 export function decision(permissionDecision: "allow" | "deny", permissionDecisionReason: string) {
@@ -142,6 +204,7 @@ export async function runPermissionHook(input: string, env: PermissionHookEnviro
   const dbPath = env.ISSUE_TRACKER_DB;
   const run = env.ISSUE_TRACKER_RUN_ID;
   const participantId = env.ISSUE_TRACKER_PARTICIPANT_ID;
+  const worktreeRoot = env.ISSUE_TRACKER_WORKTREE_ROOT;
   if (!dbPath || !run || !participantId) return decision("deny", "The tracker permission hook is not configured for this run; no approval route exists.");
 
   let payload: HookPayload;
@@ -156,7 +219,11 @@ export async function runPermissionHook(input: string, env: PermissionHookEnviro
   const db = openDb(dbPath);
   const context: ServiceContext = { db, actor: null, clock: systemClock };
   try {
-    if (isAutoApprovable(payload)) {
+    // Resolve operands from the validated payload cwd (where Claude Code's Bash tool opens them),
+    // keeping the real worktree root as the containment target. Approval only grants permission:
+    // Bash then runs with non-interactive stdin (EOF) and its own timeout, so an operand-less reader
+    // (cat, grep, git shortlog) cannot block the run indefinitely.
+    if (isAutoApprovable(payload, worktreeRoot)) {
       recordPermissionAutoApproval(context, { run, participantId, operation: { tool: operation.tool, scope: operation.scope, autoApproved: "read_only" } });
       return decision("allow", `Read-only inspection auto-approved by tracker: ${operation.summary}`);
     }
