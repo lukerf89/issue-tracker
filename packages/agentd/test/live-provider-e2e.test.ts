@@ -35,14 +35,18 @@ describe("live provider issue-delivery acceptance", () => {
     };
     const adapter = new CodexAdapter();
     const first = await adapter.run(launch);
-    if (first.failure && ["provider_authentication_failed", "provider_model_unavailable", "provider_process_crashed"].includes(first.failure.code)) return;
-    if (!first.sessionId) return;
+    expect(first.exitCode, first.rawLog).toBe(0);
+    expect(first.failure).toBeNull();
     expect(first.sessionId).toBeTruthy();
-    await adapter.resume(launch, first.sessionId);
+    expect(first.structuredResult).toBeTruthy();
+    const resumed = await adapter.resume(launch, first.sessionId!);
+    expect(resumed.exitCode, resumed.rawLog).toBe(0);
+    expect(resumed.failure).toBeNull();
+    expect(resumed.structuredResult).toBeTruthy();
 
     const codexHome = process.env.CODEX_HOME ?? join(homedir(), ".codex");
-    const rolloutFile = findRolloutFile(join(codexHome, "sessions"), first.sessionId);
-    expect(rolloutFile, `no rollout file found for Codex session ${first.sessionId}`).toBeTruthy();
+    const rolloutFile = findRolloutFile(join(codexHome, "sessions"), first.sessionId!);
+    expect(rolloutFile, `no rollout file found for Codex session ${first.sessionId!}`).toBeTruthy();
     const turnContexts = parseRolloutSandboxModes(rolloutFile!);
     // The requested-versus-effective sandbox contract: both the initial and resumed turn must use
     // the operator's requested sandbox, so a silent resume-time widening cannot pass unnoticed.
