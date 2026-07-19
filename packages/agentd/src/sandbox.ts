@@ -7,6 +7,7 @@
  * never allowlisted.
  */
 import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 
@@ -66,7 +67,7 @@ export function buildSeatbeltProfile(input: {
   const temporaryDirectory = canonical(process.env.TMPDIR ?? tmpdir());
   if (input.hook) {
     const hookScript = canonical(input.hook.hookScriptPath);
-    readPaths.push(findInstallRoot(hookScript));
+    readPaths.push(findHookPackageRoot(hookScript));
     writePaths.push(canonical(dirname(input.hook.dbPath)));
   }
   const claudeState = realpathIfPresent(join(homedir(), ".claude"));
@@ -102,7 +103,10 @@ export function wrapForSandbox(input: {
     return { executable: input.executable, args: input.args, cleanup: () => {} };
   const directory = mkdtempSync(join(tmpdir(), "tracker-seatbelt-"));
   const profilePath = join(directory, "provider.sb");
-  const readPaths = resolveToolchainReadPaths(input.sandbox.executable);
+  const readPaths = [
+    ...resolveToolchainReadPaths(input.sandbox.executable),
+    ...(input.sandbox.hook ? resolveHookReadPaths(input.sandbox.hook.hookScriptPath) : [])
+  ];
   const profile = buildSeatbeltProfile({
     worktree: input.sandbox.worktree,
     readPaths,
@@ -126,15 +130,32 @@ function resolveExecutable(executable: string) {
   return canonical(executable);
 }
 
-function findInstallRoot(hookScriptPath: string) {
-  let current = dirname(hookScriptPath);
+const HOOK_RUNTIME_DEPENDENCIES = ["@issue-tracker/core", "better-sqlite3", "bindings", "file-uri-to-path", "drizzle-orm", "zod"];
+
+/** Returns only the hook package and the concrete packages it imports at runtime. */
+export function resolveHookReadPaths(
+  hookScriptPath: string,
+  resolveModule: (specifier: string) => string = createRequire(hookScriptPath).resolve
+) {
+  return unique([
+    findHookPackageRoot(hookScriptPath),
+    ...HOOK_RUNTIME_DEPENDENCIES.map((dependency) => findPackageRoot(resolveModule(dependency)))
+  ]);
+}
+
+function findHookPackageRoot(hookScriptPath: string) {
+  // The installed hook is `<package>/dist/permission-hook.js`; never walk through a hoisted
+  // workspace `node_modules`, which would widen the jail to the entire repository.
+  return canonical(dirname(dirname(hookScriptPath)));
+}
+
+function findPackageRoot(entry: string) {
+  let current = dirname(realpathSync(entry));
   while (dirname(current) !== current) {
-    if (existsSync(join(current, "node_modules"))) return canonical(current);
+    if (existsSync(join(current, "package.json"))) return canonical(current);
     current = dirname(current);
   }
-  throw new Error(
-    `Could not find an agentd install root containing node_modules above ${hookScriptPath}.`
-  );
+  throw new Error(`Could not find a package root above ${entry}.`);
 }
 
 function canonical(path: string) {

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -26,7 +26,7 @@ import { claudeCodeSandbox, resolvePermissionHookScript } from "../src/adapters/
 import { codexSandbox } from "../src/adapters/codex.js";
 import type { ProviderLaunch } from "../src/adapters/contract.js";
 import { runProcess } from "../src/adapters/process.js";
-import { buildSeatbeltProfile, resolveToolchainReadPaths, wrapForSandbox } from "../src/sandbox.js";
+import { buildSeatbeltProfile, resolveHookReadPaths, resolveToolchainReadPaths, wrapForSandbox } from "../src/sandbox.js";
 
 const tempDirs: string[] = [];
 const seatbeltIntegrationAvailable = canApplySeatbelt();
@@ -38,7 +38,7 @@ describe("provider Seatbelt sandbox", () => {
   it.skipIf(!seatbeltIntegrationAvailable)(
     "denies an ungated out-of-worktree read through runProcess while allowing worktree IO",
     async () => {
-      const root = temporaryExternalDirectory();
+      const root = temporarySeatbeltDirectory();
       const worktree = join(root, "worktree");
       const providerDirectory = join(root, "provider");
       mkdirSync(worktree);
@@ -67,7 +67,7 @@ describe("provider Seatbelt sandbox", () => {
   it.skipIf(!seatbeltIntegrationAvailable)(
     "runs the real permission hook with DB access without exposing another host file",
     async () => {
-      const fixture = setupHookFixture();
+      const fixture = setupHookFixture(temporarySeatbeltDirectory);
       try {
         const hookScriptPath = resolvePermissionHookScript();
         const input = JSON.stringify({
@@ -163,6 +163,29 @@ describe("provider Seatbelt sandbox", () => {
     expect(profile).not.toContain(join(homedir(), ".ssh"));
     expect(profile).not.toContain(join(homedir(), ".aws"));
     expect(profile).not.toContain(`(subpath ${JSON.stringify(realpath(homedir()))})`);
+  });
+
+  it("allows only the hook package and concrete dependencies in a hoisted workspace", () => {
+    const root = temporaryExternalDirectory();
+    const installation = join(root, "packages", "agentd");
+    const hook = join(installation, "dist", "permission-hook.js");
+    mkdirSync(dirname(hook), { recursive: true });
+    writeFileSync(join(installation, "package.json"), "{}");
+    writeFileSync(hook, "// fictional hook");
+    const dependencies = ["@issue-tracker/core", "better-sqlite3", "bindings", "file-uri-to-path", "drizzle-orm", "zod"];
+    const entries = new Map<string, string>();
+    for (const dependency of dependencies) {
+      const entry = join(root, "node_modules", dependency, "index.js");
+      mkdirSync(dirname(entry), { recursive: true });
+      writeFileSync(entry, "// fictional dependency");
+      writeFileSync(join(dirname(entry), "package.json"), "{}");
+      entries.set(dependency, entry);
+    }
+
+    const paths = resolveHookReadPaths(hook, (dependency) => entries.get(dependency)!);
+    expect(paths).toContain(realpath(installation));
+    for (const entry of entries.values()) expect(paths).toContain(realpath(dirname(entry)));
+    expect(paths).not.toContain(realpath(root));
   });
 
   it("returns the provider argv unchanged when Seatbelt is unavailable", () => {
@@ -306,6 +329,14 @@ function launchFixture(
 }
 
 function temporaryExternalDirectory() {
+  const directory = mkdtempSync(join(tmpdir(), "tracker-seatbelt-test-"));
+  tempDirs.push(directory);
+  return directory;
+}
+
+function temporarySeatbeltDirectory() {
+  // The profile permits the process temporary directory. Keep integration secrets outside it so
+  // this verifies the jail rather than accidentally allowlisting the fixture through TMPDIR.
   const directory = mkdtempSync("/private/tmp/tracker-seatbelt-test-");
   tempDirs.push(directory);
   return directory;
@@ -328,8 +359,8 @@ function realpath(path: string) {
   return realpathSync(path);
 }
 
-function setupHookFixture() {
-  const root = temporaryExternalDirectory();
+function setupHookFixture(createRoot = temporaryExternalDirectory) {
+  const root = createRoot();
   const worktree = join(root, "worktree");
   const control = join(root, "control");
   mkdirSync(control);
