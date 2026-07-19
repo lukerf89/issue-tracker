@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type { ProviderSandbox } from "../sandbox.js";
 import { isParticipantResult, participantResultOutputSchema, providerEnvironment, providerFailure, type ProviderAdapter, type ProviderLaunch, type ProviderProbe } from "./contract.js";
 import { parseJsonLines, runProcess } from "./process.js";
 
@@ -30,6 +31,23 @@ function writePermissionSettings(hook: { dbPath: string; runId: string; timeoutM
   // before it can convert the request to resume delivery and the decision is lost.
   writeFileSync(path, JSON.stringify({ hooks: { PreToolUse: [{ matcher: GATED_TOOLS, hooks: [{ type: "command", command, timeout: Math.ceil(timeoutMs / 1000) + 30 }] }] } }), { mode: 0o600 });
   return { directory, path, env: { ISSUE_TRACKER_DB: hook.dbPath, ISSUE_TRACKER_RUN_ID: hook.runId, ISSUE_TRACKER_PERMISSION_TIMEOUT_MS: String(timeoutMs) } };
+}
+
+/**
+ * Builds the OS Seatbelt jail descriptor for a Claude Code launch, or null when the operator did
+ * not opt in via `osSandbox`. When a durable permission hook is present the jail additionally
+ * allowlists the hook's DB control channel so an approved mutation can still be adjudicated. This
+ * is the single wiring point between the `osSandbox` flag and the kernel jail; keeping it a pure,
+ * exported function lets tests assert the flag actually engages the sandbox rather than silently
+ * no-opping.
+ */
+export function claudeCodeSandbox(launch: ProviderLaunch): ProviderSandbox | null {
+  if (launch.options?.osSandbox !== true) return null;
+  return {
+    worktree: launch.workingDirectory,
+    executable: launch.executable,
+    hook: launch.permissionHook ? { dbPath: launch.permissionHook.dbPath, hookScriptPath: resolvePermissionHookScript() } : null
+  };
 }
 
 export class ClaudeCodeAdapter implements ProviderAdapter {
@@ -74,7 +92,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
   }
 
   private async collect(launch: ProviderLaunch, args: string[], env: NodeJS.ProcessEnv, signal?: AbortSignal) {
-    const result = await runProcess(launch.executable, args, { cwd: launch.workingDirectory, env, signal, onProcess: launch.onProcess, sandbox: launch.options?.osSandbox === true ? { worktree: launch.workingDirectory, executable: launch.executable, hook: launch.permissionHook ? { dbPath: launch.permissionHook.dbPath, hookScriptPath: resolvePermissionHookScript() } : null } : null });
+    const result = await runProcess(launch.executable, args, { cwd: launch.workingDirectory, env, signal, onProcess: launch.onProcess, sandbox: claudeCodeSandbox(launch) });
     const raw = parseJsonLines(result.stdout);
     const terminal = [...raw].reverse().find((event): event is Record<string, unknown> => typeof event === "object" && event !== null && (event as { type?: unknown }).type === "result");
     const structuredResult = parseStructured(terminal?.result);

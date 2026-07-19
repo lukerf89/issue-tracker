@@ -18,6 +18,8 @@ export const engineDefinitionSchema = z.object({
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).optional(),
   // Unlike Codex's runtime sandbox, this is a darwin-only kernel Seatbelt jail applied at spawn.
   // It gives Claude Code worktree containment as defense-in-depth beneath its permission hook.
+  // Codex is excluded (see superRefine): it installs its own inner Seatbelt profile that cannot be
+  // nested inside an outer sandbox-exec.
   osSandbox: z.boolean().default(false),
   permissionMode: z.enum(["prompt", "autonomous"]).default("prompt"),
   envNames: z.array(z.string().regex(/^[A-Z_][A-Z0-9_]*$/)).default([]),
@@ -40,6 +42,12 @@ export const engineDefinitionSchema = z.object({
   }
   if (engine.adapter === "codex" && engine.permissionMode === "autonomous" && engine.sandbox === "read-only") {
     context.addIssue({ code: "custom", message: "Autonomous Codex requires a writable sandbox." });
+  }
+  // Codex confines itself with an inner `--sandbox` Seatbelt profile; nested Seatbelt profiles
+  // cannot be installed, so wrapping `codex exec` in the outer osSandbox jail would break Codex's
+  // own sandbox init or deny its helper's reads. The jail is claude-code-only.
+  if (engine.adapter === "codex" && engine.osSandbox) {
+    context.addIssue({ code: "custom", message: "Codex applies its own --sandbox confinement and cannot run under the osSandbox Seatbelt jail; osSandbox is only supported for claude-code." });
   }
 });
 

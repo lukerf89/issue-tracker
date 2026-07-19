@@ -22,7 +22,9 @@ import {
   startRun,
   type ServiceContext
 } from "@issue-tracker/core";
-import { resolvePermissionHookScript } from "../src/adapters/claude-code.js";
+import { claudeCodeSandbox, resolvePermissionHookScript } from "../src/adapters/claude-code.js";
+import { codexSandbox } from "../src/adapters/codex.js";
+import type { ProviderLaunch } from "../src/adapters/contract.js";
 import { runProcess } from "../src/adapters/process.js";
 import { buildSeatbeltProfile, resolveToolchainReadPaths, wrapForSandbox } from "../src/sandbox.js";
 
@@ -175,7 +177,133 @@ describe("provider Seatbelt sandbox", () => {
     expect(wrapped.args).toEqual(["--fictional"]);
     expect(() => wrapped.cleanup()).not.toThrow();
   });
+
+  // These assertions run on every platform without kernel Seatbelt: they guard the generated
+  // profile against the two ways the jail could silently regress to a no-op while the skipped
+  // integration tests still pass on CI — the deny-default base being dropped, or the allowlist
+  // over-broadening to cover the whole filesystem or an out-of-worktree secret.
+  it("denies by default and never widens to allow-default or an out-of-worktree secret", () => {
+    const root = temporaryExternalDirectory();
+    const worktree = join(root, "worktree");
+    const secret = join(root, "host-secret");
+    mkdirSync(worktree);
+    writeFileSync(secret, "fictional-secret");
+
+    const profile = buildSeatbeltProfile({
+      worktree,
+      readPaths: resolveToolchainReadPaths(process.execPath),
+      writePaths: [],
+      hook: null
+    });
+
+    expect(profile).toContain("(deny default)");
+    expect(profile).not.toContain("(allow default)");
+    // A whole-filesystem allowance ("/" as a read/write subpath) would defeat containment.
+    expect(profile).not.toMatch(/\(subpath "\/"\)/);
+    // The sibling secret is outside the worktree and must never appear in any allowance. (The
+    // worktree itself is a child of `root`, so asserting on `root` would falsely match.)
+    expect(profile).not.toContain(realpath(secret));
+  });
+
+  it("grants the worktree write access and the hook DB directory but not arbitrary siblings", () => {
+    const root = temporaryExternalDirectory();
+    const worktree = join(root, "worktree");
+    const control = join(root, "control");
+    const installation = join(root, "installation");
+    const hook = join(installation, "packages", "agentd", "dist", "permission-hook.js");
+    const sibling = join(root, "sibling-secret");
+    mkdirSync(worktree);
+    mkdirSync(control);
+    mkdirSync(dirname(hook), { recursive: true });
+    mkdirSync(join(installation, "node_modules"));
+    writeFileSync(hook, "// fictional hook");
+    writeFileSync(join(control, "tracker.db"), "");
+    writeFileSync(sibling, "sibling-fictional-secret");
+
+    const profile = buildSeatbeltProfile({
+      worktree,
+      readPaths: [],
+      writePaths: [worktree],
+      hook: { dbPath: join(control, "tracker.db"), hookScriptPath: hook }
+    });
+
+    const writeLine = profile.split("\n").find((line) => line.startsWith("(allow file-read* file-write*")) ?? "";
+    expect(writeLine).toContain(realpath(worktree));
+    expect(writeLine).toContain(realpath(control));
+    expect(profile).not.toContain(realpath(sibling));
+  });
+
+  it("wraps the provider argv in sandbox-exec with a generated profile when Seatbelt is available", () => {
+    const root = temporaryExternalDirectory();
+    const worktree = join(root, "worktree");
+    mkdirSync(worktree);
+    const wrapped = wrapForSandbox({
+      executable: process.execPath,
+      args: ["--fictional-flag"],
+      cwd: worktree,
+      sandbox: { worktree, executable: process.execPath, hook: null },
+      available: true
+    });
+    try {
+      expect(wrapped.executable).toBe("/usr/bin/sandbox-exec");
+      expect(wrapped.args[0]).toBe("-f");
+      const profile = readFileSync(wrapped.args[1], "utf8");
+      expect(profile).toContain("(deny default)");
+      expect(wrapped.args.slice(2)).toEqual([process.execPath, "--fictional-flag"]);
+    } finally {
+      wrapped.cleanup();
+    }
+  });
+
+  // The osSandbox flag is the only thing that turns the jail on; if it stops flowing from the
+  // engine definition into the ProviderSandbox descriptor the kernel jail silently never engages
+  // and no integration test would fail. These cover that wiring for both adapters directly.
+  it("engages the Claude Code jail only when osSandbox is set, threading the hook DB channel", () => {
+    process.env.ISSUE_TRACKER_PERMISSION_HOOK_SCRIPT = "/fictional/permission-hook.js";
+    try {
+      expect(claudeCodeSandbox(launchFixture({ osSandbox: false }))).toBeNull();
+      expect(claudeCodeSandbox(launchFixture({}))).toBeNull();
+
+      const withoutHook = claudeCodeSandbox(launchFixture({ osSandbox: true }));
+      expect(withoutHook).toEqual({
+        worktree: "/fictional/worktree",
+        executable: "/fictional/claude",
+        hook: null
+      });
+
+      const withHook = claudeCodeSandbox(
+        launchFixture({ osSandbox: true }, { dbPath: "/fictional/control/tracker.db", runId: "run-fictional" })
+      );
+      expect(withHook?.hook).toEqual({
+        dbPath: "/fictional/control/tracker.db",
+        hookScriptPath: "/fictional/permission-hook.js"
+      });
+    } finally {
+      delete process.env.ISSUE_TRACKER_PERMISSION_HOOK_SCRIPT;
+    }
+  });
+
+  it("never engages the OS jail for Codex, even when osSandbox is set", () => {
+    expect(codexSandbox(launchFixture({ osSandbox: true }))).toBeNull();
+    expect(codexSandbox(launchFixture({ osSandbox: false }))).toBeNull();
+  });
 });
+
+function launchFixture(
+  options: Record<string, unknown>,
+  permissionHook: ProviderLaunch["permissionHook"] = null
+): ProviderLaunch {
+  return {
+    participantId: "participant-fictional",
+    role: "planner",
+    executable: "/fictional/claude",
+    model: "fictional-model",
+    workingDirectory: "/fictional/worktree",
+    prompt: "fictional prompt",
+    options,
+    permissionHook
+  };
+}
 
 function temporaryExternalDirectory() {
   const directory = mkdtempSync("/private/tmp/tracker-seatbelt-test-");
