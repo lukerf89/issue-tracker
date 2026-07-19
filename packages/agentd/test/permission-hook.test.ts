@@ -173,6 +173,26 @@ describe("read-only auto-approval", () => {
     }
   });
 
+  it("isolates safe flags to the programs that allow them", () => {
+    expect(isReadOnlyCommand("ls -la")).toBe(true);
+    for (const command of ["cat -la GREETING.md", "wc -la file", "head -la file"]) {
+      expect(isReadOnlyCommand(command), `${command} must NOT be auto-approved`).toBe(false);
+    }
+
+    expect(isReadOnlyCommand("git log --oneline")).toBe(true);
+    for (const command of ["ls --oneline", "git diff --oneline"]) {
+      expect(isReadOnlyCommand(command), `${command} must NOT be auto-approved`).toBe(false);
+    }
+
+    expect(isReadOnlyCommand("git diff --cached")).toBe(true);
+    expect(isReadOnlyCommand("git log --cached")).toBe(false);
+  });
+
+  it("preserves numeric shorthand for head and tail", () => {
+    expect(isReadOnlyCommand("head -5 file")).toBe(true);
+    expect(isReadOnlyCommand("tail -20 file")).toBe(true);
+  });
+
   it("refuses every attempt to smuggle a mutation past the prefix", () => {
     const attempts = [
       "git log && rm -rf /",              // chaining
