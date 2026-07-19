@@ -56,8 +56,8 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
   private async execute(launch: ProviderLaunch, sessionId: string | null, signal?: AbortSignal) {
     const args = ["--print", "--output-format", "stream-json", "--verbose", "--model", launch.model, "--json-schema", JSON.stringify(participantResultOutputSchema("claude-code", launch.role))];
     if (sessionId) args.push("--resume", sessionId);
-    // Claude Code exposes no OS-level worktree sandbox, so autonomous mode is permitted only when
-    // every mutating tool call is adjudicated through a durable tracker permission request.
+    // An optional OS Seatbelt jail provides defense-in-depth beneath the still-required permission
+    // hook, which adjudicates every mutating tool call in autonomous mode.
     if (launch.options?.permissionMode === "autonomous" && !launch.permissionHook) throw new Error("Claude Code autonomous mode requires a durable permission hook; no approval route was configured.");
     const settings = launch.permissionHook ? writePermissionSettings(launch.permissionHook) : null;
     if (settings) args.push("--settings", settings.path);
@@ -74,7 +74,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
   }
 
   private async collect(launch: ProviderLaunch, args: string[], env: NodeJS.ProcessEnv, signal?: AbortSignal) {
-    const result = await runProcess(launch.executable, args, { cwd: launch.workingDirectory, env, signal, onProcess: launch.onProcess });
+    const result = await runProcess(launch.executable, args, { cwd: launch.workingDirectory, env, signal, onProcess: launch.onProcess, sandbox: launch.options?.osSandbox === true ? { worktree: launch.workingDirectory, executable: launch.executable, hook: launch.permissionHook ? { dbPath: launch.permissionHook.dbPath, hookScriptPath: resolvePermissionHookScript() } : null } : null });
     const raw = parseJsonLines(result.stdout);
     const terminal = [...raw].reverse().find((event): event is Record<string, unknown> => typeof event === "object" && event !== null && (event as { type?: unknown }).type === "result");
     const structuredResult = parseStructured(terminal?.result);

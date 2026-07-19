@@ -16,6 +16,9 @@ export const engineDefinitionSchema = z.object({
   model: z.string().min(1),
   reasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).optional(),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).optional(),
+  // Unlike Codex's runtime sandbox, this is a darwin-only kernel Seatbelt jail applied at spawn.
+  // It gives Claude Code worktree containment as defense-in-depth beneath its permission hook.
+  osSandbox: z.boolean().default(false),
   permissionMode: z.enum(["prompt", "autonomous"]).default("prompt"),
   envNames: z.array(z.string().regex(/^[A-Z_][A-Z0-9_]*$/)).default([]),
   capabilities: engineCapabilitiesSchema.default({
@@ -30,12 +33,10 @@ export const engineDefinitionSchema = z.object({
   if (engine.adapter === "claude-code" && (engine.reasoningEffort || engine.sandbox)) {
     context.addIssue({ code: "custom", message: "Claude Code does not support reasoningEffort or sandbox." });
   }
-  // Claude Code has no OS-level worktree sandbox, so autonomous mode is admissible only when the
-  // engine declares interactive permissions: every mutating tool call is then adjudicated through a
-  // durable tracker permission request rather than pre-approved. Containment here is policy-level,
-  // not kernel-level as it is for a sandboxed Codex engine.
+  // Claude Code can optionally use an OS jail, but autonomous mode still requires interactive
+  // permissions: the jail confines reads while the durable hook adjudicates every mutating call.
   if (engine.adapter === "claude-code" && engine.permissionMode === "autonomous" && !engine.capabilities.interactivePermissions) {
-    context.addIssue({ code: "custom", message: "Claude Code autonomous mode requires an engine that declares interactivePermissions, because this supervisor cannot enforce a worktree-scoped sandbox and must adjudicate each tool call." });
+    context.addIssue({ code: "custom", message: "Claude Code autonomous mode requires an engine that declares interactivePermissions, because the Seatbelt jail does not replace adjudication of each mutating tool call." });
   }
   if (engine.adapter === "codex" && engine.permissionMode === "autonomous" && engine.sandbox === "read-only") {
     context.addIssue({ code: "custom", message: "Autonomous Codex requires a writable sandbox." });

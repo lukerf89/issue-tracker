@@ -42,7 +42,9 @@ export class CodexAdapter implements ProviderAdapter {
     args.push(launch.prompt);
     let result;
     try {
-      result = await runProcess(launch.executable, args, { cwd: launch.workingDirectory, env: providerEnvironment(launch.env), signal, onProcess: launch.onProcess });
+      // This OS jail is additive to Codex's own --sandbox confinement. Full coverage of the read
+      // paths used by Codex's Seatbelt helper remains follow-up work.
+      result = await runProcess(launch.executable, args, { cwd: launch.workingDirectory, env: providerEnvironment(launch.env), signal, onProcess: launch.onProcess, sandbox: launch.options?.osSandbox === true ? { worktree: launch.workingDirectory, executable: launch.executable, hook: null } : null });
     } finally {
       rmSync(schemaDirectory, { recursive: true, force: true });
     }
