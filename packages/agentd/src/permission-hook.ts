@@ -33,18 +33,47 @@ interface HookPayload {
 
 /**
  * Command prefixes that cannot alter the worktree, the repository, or anything outside them. Each
- * entry must be read-only *including every flag it accepts*, which is why several obvious
- * candidates are absent: `git branch` deletes with -D, `git remote` mutates with `add`, `find`
- * writes with -delete and -exec, `sed` edits in place with -i, `sort` writes with -o, and `file`
- * writes a compiled magic table with -C (a flag otherwise benign for `ls`, so it survives the
- * shared SAFE_FLAGS set — the program, not the flag, is what makes it dangerous here).
+ * entry has its own allowlist because a flag that is read-only for one program can write or execute
+ * for another. Several obvious candidates are absent: `git branch` deletes with -D, `git remote`
+ * mutates with `add`, `find` writes with -delete and -exec, `sed` edits in place with -i, `sort`
+ * writes with -o, and `file` writes a compiled magic table with -C (a flag benign for `ls`, but
+ * dangerous for `file`).
  */
-const READ_ONLY_COMMANDS = [
-  ["git", "status"], ["git", "log"], ["git", "show"], ["git", "diff"], ["git", "ls-tree"],
-  ["git", "ls-files"], ["git", "rev-parse"], ["git", "cat-file"], ["git", "blame"],
-  ["git", "describe"], ["git", "shortlog"],
-  ["ls"], ["pwd"], ["cat"], ["head"], ["tail"], ["wc"], ["od"], ["stat"],
-  ["basename"], ["dirname"], ["echo"], ["which"], ["grep"], ["rg"], ["diff"], ["true"]
+interface CommandRule {
+  prefix: string[];
+  flags: ReadonlySet<string>;
+  valueFlags?: RegExp;
+  numericShorthand?: boolean;
+}
+
+const READ_ONLY_RULES: CommandRule[] = [
+  { prefix: ["git", "status"], flags: new Set(["-s", "--short", "-b", "--branch", "--porcelain"]) },
+  { prefix: ["git", "log"], flags: new Set(["-p", "--oneline", "--abbrev-commit", "--decorate", "--graph", "--stat", "--numstat", "--name-only", "--name-status", "--color", "--no-color", "--reverse", "--all", "--no-pager"]), valueFlags: /^--(format|pretty|max-count|since|until|author|grep)=/, numericShorthand: true },
+  { prefix: ["git", "show"], flags: new Set(["-s", "--stat", "--numstat", "--name-only", "--name-status", "--oneline", "--abbrev-commit", "--color", "--no-color", "--no-pager"]), valueFlags: /^--(format|pretty)=/, numericShorthand: true },
+  { prefix: ["git", "diff"], flags: new Set(["-R", "--stat", "--numstat", "--name-only", "--name-status", "--cached", "--staged", "--color", "--no-color", "--word-diff", "--summary"]) },
+  { prefix: ["git", "ls-tree"], flags: new Set(["-r", "-l", "--name-only", "--long"]) },
+  { prefix: ["git", "ls-files"], flags: new Set(["--cached"]) },
+  { prefix: ["git", "rev-parse"], flags: new Set(["--short"]) },
+  { prefix: ["git", "cat-file"], flags: new Set(["-p", "-t", "-s", "-e"]) },
+  { prefix: ["git", "blame"], flags: new Set(["-l", "-s", "-L"]) },
+  { prefix: ["git", "describe"], flags: new Set(["--long", "--all"]) },
+  { prefix: ["git", "shortlog"], flags: new Set(["-s", "-n", "-e"]) },
+  { prefix: ["ls"], flags: new Set(["-a", "-A", "-l", "-L", "-h", "-r", "-R", "-t", "-S", "-c", "-u", "-b", "-p", "-q", "-s", "-i", "-la", "-al", "-lh", "-ll", "-lr", "-rl", "--all", "--human-readable", "--long", "--reverse", "--color", "--no-color"]) },
+  { prefix: ["pwd"], flags: new Set() },
+  { prefix: ["cat"], flags: new Set(["-n", "-b", "-s", "-e", "-v"]) },
+  { prefix: ["head"], flags: new Set(["-n", "-c", "-q", "-v"]), numericShorthand: true },
+  { prefix: ["tail"], flags: new Set(["-n", "-c", "-q", "-v"]), numericShorthand: true },
+  { prefix: ["wc"], flags: new Set(["-l", "-w", "-c", "-m", "-L"]) },
+  { prefix: ["od"], flags: new Set(["-c", "-b", "-A", "-t"]) },
+  { prefix: ["stat"], flags: new Set(["-L"]) },
+  { prefix: ["basename"], flags: new Set() },
+  { prefix: ["dirname"], flags: new Set() },
+  { prefix: ["echo"], flags: new Set(["-n", "-e", "-E"]) },
+  { prefix: ["which"], flags: new Set(["-a"]) },
+  { prefix: ["grep"], flags: new Set(["-i", "-n", "-r", "-R", "-l", "-L", "-c", "-v", "-w", "-e", "-h", "-q", "-s"]) },
+  { prefix: ["rg"], flags: new Set(["-i", "-n", "-l", "-w", "-v", "-c", "-e", "-s", "-S"]) },
+  { prefix: ["diff"], flags: new Set(["-u", "-r", "-i", "-w", "-b", "-q", "-c", "-a"]) },
+  { prefix: ["true"], flags: new Set() }
 ];
 
 /**
@@ -54,27 +83,8 @@ const READ_ONLY_COMMANDS = [
  */
 const SHELL_CONTROL = /[;&|`$(){}<>\n\r\\!*?[\]]/;
 
-/**
- * Flags accepted on an auto-approved command. Matching the command name alone is not sound: several
- * read-only programs execute or write when given the right flag — `rg --pre <cmd>` runs an arbitrary
- * preprocessor binary, and `git diff --output=<path>` creates a file. Anything not named here is
- * gated for a human rather than guessed at, so an unrecognized flag fails closed.
- */
-const SAFE_FLAGS = new Set([
-  "-a", "-A", "-b", "-B", "-c", "-C", "-e", "-h", "-i", "-l", "-L", "-n", "-p", "-q", "-r", "-R",
-  "-s", "-S", "-t", "-u", "-v", "-w", "-la", "-al", "-lh", "-ll", "-lr", "-rl",
-  "--all", "--abbrev-commit", "--branch", "--cached", "--color", "--decorate", "--graph",
-  "--human-readable", "--ignore-case", "--long", "--name-only", "--name-status", "--no-color",
-  "--no-pager", "--numstat", "--oneline", "--porcelain", "--reverse", "--short", "--staged",
-  "--stat", "--summary", "--word-diff"
-]);
-
-/** Value-bearing flags that cannot redirect output or execute a program. */
-const SAFE_VALUE_FLAGS = /^--(format|pretty|max-count|since|until|author|grep)=/;
-
-function isSafeFlag(token: string) {
-  if (/^-\d+$/.test(token)) return true; // count shorthand such as `git log -5`
-  return SAFE_FLAGS.has(token) || SAFE_VALUE_FLAGS.test(token);
+function isSafeFlag(rule: CommandRule, token: string) {
+  return (rule.numericShorthand && /^-\d+$/.test(token)) || rule.flags.has(token) || (rule.valueFlags?.test(token) ?? false);
 }
 
 /**
@@ -91,8 +101,8 @@ function isConfinedOperand(token: string) {
   return !token.split("/").includes("..");
 }
 
-function isSafeArgument(token: string) {
-  return token.startsWith("-") ? isSafeFlag(token) : isConfinedOperand(token);
+function isSafeArgument(rule: CommandRule, token: string) {
+  return token.startsWith("-") ? isSafeFlag(rule, token) : isConfinedOperand(token);
 }
 
 export function isReadOnlyCommand(command: unknown): boolean {
@@ -103,10 +113,10 @@ export function isReadOnlyCommand(command: unknown): boolean {
   if (/["']/.test(trimmed)) return false;
   const tokens = trimmed.split(/\s+/);
   if (tokens.some((token) => token === "--")) return false;
-  const prefix = READ_ONLY_COMMANDS.find((candidate) => candidate.every((word, index) => tokens[index] === word));
-  if (!prefix) return false;
+  const rule = READ_ONLY_RULES.find((candidate) => candidate.prefix.every((word, index) => tokens[index] === word));
+  if (!rule) return false;
   // Every argument past the matched command must be a known-safe flag or a worktree-confined operand.
-  return tokens.slice(prefix.length).every(isSafeArgument);
+  return tokens.slice(rule.prefix.length).every((token) => isSafeArgument(rule, token));
 }
 
 /** Read-only inspection is auto-approved; everything that can mutate or leave the machine is not. */
