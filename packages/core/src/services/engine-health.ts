@@ -15,7 +15,7 @@ export const engineHealthSnapshotSchema = z.object({
 export type EngineHealthSnapshot = z.infer<typeof engineHealthSnapshotSchema>;
 
 export function engineHealthFingerprint(name: string, engine: EngineDefinition) {
-  return createHash("sha256").update(stableStringify({ name, adapter: engine.adapter, executable: engine.executable, model: engine.model, reasoningEffort: engine.reasoningEffort ?? null, sandbox: engine.sandbox ?? null, permissionMode: engine.permissionMode, envNames: [...engine.envNames].sort() })).digest("hex");
+  return createHash("sha256").update(stableStringify({ name, adapter: engine.adapter, executable: engine.executable, model: engine.model, reasoningEffort: engine.reasoningEffort ?? null, sandbox: engine.sandbox ?? null, writableRoots: [...(engine.writableRoots ?? [])].sort(), permissionMode: engine.permissionMode, envNames: [...engine.envNames].sort() })).digest("hex");
 }
 
 export function recordEngineHealth(context: ServiceContext, input: Omit<EngineHealthSnapshot, "checkedAt"> & { checkedAt?: string }) {
