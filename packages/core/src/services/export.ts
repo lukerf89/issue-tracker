@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 import { asc, eq, sql } from "drizzle-orm";
@@ -8,18 +8,33 @@ import type { ServiceContext } from "../context.js";
 import type { Db } from "../db/client.js";
 import {
   activity,
+  agentRuns,
   actors,
   attachments,
   comments,
   config,
   cycles,
   issueDependencies,
+  issueRepositories,
   issueLabels,
   issues,
   labels,
   milestones,
+  orchestrationProfiles,
+  projectRepositories,
   projects,
+  repositories,
+  runActions,
+  runArtifacts,
+  runAttempts,
+  runEvents,
+  runInputRequests,
+  runParticipants,
+  runRepositories,
+  runReviewFindings,
+  runVerifications,
   savedViews,
+  supervisorInstances,
   teams,
   templates,
   workflowStates,
@@ -68,6 +83,22 @@ export interface ExportSnapshot {
   activity: SerializedActivity[];
   savedViews: ReturnType<typeof serializeSavedView>[];
   templates: ReturnType<typeof serializeTemplate>[];
+  repositories: unknown[];
+  projectRepositories: unknown[];
+  issueRepositories: unknown[];
+  orchestrationProfiles: unknown[];
+  agentRuns: unknown[];
+  runRepositories: unknown[];
+  runAttempts: unknown[];
+  runParticipants: unknown[];
+  runEvents: unknown[];
+  runArtifacts: unknown[];
+  runInputRequests: unknown[];
+  runVerifications: unknown[];
+  runReviewFindings: unknown[];
+  runActions: unknown[];
+  supervisorInstances: unknown[];
+  rawLogs?: Array<{ artifactId: string; path: string; sha256: string | null; contents: string }>;
 }
 
 export interface ResolveBackupPathInput {
@@ -164,7 +195,7 @@ interface SerializedActivity {
   createdAt: string;
 }
 
-export function exportSnapshot(context: ServiceContext): ExportSnapshot {
+export function exportSnapshot(context: ServiceContext, options: { includeRawLogs?: boolean } = {}): ExportSnapshot {
   const workspaceRow = context.db.query.workspace.findFirst({
     orderBy: [asc(workspace.id)]
   }).sync();
@@ -233,7 +264,23 @@ export function exportSnapshot(context: ServiceContext): ExportSnapshot {
     }).sync().map((template) => serializeTemplate({
       ...template,
       labels: parseTemplateLabels(template)
-    }))
+    })),
+    repositories: context.db.query.repositories.findMany({ orderBy: [asc(repositories.name), asc(repositories.id)] }).sync(),
+    projectRepositories: context.db.query.projectRepositories.findMany({ orderBy: [asc(projectRepositories.projectId), asc(projectRepositories.position), asc(projectRepositories.repositoryId)] }).sync(),
+    issueRepositories: context.db.query.issueRepositories.findMany({ orderBy: [asc(issueRepositories.issueId), asc(issueRepositories.position), asc(issueRepositories.repositoryId)] }).sync(),
+    orchestrationProfiles: context.db.query.orchestrationProfiles.findMany({ orderBy: [asc(orchestrationProfiles.name), asc(orchestrationProfiles.id)] }).sync(),
+    agentRuns: context.db.query.agentRuns.findMany({ orderBy: [asc(agentRuns.createdAt), asc(agentRuns.id)] }).sync(),
+    runRepositories: context.db.query.runRepositories.findMany({ orderBy: [asc(runRepositories.runId), asc(runRepositories.position), asc(runRepositories.repositoryId)] }).sync(),
+    runAttempts: context.db.query.runAttempts.findMany({ orderBy: [asc(runAttempts.runId), asc(runAttempts.number)] }).sync(),
+    runParticipants: context.db.query.runParticipants.findMany({ orderBy: [asc(runParticipants.runId), asc(runParticipants.attemptId), asc(runParticipants.role), asc(runParticipants.id)] }).sync(),
+    runEvents: context.db.query.runEvents.findMany({ orderBy: [asc(runEvents.runId), asc(runEvents.sequence)] }).sync(),
+    runArtifacts: context.db.query.runArtifacts.findMany({ orderBy: [asc(runArtifacts.runId), asc(runArtifacts.createdAt), asc(runArtifacts.id)] }).sync(),
+    runInputRequests: context.db.query.runInputRequests.findMany({ orderBy: [asc(runInputRequests.runId), asc(runInputRequests.requestedAt), asc(runInputRequests.id)] }).sync(),
+    runVerifications: context.db.query.runVerifications.findMany({ orderBy: [asc(runVerifications.runId), asc(runVerifications.completedAt), asc(runVerifications.id)] }).sync(),
+    runReviewFindings: context.db.query.runReviewFindings.findMany({ orderBy: [asc(runReviewFindings.runId), asc(runReviewFindings.createdAt), asc(runReviewFindings.id)] }).sync(),
+    runActions: context.db.query.runActions.findMany({ orderBy: [asc(runActions.runId), asc(runActions.createdAt), asc(runActions.id)] }).sync(),
+    supervisorInstances: context.db.query.supervisorInstances.findMany({ orderBy: [asc(supervisorInstances.startedAt), asc(supervisorInstances.id)] }).sync(),
+    ...(options.includeRawLogs ? { rawLogs: context.db.query.runArtifacts.findMany({ orderBy: [asc(runArtifacts.runId), asc(runArtifacts.createdAt), asc(runArtifacts.id)] }).sync().filter((artifact) => artifact.kind === "raw_log" && artifact.localPath && existsSync(artifact.localPath)).map((artifact) => ({ artifactId: artifact.id, path: artifact.localPath!, sha256: artifact.sha256, contents: readFileSync(artifact.localPath!, "utf8") })) } : {})
   };
 }
 

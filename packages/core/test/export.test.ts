@@ -143,7 +143,22 @@ describe("exportSnapshot", () => {
         "attachments",
         "activity",
         "savedViews",
-        "templates"
+        "templates",
+        "repositories",
+        "projectRepositories",
+        "issueRepositories",
+        "orchestrationProfiles",
+        "agentRuns",
+        "runRepositories",
+        "runAttempts",
+        "runParticipants",
+        "runEvents",
+        "runArtifacts",
+        "runInputRequests",
+        "runVerifications",
+        "runReviewFindings",
+        "runActions",
+        "supervisorInstances"
       ]);
       expect(snapshot.workspace).toMatchObject({
         name: "Local Workspace",

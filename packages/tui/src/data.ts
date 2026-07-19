@@ -8,6 +8,10 @@ import {
   listActors,
   listCycles,
   listIssuesWithView,
+  getSupervisorHealth,
+  listProfiles,
+  listRepositories,
+  listRuns,
   listProjects,
   listSavedViews,
   listStates,
@@ -59,6 +63,10 @@ export interface LinekeeperData {
   activeView: string | null;
   search: string | null;
   filters: ListIssueFilters;
+  runs: ReturnType<typeof listRuns>;
+  repositories: ReturnType<typeof listRepositories>;
+  profiles: ReturnType<typeof listProfiles>;
+  supervisor: ReturnType<typeof getSupervisorHealth>;
 }
 
 export type LinekeeperCoreCommand =
@@ -72,7 +80,7 @@ export type LinekeeperCoreCommand =
   | { kind: "link"; input: AddAttachmentInput };
 
 export interface LinekeeperReadCommand {
-  kind: "search" | "filter" | "view";
+  kind: "search" | "filter" | "view" | "runResponse";
   input: string;
 }
 
@@ -127,6 +135,10 @@ export function loadLinekeeperData(
     activeView: view,
     search,
     filters
+    ,runs: listRuns(context)
+    ,repositories: listRepositories(context)
+    ,profiles: listProfiles(context)
+    ,supervisor: getSupervisorHealth(context)
   };
 }
 
@@ -141,6 +153,7 @@ export function commandFromMode(
     case "search":
     case "filter":
     case "view":
+    case "runResponse":
       return { kind: mode.kind, input };
     case "new":
       assertInput(input, "New issue title is required.");

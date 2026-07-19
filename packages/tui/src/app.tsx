@@ -1,9 +1,11 @@
 import { spawnSync } from "node:child_process";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 
-import type { IssueWithDetails, ListIssueFilters, ServiceContext } from "@issue-tracker/core";
+import { createNodeEngineCatalogRuntime, createNodeRepositoryInspector, loadEngineCatalog, previewRun, requestRunStop, resolveEngineCatalogPath, resolveRunPermission, respondToRunInput, startRun, type IssueWithDetails, type ListIssueFilters, type ServiceContext } from "@issue-tracker/core";
 
 import {
   commandFromMode,
@@ -76,6 +78,8 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
   }, [stdout]);
 
   const [showHelp, setShowHelp] = useState(false);
+  const [showFleet, setShowFleet] = useState(false);
+  const [launchPreview, setLaunchPreview] = useState<ReturnType<typeof previewRun> | null>(null);
 
   const rows = typeof stdout?.rows === "number" && stdout.rows > 0 ? stdout.rows : 24;
   const columns = typeof stdout?.columns === "number" && stdout.columns > 0 ? stdout.columns : 80;
@@ -91,6 +95,19 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
   }
 
   useInput((input, key) => {
+    if (launchPreview) {
+      if (key.escape) { setLaunchPreview(null); return; }
+      if (key.return) {
+        try {
+          startRun(context, { issue: launchPreview.issue.identifier, profile: launchPreview.profile.name, previewFingerprint: launchPreview.previewFingerprint, confirmWarnings: launchPreview.warnings }, runRuntime());
+          setLaunchPreview(null);
+          reload();
+          dispatchBase({ type: "setStatus", message: `Started run for ${launchPreview.issue.identifier}.` });
+        } catch (error) { dispatchBase({ type: "setStatus", message: error instanceof Error ? error.message : String(error) }); }
+        return;
+      }
+      return;
+    }
     const action = mapKeyToLinekeeperAction(input, key, uiState);
 
     if (action.type === "none") return;
@@ -118,6 +135,20 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
       setShowHelp((value) => !value);
       return;
     }
+    if (action.type === "toggleFleet") { setShowFleet((value) => !value); return; }
+    if (action.type === "previewRun") {
+      if (!selectedIssue) { dispatchBase({ type: "setStatus", message: "No issue selected." }); return; }
+      try { setLaunchPreview(previewRun(context, { issue: selectedIssue.identifier }, runRuntime())); }
+      catch (error) { dispatchBase({ type: "setStatus", message: error instanceof Error ? error.message : String(error) }); }
+      return;
+    }
+    if (action.type === "stopRun") {
+      const active = data.runs.find((run) => run.issueId === selectedIssue?.id && !run.completedAt);
+      if (!active) { dispatchBase({ type: "setStatus", message: "Selected issue has no active run." }); return; }
+      try { requestRunStop(context, active.id); reload(); dispatchBase({ type: "setStatus", message: `Stop requested for ${active.id}.` }); }
+      catch (error) { dispatchBase({ type: "setStatus", message: error instanceof Error ? error.message : String(error) }); }
+      return;
+    }
     if (action.type === "pageSelection") {
       const delta = action.delta * bodyCapacity;
       dispatchBase(
@@ -140,6 +171,21 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
     if (!mode) return;
 
     try {
+      if (mode.kind === "runResponse") {
+        const run = data.runs.find((candidate) => candidate.issueId === issue?.id && !candidate.completedAt);
+        const request = run?.inputRequests.find((candidate) => candidate.state === "pending");
+        if (!run || !request) throw new Error("Selected issue has no pending run request.");
+        if (request.kind === "permission") {
+          const decision = mode.input.trim().toLowerCase();
+          if (!["approve", "approved", "deny", "denied"].includes(decision)) throw new Error("Enter approve or deny for a permission request.");
+          resolveRunPermission(context, { run: run.id, request: request.id, decision: decision.startsWith("approv") ? "approved" : "denied" });
+        } else {
+          respondToRunInput(context, { run: run.id, request: request.id, response: mode.input.trim() });
+        }
+        reload(loadOptions);
+        dispatchBase({ type: "setStatus", message: `Resolved request ${request.id}.` });
+        return;
+      }
       const command = commandFromMode(mode, issue, defaultTeam);
 
       if (command.kind === "search") {
@@ -192,8 +238,12 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
   return (
     <Box flexDirection="column">
       <Header data={data} />
-      {showHelp ? (
+      {launchPreview ? (
+        <RunPreview preview={launchPreview} capacity={bodyCapacity} columns={columns} />
+      ) : showHelp ? (
         <HelpOverlay dbPath={dbPath} capacity={bodyCapacity} columns={columns} />
+      ) : showFleet ? (
+        <FleetView data={data} capacity={bodyCapacity} columns={columns} />
       ) : uiState.focus === "detail" ? (
         <IssueDetail
           data={data}
@@ -218,7 +268,12 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
 }
 
 function isCoreCommand(command: LinekeeperCommand): command is LinekeeperCoreCommand {
-  return command.kind !== "search" && command.kind !== "filter" && command.kind !== "view";
+  return command.kind !== "search" && command.kind !== "filter" && command.kind !== "view" && command.kind !== "runResponse";
+}
+
+function runRuntime() {
+  const engineRuntime = createNodeEngineCatalogRuntime();
+  return { inspector: createNodeRepositoryInspector(), dataRoot: resolve(process.env.XDG_DATA_HOME ?? resolve(homedir(), ".local", "share"), "issue-tracker"), engineCatalog: loadEngineCatalog(resolveEngineCatalogPath(), engineRuntime), executableAvailable: engineRuntime.executableAvailable };
 }
 
 function Header({ data }: { data: LinekeeperData }) {
@@ -233,7 +288,7 @@ function Header({ data }: { data: LinekeeperData }) {
         <Text color="gray"> | {teamLabel} | {viewLabel} | {count} issues</Text>
       </Text>
       <Text color="gray" wrap="truncate">
-        up/down move | enter open | / search | f filter | v views | ? help | q quit
+        up/down move | enter open | r run | x stop | F fleet | supervisor {data.supervisor.healthy ? "online" : "offline: start tracker-agentd"} | ? help | q quit
       </Text>
     </Box>
   );
@@ -258,6 +313,7 @@ function HelpOverlay({
     "Commands",
     "  / search   f filter   v views   n new   m move   p priority",
     "  a assign   l labels   c comment  s sub-issue   b link",
+    "  r preview run   x stop run   e answer/approve   F fleet",
     "",
     `db ${dbPath}`,
     "",
@@ -274,6 +330,43 @@ function HelpOverlay({
       ))}
     </Box>
   );
+}
+
+function RunPreview({ preview, capacity, columns }: { preview: ReturnType<typeof previewRun>; capacity: number; columns: number }) {
+  const lines = [
+    `${preview.issue.identifier} ${preview.issue.title}`,
+    `profile ${preview.profile.name} | workflow ${preview.workflow}@${preview.workflowVersion}`,
+    ...preview.repositories.flatMap((repository) => [
+      `repo ${repository.name} ${repository.baseRef}@${repository.baseCommit.slice(0, 12)}`,
+      `worktree ${repository.worktreePath}`,
+      `branch ${repository.branch}`,
+      `verify ${repository.commands.verification.executable} ${repository.commands.verification.args.join(" ")}`
+    ]),
+    `roles ${Object.entries(preview.profile.configuration.roles).map(([role, engine]) => `${role}=${engine}`).join(", ")}`,
+    `permission ${preview.policies.permission} | push ${preview.policies.push} | draft PR ${preview.policies.draftPr} | merge human-only`,
+    ...(preview.warnings.length ? [`warnings ${preview.warnings.join(", ")}`] : []),
+    "",
+    "Enter confirms and starts | Esc cancels"
+  ];
+  return <Box borderStyle="single" borderColor="yellow" flexDirection="column" paddingX={1} width={columns}>
+    <Text bold color="yellow">Autonomous run preview</Text>
+    {lines.slice(0, Math.max(1, capacity - 1)).map((line, index) => <Text key={index} wrap="truncate" color={line.startsWith("warnings") ? "yellow" : undefined}>{line || " "}</Text>)}
+  </Box>;
+}
+
+function FleetView({ data, capacity, columns }: { data: LinekeeperData; capacity: number; columns: number }) {
+  const priority: Record<string, number> = { waiting_for_input: 0, blocked: 1, stalled: 2, failed: 3, crashed: 4, running: 5, provisioning: 6, queued: 7, partial: 8, canceled: 9, succeeded: 10 };
+  const rows = [...data.runs].sort((left, right) => (priority[left.state] ?? 99) - (priority[right.state] ?? 99) || left.lastProgressAt.localeCompare(right.lastProgressAt) || left.id.localeCompare(right.id));
+  return <Box borderStyle="single" borderColor="magenta" flexDirection="column" paddingX={1} width={columns}>
+    <Text bold color="magenta">Fleet</Text>
+    {rows.length === 0 ? <Text color="gray">No coding runs.</Text> : rows.slice(0, Math.max(1, capacity - 1)).map((run) => {
+      const issue = data.issues.find((candidate) => candidate.id === run.issueId);
+      const participant = run.participants.find((candidate) => candidate.state === "running");
+      return <Text key={run.id} color={["waiting_for_input", "blocked", "stalled", "failed", "crashed"].includes(run.state) ? "yellow" : run.completedAt ? "gray" : "magenta"} wrap="truncate">
+        {issue?.identifier ?? run.issueId} | {run.phase}/{run.state} | {participant ? `${participant.role}:${participant.actualModel ?? participant.requestedModel}` : "idle"} | {run.branch}
+      </Text>;
+    })}
+  </Box>;
 }
 
 function IssueList({
@@ -400,10 +493,20 @@ function IssueDetail({
       color: assignee?.type === "agent" ? "magenta" : metaColor
     },
     { text: `Creator: ${creator?.name ?? "unknown"}`, color: metaColor },
-    { text: `Parent: ${issue.parent?.identifier ?? "none"}`, color: metaColor },
+    { text: `Parent: ${issue.parent?.identifier ?? "none"}`, color: metaColor }
+  ];
+
+  const issueRuns = data.runs.filter((run) => run.issueId === issue.id);
+  if (issueRuns.length === 0) lines.push({ text: "Runs: none", color: section === "runs" ? "cyan" : "gray" });
+  for (const run of issueRuns) {
+    const participant = run.participants.find((candidate) => candidate.state === "running") ?? run.participants[0];
+    lines.push({ text: `Run: ${run.phase}/${run.state} ${participant ? `${participant.role}:${participant.actualModel ?? participant.requestedModel}` : ""}`.trimEnd(), color: run.state === "waiting_for_input" || run.state === "stalled" || run.state === "blocked" ? "yellow" : run.completedAt ? "gray" : section === "runs" ? "cyan" : "magenta" });
+    for (const request of run.inputRequests.filter((candidate) => candidate.state === "pending")) lines.push({ text: `  ${request.kind}: ${request.prompt} (e to respond)`, color: "yellow" });
+  }
+  lines.push(
     { text: "" },
     { text: "Sub-issues:", color: section === "subIssues" ? "cyan" : undefined }
-  ];
+  );
 
   if (issue.children.length === 0) {
     lines.push({ text: "  none", color: "gray" });
@@ -571,6 +674,8 @@ function modePrompt(kind: NonNullable<LinekeeperUiState["mode"]>["kind"]): strin
       return "sub-issue title ";
     case "link":
       return "link URL or branch <repo> <name> ";
+    case "runResponse":
+      return "run response/approve ";
   }
 }
 

@@ -5,8 +5,12 @@ import { registerIssueResources } from "./resources/issues.js";
 import { registerActorTools } from "./tools/actors.js";
 import { registerCycleTools } from "./tools/cycles.js";
 import { registerIssueTools } from "./tools/issues.js";
+import { registerEngineTools } from "./tools/engines.js";
 import { registerLabelTools } from "./tools/labels.js";
 import { registerProjectTools } from "./tools/projects.js";
+import { registerProfileTools } from "./tools/profiles.js";
+import { registerRepositoryTools } from "./tools/repositories.js";
+import { registerRunTools } from "./tools/runs.js";
 import { jsonErrorResult } from "./tools/result.js";
 import { registerSavedViewTools } from "./tools/savedViews.js";
 import { registerTeamTools } from "./tools/teams.js";
@@ -28,10 +32,14 @@ export function createServer(options: CreateServerOptions): McpServer {
     jsonErrorResult;
 
   registerActorTools(server, options);
+  registerEngineTools(server);
   registerIssueTools(server, options);
   registerCycleTools(server, options);
   registerLabelTools(server, options);
   registerProjectTools(server, options);
+  registerProfileTools(server, options);
+  registerRepositoryTools(server, options);
+  registerRunTools(server, options);
   registerSavedViewTools(server, options);
   registerTeamTools(server, options);
   registerTemplateTools(server, options);

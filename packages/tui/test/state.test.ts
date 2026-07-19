@@ -34,10 +34,13 @@ describe("Linekeeper key mapping and reducer", () => {
     expect(state.focus).toBe("detail");
 
     state = reduceLinekeeperState(state, mapKeyToLinekeeperAction("]", {}, state), 4);
+    expect(selectedSection(state)).toBe("runs");
+
+    state = reduceLinekeeperState(state, mapKeyToLinekeeperAction("]", {}, state), 4);
     expect(selectedSection(state)).toBe("subIssues");
 
     state = reduceLinekeeperState(state, mapKeyToLinekeeperAction("[", {}, state), 4);
-    expect(selectedSection(state)).toBe("metadata");
+    expect(selectedSection(state)).toBe("runs");
 
     state = reduceLinekeeperState(
       state,

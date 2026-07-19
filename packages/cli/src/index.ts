@@ -1,14 +1,22 @@
 #!/usr/bin/env node
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
   ConfigKey,
+  addProfile,
+  addProfileInputSchema,
+  addRepository,
+  addRepositoryInputSchema,
   addComment,
   addCommentInputSchema,
   addAttachment,
   archiveIssue,
+  archiveRun,
+  archiveProfile,
+  archiveRepository,
   archiveIssueInputSchema,
   archiveLabel,
   archiveLabelInputSchema,
@@ -17,11 +25,15 @@ import {
   archiveTeam,
   archiveTeamInputSchema,
   assignIssue,
+  associateRepository,
+  associateRepositoryInputSchema,
   assignIssueInputSchema,
   backupDatabase,
   createActor,
   createActorInputSchema,
   createCycle,
+  createNodeRepositoryInspector,
+  createNodeEngineCatalogRuntime,
   createCycleInputSchema,
   createLabel,
   createLabelInputSchema,
@@ -43,6 +55,11 @@ import {
   exportSnapshot,
   getConfig,
   getIssue,
+  getEngine,
+  getProfile,
+  getRepository,
+  getRun,
+  getRunMetrics,
   getProject,
   importSnapshot,
   listActivity,
@@ -58,6 +75,11 @@ import {
   listLabelsInputSchema,
   listIssueFiltersSchema,
   listIssuesWithView,
+  loadEngineCatalog,
+  listProfiles,
+  listRepositories,
+  listRunEvents,
+  listRuns,
   listIssuesWithViewInputSchema,
   listIssuesPageWithView,
   listIssuesPageWithViewInputSchema,
@@ -74,10 +96,25 @@ import {
   listTemplates,
   listTemplatesInputSchema,
   moveIssueInputSchema,
+  nudgeRun,
+  previewRun,
+  previewRunInputSchema,
   projectStatusSchema,
   moveIssue,
   resolveBackupPath,
+  resolveEngineCatalogPath,
+  resolveRunPermission,
+  requestRunStop,
+  requestRunCleanup,
+  requestRunPublication,
+  respondToRunInput,
+  retryRun,
+  resumeRun,
+  setDefaultProfile,
   setConfig,
+  startRun,
+  startRunInputSchema,
+  validateEngineCatalog,
   type ServiceContext,
   unarchiveIssue,
   unarchiveIssueInputSchema,
@@ -751,6 +788,85 @@ export function createProgram(): Command {
       })
     );
 
+  const repository = program.command("repo").description("manage registered repositories");
+  repository.command("add")
+    .argument("<name>")
+    .argument("<path>")
+    .requiredOption("--test-command <json>", "CommandSpec JSON")
+    .requiredOption("--verification-command <json>", "CommandSpec JSON")
+    .option("--setup-command <json>", "CommandSpec JSON")
+    .option("--default-branch <branch>")
+    .option("--remote <remote>")
+    .option("--json")
+    .action((name, path, _options, command) => withContext(command, {}, (cli) => {
+      const options = optionsWithGlobals(command);
+      const input = addRepositoryInputSchema.parse({ name, path, defaultBranch: stringOption(options.defaultBranch), remote: stringOption(options.remote), setupCommand: jsonOption(options.setupCommand), testCommand: jsonOption(options.testCommand), verificationCommand: jsonOption(options.verificationCommand) });
+      printJson(addRepository(cli.context, input, createNodeRepositoryInspector()));
+    }));
+  repository.command("list").option("--include-archived").option("--json").action((_options, command) => withContext(command, { requireActor: false }, (cli) => printJson(listRepositories(cli.context, { includeArchived: booleanOption(optionsWithGlobals(command).includeArchived) }))));
+  repository.command("view").argument("<repository>").option("--json").action((repositoryRef, _options, command) => withContext(command, { requireActor: false }, (cli) => printJson(getRepository(cli.context, repositoryRef))));
+  repository.command("archive").argument("<repository>").option("--json").action((repositoryRef, _options, command) => withContext(command, {}, (cli) => printJson(archiveRepository(cli.context, repositoryRef))));
+  repository.command("associate")
+    .argument("<repository>")
+    .option("--project <project>")
+    .option("--issue <identifier>")
+    .option("--position <number>", "routing position", parseInteger, 0)
+    .option("--default")
+    .option("--additional")
+    .option("--json")
+    .action((repositoryRef, _options, command) => withContext(command, {}, (cli) => {
+      const options = optionsWithGlobals(command);
+      const input = associateRepositoryInputSchema.parse({ repository: repositoryRef, project: stringOption(options.project), issue: stringOption(options.issue), position: options.position, isDefault: booleanOption(options.default) ?? false, overrideKind: booleanOption(options.additional) ? "additional" : "replace" });
+      printJson(associateRepository(cli.context, input));
+    }));
+
+  const engine = program.command("engine").description("inspect local provider engines");
+  engine.command("list").option("--config <path>").option("--json").action((_options, command) => {
+    const options = optionsWithGlobals(command); const runtime = createNodeEngineCatalogRuntime(); const catalog = loadEngineCatalog(stringOption(options.config) ?? resolveEngineCatalogPath(), runtime); printJson(validateEngineCatalog(catalog, runtime));
+  });
+  engine.command("view").argument("<name>").option("--config <path>").option("--json").action((name, _options, command) => {
+    const options = optionsWithGlobals(command); const runtime = createNodeEngineCatalogRuntime(); const definition = getEngine(loadEngineCatalog(stringOption(options.config) ?? resolveEngineCatalogPath(), runtime), name); printJson({ name, ...definition, envNames: definition.envNames.map((envName) => `${envName}=<inherited>`) });
+  });
+  engine.command("validate").option("--config <path>").option("--json").action((_options, command) => {
+    const options = optionsWithGlobals(command); const runtime = createNodeEngineCatalogRuntime(); const catalog = loadEngineCatalog(stringOption(options.config) ?? resolveEngineCatalogPath(), runtime); printJson(validateEngineCatalog(catalog, runtime));
+  });
+
+  const profile = program.command("profile").description("manage orchestration profiles");
+  profile.command("add").argument("<name>").requiredOption("--config <json>").option("--default").option("--json").action((name, _options, command) => withContext(command, {}, (cli) => {
+    const options = optionsWithGlobals(command);
+    printJson(addProfile(cli.context, addProfileInputSchema.parse({ name, configuration: jsonOption(options.config), isDefault: booleanOption(options.default) ?? false })));
+  }));
+  profile.command("list").option("--include-archived").option("--json").action((_options, command) => withContext(command, { requireActor: false }, (cli) => printJson(listProfiles(cli.context, { includeArchived: booleanOption(optionsWithGlobals(command).includeArchived) }))));
+  profile.command("view").argument("<profile>").option("--json").action((profileRef, _options, command) => withContext(command, { requireActor: false }, (cli) => printJson(getProfile(cli.context, profileRef))));
+  profile.command("archive").argument("<profile>").option("--json").action((profileRef, _options, command) => withContext(command, {}, (cli) => printJson(archiveProfile(cli.context, profileRef))));
+  profile.command("default").argument("<profile>").option("--json").action((profileRef, _options, command) => withContext(command, {}, (cli) => printJson(setDefaultProfile(cli.context, profileRef))));
+
+  const runCommand = program.command("run").description("manage autonomous coding runs");
+  runCommand.command("preview").argument("<issue>").option("--profile <profile>").option("--base <ref>").option("--parallel-group <group>").option("--json").action((issueRef, _options, command) => withContext(command, { requireActor: false }, (cli) => {
+    const options = optionsWithGlobals(command);
+    printJson(previewRun(cli.context, previewRunInputSchema.parse({ issue: issueRef, profile: stringOption(options.profile), baseRef: stringOption(options.base), parallelGroup: stringOption(options.parallelGroup) }), runRuntime()));
+  }));
+  runCommand.command("start").argument("<issue>").requiredOption("--preview <fingerprint>").option("--profile <profile>").option("--base <ref>").option("--parallel-group <group>").option("--confirm <warning>", "confirmed warning", collectValues, []).option("--json").action((issueRef, _options, command) => withContext(command, {}, (cli) => {
+    const options = optionsWithGlobals(command);
+    printJson(startRun(cli.context, startRunInputSchema.parse({ issue: issueRef, profile: stringOption(options.profile), baseRef: stringOption(options.base), parallelGroup: stringOption(options.parallelGroup), previewFingerprint: options.preview, confirmWarnings: options.confirm }), runRuntime()));
+  }));
+  runCommand.command("list").option("--issue <identifier>").option("--state <state>").option("--include-archived").option("--json").action((_options, command) => withContext(command, { requireActor: false }, (cli) => {
+    const options = optionsWithGlobals(command); printJson(listRuns(cli.context, { issue: stringOption(options.issue), state: stringOption(options.state) as never, includeArchived: booleanOption(options.includeArchived) }));
+  }));
+  runCommand.command("view").argument("<run>").option("--json").action((runId, _options, command) => withContext(command, { requireActor: false }, (cli) => printJson(getRun(cli.context, runId))));
+  runCommand.command("events").argument("<run>").option("--after <cursor>", "event cursor", parseInteger, 0).option("--limit <number>", "event limit", parsePositiveInteger, 100).option("--json").action((runId, _options, command) => withContext(command, { requireActor: false }, (cli) => { const options = optionsWithGlobals(command); printJson(listRunEvents(cli.context, { run: runId, after: Number(options.after), limit: Number(options.limit) })); }));
+  runCommand.command("respond").argument("<run>").argument("<request>").argument("<text>").option("--json").action((runId, request, response, _options, command) => withContext(command, {}, (cli) => printJson(respondToRunInput(cli.context, { run: runId, request, response }))));
+  runCommand.command("approve").argument("<run>").argument("<request>").option("--deny").option("--json").action((runId, request, _options, command) => withContext(command, {}, (cli) => printJson(resolveRunPermission(cli.context, { run: runId, request, decision: booleanOption(optionsWithGlobals(command).deny) ? "denied" : "approved" }))));
+  runCommand.command("stop").argument("<run>").option("--force").option("--json").action((runId, _options, command) => withContext(command, {}, (cli) => printJson(requestRunStop(cli.context, runId, booleanOption(optionsWithGlobals(command).force) ?? false))));
+  runCommand.command("retry").argument("<run>").option("--engine <name>").option("--json").action((runId, _options, command) => withContext(command, {}, (cli) => printJson(retryRun(cli.context, { run: runId, engine: stringOption(optionsWithGlobals(command).engine) }))));
+  runCommand.command("resume").argument("<run>").option("--json").action((runId, _options, command) => withContext(command, {}, (cli) => printJson(resumeRun(cli.context, runId))));
+  runCommand.command("nudge").argument("<run>").argument("<message>").option("--json").action((runId, message, _options, command) => withContext(command, {}, (cli) => printJson(nudgeRun(cli.context, runId, message))));
+  runCommand.command("artifacts").argument("<run>").option("--json").action((runId, _options, command) => withContext(command, { requireActor: false }, (cli) => printJson(getRun(cli.context, runId).artifacts)));
+  runCommand.command("publish").argument("<run>").option("--draft-pr").requiredOption("--confirm").option("--json").action((runId, _options, command) => withContext(command, {}, (cli) => printJson(requestRunPublication(cli.context, { run: runId, publishDraftPr: booleanOption(optionsWithGlobals(command).draftPr) ?? false, confirmed: true }))));
+  runCommand.command("archive").argument("<run>").option("--json").action((runId, _options, command) => withContext(command, {}, (cli) => printJson(archiveRun(cli.context, runId))));
+  runCommand.command("cleanup").argument("<run>").requiredOption("--kind <worktree|raw_logs>").requiredOption("--confirm").option("--allow-unmerged").option("--json").action((runId, _options, command) => withContext(command, {}, (cli) => { const options = optionsWithGlobals(command); const kind = stringOption(options.kind); if (kind !== "worktree" && kind !== "raw_logs") throw new InvalidArgumentError("cleanup kind must be worktree or raw_logs"); printJson(requestRunCleanup(cli.context, { run: runId, kind, managedRoot: resolve((process.env.XDG_DATA_HOME ?? resolve(homedir(), ".local", "share")), "issue-tracker", kind === "worktree" ? "worktrees" : "runs"), confirmed: true, allowUnmerged: booleanOption(options.allowUnmerged) })); }));
+  runCommand.command("metrics").option("--json").action((_options, command) => withContext(command, { requireActor: false }, (cli) => printJson(getRunMetrics(cli.context))));
+
   const view = program.command("view").description("manage saved issue views");
   view
     .command("save")
@@ -882,6 +998,7 @@ export function createProgram(): Command {
     .description("export the workspace snapshot")
     .option("--json", "emit JSON snapshot")
     .option("--output <path>", "write JSON snapshot to a file")
+    .option("--include-raw-logs", "include private raw log contents")
     .action((_options, command) =>
       withContext(command, { requireActor: false }, (cli) => {
         const options = optionsWithGlobals(command);
@@ -890,7 +1007,7 @@ export function createProgram(): Command {
           throw new InvalidArgumentError("export requires --json");
         }
 
-        writeExportSnapshot(exportSnapshot(cli.context), stringOption(options.output));
+        writeExportSnapshot(exportSnapshot(cli.context, { includeRawLogs: booleanOption(options.includeRawLogs) }), stringOption(options.output));
       })
     );
 
@@ -1411,6 +1528,23 @@ function formatImportSummary(summary: ImportSnapshotSummary): string {
     .filter(([, count]) => count > 0)
     .map(([name, count]) => `${count} ${name}`)
     .join(", ");
+}
+
+function jsonOption(value: unknown): unknown {
+  if (typeof value !== "string") return undefined;
+  try { return JSON.parse(value) as unknown; }
+  catch (error) { throw new InvalidArgumentError(`expected valid JSON: ${error instanceof Error ? error.message : String(error)}`); }
+}
+
+function runRuntime() {
+  const engineRuntime = createNodeEngineCatalogRuntime();
+  return {
+    inspector: createNodeRepositoryInspector(),
+    dataRoot: resolve(process.env.XDG_DATA_HOME ?? resolve(homedir(), ".local", "share"), "issue-tracker"),
+    engineCatalog: loadEngineCatalog(resolveEngineCatalogPath(), engineRuntime),
+    executableAvailable: engineRuntime.executableAvailable,
+    requireEngineHealth: true
+  };
 }
 
 function parseInteger(value: string): number {

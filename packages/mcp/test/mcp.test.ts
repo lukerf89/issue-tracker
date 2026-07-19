@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,6 +42,22 @@ afterEach(() => {
 });
 
 describe("MCP server", () => {
+  it("returns byte-identical repository registry JSON to the CLI", async () => {
+    const dbPath = initializedDbPath();
+    const root = mkdtempSync(join(tmpdir(), "issue-tracker-mcp-repository-")); tempDirs.push(root);
+    const repositoryPath = join(root, "fictional-repository");
+    execFileSync("git", ["init", "-b", "main", repositoryPath]);
+    writeFileSync(join(repositoryPath, "README.md"), "# Fictional MCP repository\n");
+    execFileSync("git", ["-C", repositoryPath, "add", "README.md"]);
+    execFileSync("git", ["-C", repositoryPath, "-c", "user.name=Fictional User", "-c", "user.email=fictional@example.test", "commit", "-m", "Set up fictional MCP repository"]);
+    const client = await connectClient(dbPath, { handle: "build-agent" });
+    try {
+      await callJsonTool(client, "add_repository", { name: "Fictional MCP", path: repositoryPath, testCommand: { executable: "npm", args: ["test"], envNames: [] }, verificationCommand: { executable: "npm", args: ["run", "typecheck"], envNames: [] } });
+      const listed = await callJsonTool(client, "list_repositories", {});
+      expect(`${JSON.stringify(listed)}\n`).toBe(tracker(dbPath, ["repo", "list", "--json"]));
+    } finally { await client.close(); }
+  });
+
   it("round-trips create_issue then get_issue through an in-process SDK client", async () => {
     const dbPath = initializedDbPath();
     const client = await connectClient(dbPath, { handle: "build-agent" });
