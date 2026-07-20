@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   addRepository,
@@ -26,12 +26,19 @@ import { claudeCodeSandbox, resolvePermissionHookScript } from "../src/adapters/
 import { codexSandbox } from "../src/adapters/codex.js";
 import type { ProviderLaunch } from "../src/adapters/contract.js";
 import { runProcess } from "../src/adapters/process.js";
-import { buildSeatbeltProfile, resolveHookReadPaths, resolveToolchainReadPaths, wrapForSandbox } from "../src/sandbox.js";
+import {
+  __resetSeatbeltWarningsForTest,
+  buildSeatbeltProfile,
+  resolveHookReadPaths,
+  resolveToolchainReadPaths,
+  wrapForSandbox
+} from "../src/sandbox.js";
 
 const tempDirs: string[] = [];
 const seatbeltIntegrationAvailable = canApplySeatbelt();
 afterEach(() => {
   for (const directory of tempDirs.splice(0)) rmSync(directory, { recursive: true, force: true });
+  __resetSeatbeltWarningsForTest();
 });
 
 describe("provider Seatbelt sandbox", () => {
@@ -199,6 +206,50 @@ describe("provider Seatbelt sandbox", () => {
     expect(wrapped.executable).toBe("fictional-provider");
     expect(wrapped.args).toEqual(["--fictional"]);
     expect(() => wrapped.cleanup()).not.toThrow();
+  });
+
+  it("warns once when osSandbox requested but Seatbelt unavailable", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const input = {
+        executable: "fictional-provider",
+        args: ["--fictional"],
+        cwd: process.cwd(),
+        sandbox: { worktree: process.cwd(), executable: "fictional-provider", hook: null },
+        available: false
+      };
+      wrapForSandbox(input);
+      wrapForSandbox(input);
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toMatch(/osSandbox|Seatbelt|confinement/i);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("removes the profile temp dir on a failure path", () => {
+    const profileDirectories = () =>
+      new Set(
+        readdirSync(tmpdir()).filter(
+          (entry) => /^tracker-seatbelt-/.test(entry) && !entry.startsWith("tracker-seatbelt-test-")
+        )
+      );
+    const before = profileDirectories();
+    const missingCwd = join(temporaryExternalDirectory(), "missing-cwd");
+
+    expect(() =>
+      wrapForSandbox({
+        executable: process.execPath,
+        args: ["--fictional"],
+        cwd: missingCwd,
+        sandbox: { worktree: process.cwd(), executable: process.execPath, hook: null },
+        available: true
+      })
+    ).toThrow();
+
+    const survivingNewDirectories = [...profileDirectories()].filter((entry) => !before.has(entry));
+    expect(survivingNewDirectories).toEqual([]);
   });
 
   // These assertions run on every platform without kernel Seatbelt: they guard the generated
