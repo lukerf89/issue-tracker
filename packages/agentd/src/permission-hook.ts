@@ -34,6 +34,13 @@ interface HookPayload {
   cwd?: unknown;
 }
 
+interface CommandRule {
+  prefix: string[];
+  flags: ReadonlySet<string>;
+  valueFlags?: RegExp;
+  numericShorthand?: boolean;
+}
+
 /**
  * Command prefixes that cannot alter the worktree, the repository, or anything outside them. Each
  * entry has its own allowlist because a flag that is read-only for one program can write or execute
@@ -42,13 +49,6 @@ interface HookPayload {
  * writes with -o, and `file` writes a compiled magic table with -C (a flag benign for `ls`, but
  * dangerous for `file`).
  */
-interface CommandRule {
-  prefix: string[];
-  flags: ReadonlySet<string>;
-  valueFlags?: RegExp;
-  numericShorthand?: boolean;
-}
-
 const READ_ONLY_RULES: CommandRule[] = [
   { prefix: ["git", "status"], flags: new Set(["-s", "--short", "-b", "--branch", "--porcelain"]) },
   { prefix: ["git", "log"], flags: new Set(["-p", "--oneline", "--abbrev-commit", "--decorate", "--graph", "--stat", "--numstat", "--name-only", "--name-status", "--color", "--no-color", "--reverse", "--all", "--no-pager"]), valueFlags: /^--(format|pretty|max-count|since|until|author|grep)=/, numericShorthand: true },
@@ -180,6 +180,7 @@ export function isAutoApprovable(payload: HookPayload, worktreeRoot?: string): b
   catch { return false; }
   if (typeof payload.cwd !== "string") return false;
   let base: string;
+  // Operand confinement resolves against Claude Code's trusted payload cwd; an out-of-tree cwd fails closed via isWithin.
   try { base = realpathSync(payload.cwd); }
   catch { return false; }
   if (!isWithin(realRoot, base)) return false;

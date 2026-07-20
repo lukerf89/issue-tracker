@@ -180,12 +180,16 @@ describe("read-only auto-approval", () => {
     }
 
     expect(isReadOnlyCommand("git log --oneline")).toBe(true);
+    expect(isReadOnlyCommand("git log --format=%H")).toBe(true);
+    expect(isReadOnlyCommand("git show --pretty=oneline")).toBe(true);
     for (const command of ["ls --oneline", "git diff --oneline"]) {
       expect(isReadOnlyCommand(command), `${command} must NOT be auto-approved`).toBe(false);
     }
 
     expect(isReadOnlyCommand("git diff --cached")).toBe(true);
     expect(isReadOnlyCommand("git log --cached")).toBe(false);
+    expect(isReadOnlyCommand("cat -5")).toBe(false);
+    expect(isReadOnlyCommand("ls -3")).toBe(false);
   });
 
   it("preserves numeric shorthand for head and tail", () => {
@@ -259,8 +263,7 @@ describe("read-only auto-approval", () => {
   });
 
   it("no longer treats `file` as read-only, since -C compiles a magic table to disk", () => {
-    // `-C` is benign for `ls` but write-capable for BSD/macOS `file`; the shared SAFE_FLAGS set
-    // let `file -C` through, so `file` is dropped from the allowlist entirely.
+    // `-C` is write-capable for BSD/macOS `file`, so `file` is dropped from the allowlist entirely.
     for (const command of ["file -C", "file GREETING.md", "file -C magic"]) {
       expect(isReadOnlyCommand(command), `${command} must NOT be auto-approved`).toBe(false);
     }
