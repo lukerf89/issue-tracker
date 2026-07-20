@@ -17,8 +17,14 @@ export interface ProviderSandbox {
   hook?: { dbPath: string; hookScriptPath: string } | null;
 }
 
+let seatbeltUnavailableWarned = false;
+
 export function isSeatbeltAvailable(): boolean {
   return process.platform === "darwin" && existsSync("/usr/bin/sandbox-exec");
+}
+
+export function __resetSeatbeltWarningsForTest() {
+  seatbeltUnavailableWarned = false;
 }
 
 export function resolveToolchainReadPaths(executable: string): string[] {
@@ -49,9 +55,6 @@ export function resolveToolchainReadPaths(executable: string): string[] {
     join(home, "Library", "Keychains"),
     join(home, "Library", "Preferences")
   ];
-  const nvmRoot = join(home, ".nvm");
-  if (node.startsWith(`${realpathIfPresent(nvmRoot) ?? nvmRoot}/`))
-    candidates.push(dirname(dirname(node)));
   return canonicalExisting(candidates);
 }
 
@@ -99,21 +102,34 @@ export function wrapForSandbox(input: {
   sandbox: ProviderSandbox;
   available?: boolean;
 }): { executable: string; args: string[]; cleanup: () => void } {
-  if (!(input.available ?? isSeatbeltAvailable()))
+  if (!(input.available ?? isSeatbeltAvailable())) {
+    if (!seatbeltUnavailableWarned) {
+      console.warn(
+        "osSandbox was requested, but macOS Seatbelt is unavailable (non-macOS host or missing /usr/bin/sandbox-exec); the provider will run WITHOUT OS-level confinement."
+      );
+      seatbeltUnavailableWarned = true;
+    }
     return { executable: input.executable, args: input.args, cleanup: () => {} };
+  }
   const directory = mkdtempSync(join(tmpdir(), "tracker-seatbelt-"));
-  const profilePath = join(directory, "provider.sb");
-  const readPaths = [
-    ...resolveToolchainReadPaths(input.sandbox.executable),
-    ...(input.sandbox.hook ? resolveHookReadPaths(input.sandbox.hook.hookScriptPath) : [])
-  ];
-  const profile = buildSeatbeltProfile({
-    worktree: input.sandbox.worktree,
-    readPaths,
-    writePaths: [input.cwd],
-    hook: input.sandbox.hook
-  });
-  writeFileSync(profilePath, profile, { mode: 0o600 });
+  let profilePath: string;
+  try {
+    profilePath = join(directory, "provider.sb");
+    const readPaths = [
+      ...resolveToolchainReadPaths(input.sandbox.executable),
+      ...(input.sandbox.hook ? resolveHookReadPaths(input.sandbox.hook.hookScriptPath) : [])
+    ];
+    const profile = buildSeatbeltProfile({
+      worktree: input.sandbox.worktree,
+      readPaths,
+      writePaths: [input.cwd],
+      hook: input.sandbox.hook
+    });
+    writeFileSync(profilePath, profile, { mode: 0o600 });
+  } catch (error) {
+    rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
   return {
     executable: "/usr/bin/sandbox-exec",
     args: ["-f", profilePath, input.executable, ...input.args],
