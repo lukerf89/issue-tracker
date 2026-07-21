@@ -165,6 +165,45 @@ describe("provider Seatbelt sandbox", () => {
     expect(profile).not.toContain(`(subpath ${JSON.stringify(realpath(homedir()))})`);
   });
 
+  it("grants only named home subpaths and never blanket ~/.config, ~/.codex, ~/Library/Preferences, or ~/Library/Keychains", () => {
+    const originalHome = process.env.HOME;
+    const home = temporaryExternalDirectory();
+    const worktree = join(home, "worktree");
+    process.env.HOME = home;
+    try {
+      mkdirSync(worktree);
+      for (const path of [
+        ".config/git",
+        ".config/gh",
+        ".codex",
+        ".npm",
+        ".cache",
+        "Library/Preferences",
+        "Library/Keychains"
+      ])
+        mkdirSync(join(home, path), { recursive: true });
+
+      const profile = buildSeatbeltProfile({
+        worktree,
+        readPaths: resolveToolchainReadPaths(process.execPath),
+        writePaths: [],
+        hook: null
+      });
+      const h = realpath(process.env.HOME);
+
+      expect(profile).not.toContain(`(subpath ${JSON.stringify(join(h, ".config"))})`);
+      expect(profile).not.toContain(`(subpath ${JSON.stringify(join(h, "Library", "Preferences"))})`);
+      expect(profile).not.toContain(join(h, ".codex"));
+      expect(profile).not.toContain(join(h, "Library", "Keychains"));
+      expect(profile).toContain(join(h, ".config", "git"));
+      expect(profile).toContain(join(h, ".npm"));
+      expect(profile).toContain(join(h, ".cache"));
+    } finally {
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+    }
+  });
+
   it("allows only the hook package and concrete dependencies in a hoisted workspace", () => {
     const root = temporaryExternalDirectory();
     const installation = join(root, "packages", "agentd");
