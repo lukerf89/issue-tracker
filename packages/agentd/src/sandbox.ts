@@ -50,10 +50,7 @@ export function resolveToolchainReadPaths(executable: string): string[] {
     "/dev/urandom",
     join(home, ".npm"),
     join(home, ".cache"),
-    join(home, ".config"),
-    join(home, ".codex"),
-    join(home, "Library", "Keychains"),
-    join(home, "Library", "Preferences")
+    join(home, ".config", "git")
   ];
   return canonicalExisting(candidates);
 }
