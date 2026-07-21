@@ -14,7 +14,7 @@ export class CodexAdapter implements ProviderAdapter {
     try {
       const schemaPath = join(schemaDirectory, "health.json");
       writeFileSync(schemaPath, JSON.stringify(participantResultOutputSchema("codex", "orchestrator")), { mode: 0o600 });
-      const args = ["exec", "--json", "--model", input.model, "--output-schema", schemaPath];
+      const args = ["exec", "--json", "--model", input.model, "--output-schema", schemaPath, "--strict-config"];
       appendExecutionOptions(args, input.options);
       args.push(healthPrompt("orchestrator"));
       const result = await runProcess(input.executable, args, { cwd: process.cwd(), env: providerEnvironment(input.env) });
@@ -37,7 +37,7 @@ export class CodexAdapter implements ProviderAdapter {
     const schemaPath = join(schemaDirectory, "participant-result.json");
     writeFileSync(schemaPath, JSON.stringify(participantResultOutputSchema("codex", launch.role)), { mode: 0o600 });
     const args = sessionId ? ["exec", "resume", sessionId] : ["exec"];
-    args.push("--json", "--model", launch.model, "--output-schema", schemaPath);
+    args.push("--json", "--model", launch.model, "--output-schema", schemaPath, "--strict-config");
     appendExecutionOptions(args, launch.options, sessionId !== null);
     args.push(launch.prompt);
     let result;
@@ -77,6 +77,7 @@ function appendExecutionOptions(args: string[], options?: Record<string, unknown
   }
   const writableRoots = Array.isArray(options?.writableRoots) ? options.writableRoots.filter((root): root is string => typeof root === "string" && root.length > 0) : [];
   if (writableRoots.length > 0) {
+    // Initial --add-dir roots are additive; resume's single writable_roots override replaces the config-file default.
     // `codex exec resume` also rejects --add-dir, so re-assert extra workspace-write roots through
     // the config override accepted by resume instead of dropping them after the initial turn.
     if (resumed) args.push("--config", `sandbox_workspace_write.writable_roots=${JSON.stringify(writableRoots)}`);

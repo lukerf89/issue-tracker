@@ -71,12 +71,14 @@ describe("provider participant-result transport schemas", () => {
     await new CodexAdapter().run(launch);
     const initial = readFileSync(argsFile, "utf8").split("\n");
     // First turn confines with the native flag.
+    expect(initial).toContain("--strict-config");
     expect(initial).toContain("--sandbox");
     expect(initial[initial.indexOf("--sandbox") + 1]).toBe("read-only");
 
     await new CodexAdapter().resume(launch, "session-1");
     const resumed = readFileSync(argsFile, "utf8").split("\n");
     // Resume rejects --sandbox, so the sandbox must ride in as a config override — never dropped.
+    expect(resumed).toContain("--strict-config");
     expect(resumed).not.toContain("--sandbox");
     expect(resumed).toContain("sandbox_mode=read-only");
     expect(resumed.slice(0, 3)).toEqual(["exec", "resume", "session-1"]);
@@ -91,11 +93,13 @@ describe("provider participant-result transport schemas", () => {
 
     await new CodexAdapter().run(launch);
     const initial = readFileSync(argsFile, "utf8").split("\n");
+    expect(initial).toContain("--strict-config");
     expect(initial.filter((arg) => arg === "--add-dir")).toHaveLength(2);
     for (const root of launch.options.writableRoots) expect(initial[initial.indexOf(root) - 1]).toBe("--add-dir");
 
     await new CodexAdapter().resume(launch, "session-1");
     const resumed = readFileSync(argsFile, "utf8").split("\n");
+    expect(resumed).toContain("--strict-config");
     expect(resumed).not.toContain("--add-dir");
     const writableRootsConfig = 'sandbox_workspace_write.writable_roots=["/tmp/root-a","/tmp/root-b"]';
     expect(resumed).toContain("--config");

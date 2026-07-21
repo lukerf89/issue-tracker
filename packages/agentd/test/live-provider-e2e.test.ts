@@ -36,8 +36,8 @@ describe("live provider issue-delivery acceptance", () => {
     const adapter = new CodexAdapter();
     const first = await adapter.run(launch);
     if (first.failure && ["provider_authentication_failed", "provider_model_unavailable", "provider_process_crashed"].includes(first.failure.code)) return;
+    expect(first.sessionId, "codex returned no session id to resume").toBeTruthy();
     if (!first.sessionId) return;
-    expect(first.sessionId).toBeTruthy();
     await adapter.resume(launch, first.sessionId);
 
     const codexHome = process.env.CODEX_HOME ?? join(homedir(), ".codex");
