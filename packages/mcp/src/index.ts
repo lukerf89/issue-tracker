@@ -7,6 +7,7 @@ import { registerCycleTools } from "./tools/cycles.js";
 import { registerIssueTools } from "./tools/issues.js";
 import { registerEngineTools } from "./tools/engines.js";
 import { registerLabelTools } from "./tools/labels.js";
+import { registerMetadataTools } from "./tools/metadata.js";
 import { registerProjectTools } from "./tools/projects.js";
 import { registerProfileTools } from "./tools/profiles.js";
 import { registerRepositoryTools } from "./tools/repositories.js";
@@ -36,6 +37,7 @@ export function createServer(options: CreateServerOptions): McpServer {
   registerIssueTools(server, options);
   registerCycleTools(server, options);
   registerLabelTools(server, options);
+  registerMetadataTools(server, options);
   registerProjectTools(server, options);
   registerProfileTools(server, options);
   registerRepositoryTools(server, options);
