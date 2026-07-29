@@ -43,7 +43,11 @@ export function registerIssueResources(
     (uri) =>
       jsonResource(uri, () =>
         withMcpContext({ ...options, requireActor: false }, ({ context }) => {
-          const page = listIssuesPage(context, { team: authoritySegment(uri) });
+          const page = listIssuesPage(
+            context,
+            { team: authoritySegment(uri) },
+            { cursor: uri.searchParams.get("cursor") ?? undefined }
+          );
           return {
             issues: page.rows.map((row) => serializeIssueSummary(row.issue, row.fields)),
             nextCursor: page.nextCursor

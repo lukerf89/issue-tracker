@@ -747,6 +747,43 @@ describe("MCP server", () => {
     }
   });
 
+  it("follows a backlog resource cursor in the URI", async () => {
+    const dbPath = initializedDbPath();
+    const setup = openContext(dbPath);
+
+    try {
+      setup.context.actor = whoami(setup.context);
+      for (let index = 1; index <= 51; index += 1) {
+        createIssue(setup.context, { title: `Paginated backlog issue ${index}` });
+      }
+    } finally {
+      setup.close();
+    }
+
+    const client = await connectClient(dbPath);
+
+    try {
+      const firstUri = "backlog://ENG";
+      const first = JSON.parse(
+        jsonTextFromResource(await client.readResource({ uri: firstUri }), firstUri)
+      ) as { issues: Array<{ identifier: string }>; nextCursor: string | null };
+      const secondUri = `backlog://ENG?cursor=${first.nextCursor}`;
+      const second = JSON.parse(
+        jsonTextFromResource(await client.readResource({ uri: secondUri }), secondUri)
+      ) as { issues: Array<{ identifier: string }>; nextCursor: string | null };
+
+      expect(first.issues).toHaveLength(50);
+      expect(first.nextCursor).toBe("50");
+      expect(second.issues.map((issue) => issue.identifier)).toEqual(["ENG-51"]);
+      expect(second.nextCursor).toBeNull();
+      expect([...first.issues, ...second.issues].map((issue) => issue.identifier)).toEqual(
+        Array.from({ length: 51 }, (_, index) => `ENG-${index + 1}`)
+      );
+    } finally {
+      await client.close();
+    }
+  });
+
   it("returns byte-identical search JSON to CLI issue search --json", async () => {
     const dbPath = initializedDbPath();
     createSearchFixtures(dbPath);
