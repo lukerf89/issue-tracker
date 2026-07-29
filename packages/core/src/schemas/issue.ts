@@ -24,7 +24,10 @@ const optionalPrioritySchema = prioritySchema.optional();
 const optionalNullableCycleRefSchema = cycleRefSchema.nullable().optional();
 
 export const getIssueInputSchema = z.object({
-  identifier: nonEmptyStringSchema
+  identifier: nonEmptyStringSchema,
+  comments: z.enum(["none", "latest", "all"]).optional(),
+  commentCursor: cursorSchema.optional(),
+  commentLimit: z.number().int().positive().max(100).optional()
 });
 
 export const createIssueInputSchema = z.object({

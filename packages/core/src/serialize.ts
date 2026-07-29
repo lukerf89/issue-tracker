@@ -84,6 +84,9 @@ export function serializeIssue(
     blockedBy?: IssueReference[];
     blocks?: IssueReference[];
     comments?: Array<Comment & { author: Actor }>;
+    commentCount?: number;
+    hasMoreComments?: boolean;
+    nextCommentCursor?: string | null;
     attachments?: Attachment[];
   }
 ) {
@@ -103,6 +106,9 @@ export function serializeIssue(
     ...(hasOwn(issue, "comments")
       ? { comments: (issue.comments ?? []).map(serializeComment) }
       : {}),
+    ...(hasOwn(issue, "commentCount") ? { commentCount: issue.commentCount } : {}),
+    ...(hasOwn(issue, "hasMoreComments") ? { hasMoreComments: issue.hasMoreComments } : {}),
+    ...(hasOwn(issue, "nextCommentCursor") ? { nextCommentCursor: issue.nextCommentCursor } : {}),
     ...(hasOwn(issue, "attachments")
       ? { attachments: (issue.attachments ?? []).map(serializeAttachment) }
       : {})

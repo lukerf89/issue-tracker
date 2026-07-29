@@ -129,12 +129,15 @@ describe("MCP list pagination + projection", () => {
     }
   });
 
-  it("still returns full fidelity through get_issue", async () => {
+  it("returns full fidelity through get_issue when explicitly requested", async () => {
     const dbPath = seededDbPath(1);
     const client = await connectClient(dbPath);
 
     try {
-      const full = await callJsonTool(client, "get_issue", { identifier: "ENG-1" });
+      const full = await callJsonTool(client, "get_issue", {
+        identifier: "ENG-1",
+        comments: "all"
+      });
 
       expect(full).toHaveProperty("description");
       expect(full).toHaveProperty("comments");

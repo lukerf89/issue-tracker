@@ -55,6 +55,7 @@ import {
   exportSnapshot,
   getConfig,
   getIssue,
+  getIssueInputSchema,
   getEngine,
   getProfile,
   getRepository,
@@ -639,10 +640,20 @@ export function createProgram(): Command {
   issue
     .command("view")
     .argument("<identifier>")
+    .option("--comments <mode>", "comment payload: none, latest, or all")
+    .option("--comment-cursor <cursor>", "comment pagination cursor")
+    .option("--comment-limit <number>", "comments per page", parseInteger)
     .option("--json", "print JSON output")
     .action((identifier, _options, command) =>
       withContext(command, { requireActor: false }, (cli) => {
-        printIssue(cli.context, getIssue(cli.context, identifier), optionsWithGlobals(command));
+        const options = optionsWithGlobals(command);
+        const input = getIssueInputSchema.parse(omitUndefined({
+          identifier,
+          comments: stringOption(options.comments),
+          commentCursor: stringOption(options.commentCursor),
+          commentLimit: numberOption(options.commentLimit)
+        }));
+        printIssue(cli.context, getIssue(cli.context, input.identifier, input), options);
       })
     );
   issue
