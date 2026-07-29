@@ -93,13 +93,13 @@ export function registerIssueTools(
     "get_issue",
     {
       title: "Get issue",
-      description: "Read one issue by identifier.",
+      description: "Read one issue by identifier. Comments default to the latest 10; use comments: 'all' for full fidelity or commentCursor/commentLimit to page oldest to newest.",
       inputSchema: getIssueInputSchema.shape
     },
     (input) => mcpToolResult(() => {
       const parsed = getIssueInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(serializeIssue(getIssue(context, parsed.identifier)))
+        jsonResult(serializeIssue(getIssue(context, parsed.identifier, parsed)))
       );
     })
   );

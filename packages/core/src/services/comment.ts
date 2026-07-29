@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 
 import { inTransaction, type ServiceContext } from "../context.js";
 import { actors, comments, issues, type Actor, type Comment, type Issue } from "../db/schema.js";
@@ -14,6 +14,11 @@ export interface AddCommentInput {
 
 export interface ListCommentsInput {
   issue: string;
+}
+
+export interface ListCommentsPageInput extends ListCommentsInput {
+  offset?: number;
+  limit?: number;
 }
 
 export type CommentWithAuthor = Comment & { author: Actor };
@@ -59,8 +64,29 @@ export function listComments(
   return commentRowsWithAuthors(context, issue.id);
 }
 
-function commentRowsWithAuthors(context: ServiceContext, issueId: string): CommentWithAuthor[] {
+export function countComments(context: ServiceContext, input: ListCommentsInput): number {
+  const issue = getIssueByIdOrIdentifier(context, input.issue);
   return context.db
+    .select({ count: sql<number>`count(*)` })
+    .from(comments)
+    .where(eq(comments.issueId, issue.id))
+    .get()?.count ?? 0;
+}
+
+export function listCommentsPage(
+  context: ServiceContext,
+  input: ListCommentsPageInput
+): CommentWithAuthor[] {
+  const issue = getIssueByIdOrIdentifier(context, input.issue);
+  return commentRowsWithAuthors(context, issue.id, input);
+}
+
+function commentRowsWithAuthors(
+  context: ServiceContext,
+  issueId: string,
+  options: Pick<ListCommentsPageInput, "limit" | "offset"> = {}
+): CommentWithAuthor[] {
+  let query = context.db
     .select({
       id: comments.id,
       issueId: comments.issueId,
@@ -76,8 +102,16 @@ function commentRowsWithAuthors(context: ServiceContext, issueId: string): Comme
     .from(comments)
     .innerJoin(actors, eq(actors.id, comments.authorId))
     .where(eq(comments.issueId, issueId))
-    .orderBy(asc(comments.createdAt), asc(comments.id))
-    .all()
+    .orderBy(asc(comments.createdAt), asc(comments.id));
+
+  if (options.limit !== undefined) {
+    query = query.limit(options.limit) as typeof query;
+  }
+  if (options.offset !== undefined) {
+    query = query.offset(options.offset) as typeof query;
+  }
+
+  return query.all()
     .map((row) => ({
       id: row.id,
       issueId: row.issueId,

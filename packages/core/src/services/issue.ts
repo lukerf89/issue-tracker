@@ -19,7 +19,7 @@ import {
   type IssueWithLabels
 } from "./label.js";
 import { listAttachments } from "./attachment.js";
-import { listComments, type CommentWithAuthor } from "./comment.js";
+import { countComments, listComments, listCommentsPage, type CommentWithAuthor } from "./comment.js";
 import { getState, resolveDefaultUnstartedState } from "./state.js";
 import { getTeam, getTeamByKey } from "./team.js";
 
@@ -135,6 +135,16 @@ export interface IssuePage {
   fields?: IssueProjectionField[];
 }
 
+export const DEFAULT_ISSUE_COMMENT_PAGE_SIZE = 10;
+export const MAX_ISSUE_COMMENT_PAGE_SIZE = 100;
+export type IssueCommentMode = "none" | "latest" | "all";
+
+export interface GetIssueOptions {
+  comments?: IssueCommentMode;
+  commentCursor?: string | number;
+  commentLimit?: number;
+}
+
 export interface UpdateIssueInput {
   title?: string;
   description?: string | null;
@@ -185,6 +195,9 @@ export type IssueWithDetails = IssueWithLabels & {
   blockedBy: IssueReference[];
   blocks: IssueReference[];
   comments: CommentWithAuthor[];
+  commentCount: number;
+  hasMoreComments: boolean;
+  nextCommentCursor: string | null;
   attachments: Attachment[];
 };
 
@@ -264,7 +277,11 @@ export function createIssue(context: ServiceContext, input: CreateIssueInput) {
   });
 }
 
-export function getIssue(context: ServiceContext, issueIdentifier: string) {
+export function getIssue(
+  context: ServiceContext,
+  issueIdentifier: string,
+  options: GetIssueOptions = {}
+) {
   const issue = context.db.query.issues.findFirst({
     where: eq(issues.identifier, issueIdentifier)
   }).sync();
@@ -277,7 +294,7 @@ export function getIssue(context: ServiceContext, issueIdentifier: string) {
     );
   }
 
-  return withIssueDetails(context, issue);
+  return withIssueDetails(context, issue, options);
 }
 
 export function listIssues(context: ServiceContext, filters: ListIssueFilters = {}) {
@@ -763,14 +780,41 @@ function lifecycleTimestampChanges(
   return { updatedAt: now, startedAt, completedAt, canceledAt };
 }
 
-function withIssueDetails(context: ServiceContext, issue: Issue): IssueWithDetails {
+function withIssueDetails(
+  context: ServiceContext,
+  issue: Issue,
+  options: GetIssueOptions = {}
+): IssueWithDetails {
+  const commentCount = countComments(context, { issue: issue.id });
+  const commentMode = options.comments ?? "latest";
+  const commentLimit = Math.max(
+    1,
+    Math.min(options.commentLimit ?? DEFAULT_ISSUE_COMMENT_PAGE_SIZE, MAX_ISSUE_COMMENT_PAGE_SIZE)
+  );
+  const commentOffset = options.commentCursor === undefined
+    ? Math.max(0, commentCount - commentLimit)
+    : decodeIssueCursor(options.commentCursor);
+  const comments = commentMode === "none"
+    ? []
+    : commentMode === "all"
+      ? listComments(context, { issue: issue.id })
+      : listCommentsPage(context, { issue: issue.id, offset: commentOffset, limit: commentLimit });
+  const paged = commentMode === "latest" && options.commentCursor !== undefined;
+
   return {
     ...withIssueLabels(context, issue),
     parent: issue.parentId ? issueReference(getIssueById(context, issue.parentId)) : null,
     children: listChildIssueReferences(context, issue.id),
     blockedBy: listBlockedByReferences(context, issue.id),
     blocks: listBlocksReferences(context, issue.id),
-    comments: listComments(context, { issue: issue.id }),
+    comments,
+    commentCount,
+    hasMoreComments: commentMode === "latest" && (paged
+      ? commentOffset + comments.length < commentCount
+      : comments.length < commentCount),
+    nextCommentCursor: paged && commentOffset + comments.length < commentCount
+      ? String(commentOffset + comments.length)
+      : null,
     attachments: listAttachments(context, { issue: issue.id })
   };
 }

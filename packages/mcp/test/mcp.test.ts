@@ -138,6 +138,85 @@ describe("MCP server", () => {
     }
   });
 
+  it("bounds get_issue comments by default and pages them with CLI/MCP parity", async () => {
+    const dbPath = initializedDbPath();
+    const client = await connectClient(dbPath, { handle: "pagination-agent" });
+
+    try {
+      const issue = await callJsonTool(client, "create_issue", { title: "Comment pagination" });
+      for (let index = 1; index <= 12; index += 1) {
+        await callJsonTool(client, "comment_on_issue", {
+          issue: issue.identifier,
+          body: `Comment ${index}`
+        });
+      }
+
+      const latest = await callJsonTool(client, "get_issue", { identifier: issue.identifier }) as {
+        comments: Array<{ body: string }>;
+        commentCount: number;
+        hasMoreComments: boolean;
+        nextCommentCursor: string | null;
+      };
+      expect(latest.commentCount).toBe(12);
+      expect(latest.comments.map((comment) => comment.body)).toEqual(
+        Array.from({ length: 10 }, (_, index) => `Comment ${index + 3}`)
+      );
+      expect(latest.hasMoreComments).toBe(true);
+      expect(latest.nextCommentCursor).toBeNull();
+
+      const all = await callJsonTool(client, "get_issue", {
+        identifier: issue.identifier,
+        comments: "all",
+        commentCursor: "0",
+        commentLimit: 5
+      }) as { comments: Array<{ body: string }>; commentCount: number; hasMoreComments: boolean };
+      expect(all.comments.map((comment) => comment.body)).toEqual(
+        Array.from({ length: 12 }, (_, index) => `Comment ${index + 1}`)
+      );
+      expect(all.commentCount).toBe(12);
+      expect(all.hasMoreComments).toBe(false);
+
+      const none = await callJsonTool(client, "get_issue", {
+        identifier: issue.identifier,
+        comments: "none"
+      }) as { comments: unknown[]; commentCount: number };
+      expect(none).toMatchObject({ comments: [], commentCount: 12 });
+
+      const seen: string[] = [];
+      let cursor: string | null | undefined = "0";
+      do {
+        const page = await callJsonTool(client, "get_issue", {
+          identifier: issue.identifier,
+          comments: "latest",
+          commentCursor: cursor,
+          commentLimit: 5
+        }) as { comments: Array<{ body: string }>; nextCommentCursor: string | null };
+        seen.push(...page.comments.map((comment) => comment.body));
+        cursor = page.nextCommentCursor;
+      } while (cursor !== null);
+      expect(seen).toEqual(Array.from({ length: 12 }, (_, index) => `Comment ${index + 1}`));
+
+      const mcpPage = await callJsonTool(client, "get_issue", {
+        identifier: issue.identifier,
+        comments: "latest",
+        commentCursor: "0",
+        commentLimit: 5
+      });
+      expect(`${JSON.stringify(mcpPage)}\n`).toBe(tracker(dbPath, [
+        "issue", "view", issue.identifier, "--comments", "latest", "--comment-cursor", "0",
+        "--comment-limit", "5", "--json"
+      ]));
+
+      const invalid = await client.callTool({
+        name: "get_issue",
+        arguments: { identifier: issue.identifier, commentCursor: "-1" }
+      });
+      expect(invalid.isError).toBe(true);
+    } finally {
+      await client.close();
+    }
+  });
+
   it("archives issues through archive_issue and matches CLI issue archive --json", async () => {
     const dbPath = initializedDbPath();
     const client = await connectClient(dbPath, { handle: "archive-agent" });
