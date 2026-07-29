@@ -48,6 +48,8 @@ import {
   createTeam,
   createTemplate,
   createTemplateInputSchema,
+  describeTracker,
+  describeTrackerInputSchema,
   deleteSavedView,
   deleteSavedViewInputSchema,
   deleteTemplate,
@@ -96,6 +98,8 @@ import {
   listTeams,
   listTemplates,
   listTemplatesInputSchema,
+  listStatesForTeam,
+  listStatesInputSchema,
   moveIssueInputSchema,
   nudgeRun,
   previewRun,
@@ -115,6 +119,7 @@ import {
   setConfig,
   startRun,
   startRunInputSchema,
+  serializeWorkflowState,
   validateEngineCatalog,
   type ServiceContext,
   unarchiveIssue,
@@ -261,6 +266,17 @@ export function createProgram(): Command {
       })
     );
 
+  program
+    .command("describe")
+    .description("discover tracker metadata for agents and scripts")
+    .option("--json", "print JSON output")
+    .action((_options, command) =>
+      withContext(command, {}, (cli) => {
+        describeTrackerInputSchema.parse({});
+        printJson(describeTracker(cli.context));
+      })
+    );
+
   const config = program.command("config").description("read and write local settings");
   config
     .command("get")
@@ -353,6 +369,16 @@ export function createProgram(): Command {
           ),
           options
         );
+      })
+    );
+  team
+    .command("states")
+    .argument("<team>")
+    .option("--json", "print JSON output")
+    .action((teamRef, _options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const input = listStatesInputSchema.parse({ team: teamRef });
+        printJson(listStatesForTeam(cli.context, input.team).map(serializeWorkflowState));
       })
     );
   team

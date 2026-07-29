@@ -42,6 +42,80 @@ afterEach(() => {
 });
 
 describe("MCP server", () => {
+  it("discovers live metadata and custom workflow states with CLI JSON parity", async () => {
+    const dbPath = initializedDbPath();
+    const setup = openContext(dbPath);
+
+    try {
+      setup.context.actor = whoami(setup.context);
+      const operations = createTeam(setup.context, { key: "OPS", name: "Operations" });
+      createLabel(setup.context, { name: "Untriaged", color: "#6B7280" });
+      createLabel(setup.context, { name: "Incident", color: "#EF4444", group: "type" });
+      createProject(setup.context, { name: "Operations refresh", status: "planned" });
+      setup.context.db.$client
+        .prepare(
+          "insert into workflow_states (id, team_id, name, type, color, position) values (?, ?, ?, ?, ?, ?)"
+        )
+        .run("ops-review", operations.id, "Ready for Review", "started", "#0F766E", 2.5);
+    } finally {
+      setup.close();
+    }
+
+    const client = await connectClient(dbPath, { handle: "owner", type: "human" });
+    try {
+      const description = await callJsonTool(client, "describe", {});
+      const states = (await callJsonTool(client, "list_states", { team: "OPS" })) as unknown as Array<{
+        id: string;
+        name: string;
+        position: number;
+      }>;
+
+      expect(states.map((state) => [state.name, state.position])).toEqual([
+        ["Backlog", 0],
+        ["Todo", 1],
+        ["In Progress", 2],
+        ["Ready for Review", 2.5],
+        ["Blocked", 3],
+        ["Done", 4],
+        ["Canceled", 5]
+      ]);
+      expect(states.find((state) => state.id === "ops-review")).toMatchObject({
+        name: "Ready for Review"
+      });
+
+      const metadata = description as unknown as {
+        teams: Array<{ key: string; states: Array<{ id: string }> }>;
+        priorities: Record<string, string>;
+        labelGroups: Array<{ group: string | null; labels: Array<{ name: string }> }>;
+        projects: Array<{ name: string; status: string }>;
+        actor: { handle: string };
+      };
+      expect(metadata.teams.find((team) => team.key === "OPS")?.states).toEqual(states);
+      expect(metadata.priorities).toEqual({
+        0: "None",
+        1: "Urgent",
+        2: "High",
+        3: "Medium",
+        4: "Low"
+      });
+      expect(metadata.labelGroups).toEqual([
+        { group: null, labels: [expect.objectContaining({ name: "Untriaged" })] },
+        { group: "type", labels: [expect.objectContaining({ name: "Incident" })] }
+      ]);
+      expect(metadata.projects).toContainEqual(expect.objectContaining({
+        name: "Operations refresh",
+        status: "planned"
+      }));
+      expect(metadata.actor).toEqual(expect.objectContaining({ handle: "owner" }));
+      expect(`${JSON.stringify(description)}\n`).toBe(tracker(dbPath, ["describe", "--json"]));
+      expect(`${JSON.stringify(states)}\n`).toBe(
+        tracker(dbPath, ["team", "states", "OPS", "--json"])
+      );
+    } finally {
+      await client.close();
+    }
+  });
+
   it("returns byte-identical repository registry JSON to the CLI", async () => {
     const dbPath = initializedDbPath();
     const root = mkdtempSync(join(tmpdir(), "issue-tracker-mcp-repository-")); tempDirs.push(root);

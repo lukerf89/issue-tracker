@@ -236,6 +236,7 @@ export {
   resolveDefaultUnstartedState,
   seedDefaultWorkflowStates
 } from "./services/state.js";
+export { describeTracker, listStatesForTeam, priorityLabels } from "./services/metadata.js";
 export {
   archiveTeam,
   createTeam,
@@ -409,6 +410,7 @@ export {
   listTeamsInputSchema,
   unarchiveTeamInputSchema
 } from "./schemas/team.js";
+export { describeTrackerInputSchema, listStatesInputSchema } from "./schemas/metadata.js";
 
 export type {
   Activity,

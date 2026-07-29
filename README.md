@@ -144,6 +144,10 @@ Point an MCP client at that command:
 
 If the agent actor does not exist yet, MCP creates it as an agent actor. MCP tools include issue listing, search, reads, creation, updates, moves, assignment, archive/unarchive, comments, links, activity, teams, projects, labels, cycles, saved views, actors, and templates.
 
+### Agent metadata discovery
+
+Agents and skills should call the `describe` MCP tool (or `tracker describe --json`) before acting instead of hardcoding workflow states or priority labels. It returns the live team vocabulary, per-team ordered workflow states, priorities, grouped labels, projects, and current actor in one response. Use `list_states` (or `tracker team states <team> --json`) when only one team's workflow states are needed.
+
 ## Web UI
 
 The web UI uses the same database path convention as the CLI. Start it against the demo database:
