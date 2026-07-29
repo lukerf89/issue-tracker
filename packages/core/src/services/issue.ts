@@ -316,7 +316,12 @@ export function decodeIssueCursor(cursor: string | number | undefined): number {
     return 0;
   }
 
-  const offset = typeof cursor === "number" ? cursor : Number.parseInt(cursor, 10);
+  const offset =
+    typeof cursor === "number"
+      ? cursor
+      : /^(0|[1-9]\d*)$/.test(cursor)
+        ? Number(cursor)
+        : Number.NaN;
 
   if (!Number.isInteger(offset) || offset < 0) {
     throw new AppError(AppErrorCode.VALIDATION_FAILED, `Invalid cursor: ${cursor}`, { cursor });

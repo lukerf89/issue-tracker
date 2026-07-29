@@ -784,6 +784,26 @@ describe("MCP server", () => {
     }
   });
 
+  it("rejects malformed backlog resource cursors", async () => {
+    const dbPath = initializedDbPath();
+    const client = await connectClient(dbPath);
+
+    try {
+      await expect(client.readResource({ uri: "backlog://ENG?cursor=50junk" })).rejects.toMatchObject({
+        code: ErrorCode.InvalidParams,
+        data: {
+          error: {
+            code: "VALIDATION_FAILED",
+            message: "Invalid cursor: 50junk",
+            details: { cursor: "50junk" }
+          }
+        }
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
   it("returns byte-identical search JSON to CLI issue search --json", async () => {
     const dbPath = initializedDbPath();
     createSearchFixtures(dbPath);
