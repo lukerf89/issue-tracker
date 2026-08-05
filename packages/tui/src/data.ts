@@ -17,7 +17,7 @@ import {
   listStates,
   listTeams,
   moveIssue,
-  searchIssues,
+  searchIssuesPage,
   updateIssue,
   addCommentInputSchema,
   createIssueInputSchema,
@@ -52,6 +52,10 @@ export interface LinekeeperLoadOptions {
 
 export interface LinekeeperData {
   issues: IssueWithDetails[];
+  // Per-issue bm25 excerpt, keyed by issue id. Populated only on the search
+  // path; empty for plain lists/filters. TUI-only display concern — kept off
+  // core's shared IssueWithDetails.
+  snippets: Map<string, string>;
   teams: Team[];
   states: WorkflowState[];
   actors: Actor[];
@@ -102,15 +106,30 @@ export function loadLinekeeperData(
   }));
   const search = cleanInput(options.search);
   const view = cleanInput(options.view);
-  const issues = search
-    ? searchIssues(context, searchInputSchema.parse({ ...filters, query: search }))
-    : listIssuesWithView(
-        context,
-        listIssuesWithViewInputSchema.parse({
-          view: view ?? undefined,
-          filters
-        })
-      );
+  let issues: IssueWithDetails[];
+  const snippets = new Map<string, string>();
+  if (search) {
+    // Use the paged, snippet-carrying search backend. Requesting a relation
+    // field (labels) flips the detail load on so rows are full IssueWithDetails,
+    // matching the plain-list path. Pagination itself is out of scope here.
+    const page = searchIssuesPage(
+      context,
+      searchInputSchema.parse({ ...filters, query: search }),
+      { fields: ["labels"] }
+    );
+    issues = page.rows.map((row) => row.issue as IssueWithDetails);
+    for (const row of page.rows) {
+      if (row.snippet) snippets.set(row.issue.id, row.snippet);
+    }
+  } else {
+    issues = listIssuesWithView(
+      context,
+      listIssuesWithViewInputSchema.parse({
+        view: view ?? undefined,
+        filters
+      })
+    );
+  }
   const teams = listTeams(context);
   const teamIds = new Set<string>([
     ...teams.map((team) => team.id),
@@ -124,6 +143,7 @@ export function loadLinekeeperData(
 
   return {
     issues,
+    snippets,
     teams,
     states,
     actors: listActors(context),
@@ -318,6 +338,18 @@ export function parseFilterInput(input: string): ListIssueFilters {
   }
 
   return listIssueFiltersSchema.parse(filters);
+}
+
+// Return a copy of the filters with a single key removed (re-parsed to keep the
+// canonical shape). Used to peel off one active filter chip; clearing the last
+// key yields empty filters.
+export function removeFilterKey(
+  filters: ListIssueFilters | undefined,
+  key: keyof ListIssueFilters
+): ListIssueFilters {
+  const next: Record<string, unknown> = { ...(filters ?? {}) };
+  delete next[key];
+  return listIssueFiltersSchema.parse(next);
 }
 
 function parsePriority(input: string): number {

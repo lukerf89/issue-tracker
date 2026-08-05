@@ -26,6 +26,7 @@ export type LinekeeperKeyAction =
   | { type: "copyIdentifier" }
   | { type: "openSelected" }
   | { type: "pageSelection"; delta: -1 | 1 }
+  | { type: "removeChip"; index: number }
   | { type: "toggleHelp" }
   | { type: "previewRun" }
   | { type: "stopRun" }
@@ -85,6 +86,10 @@ export function mapKeyToLinekeeperAction(
     if (key.downArrow || input === "j") return { type: "moveSelection", delta: 1 };
     if (key.pageUp) return { type: "pageSelection", delta: -1 };
     if (key.pageDown) return { type: "pageSelection", delta: 1 };
+    // Digits remove the Nth active filter chip (list focus only). Safe after the
+    // mode guard above so digits typed into search/filter/comment input are not
+    // captured here.
+    if (/^[1-9]$/.test(input)) return { type: "removeChip", index: Number(input) - 1 };
     if (input === "G") return { type: "selectBottom" };
     if (input === "]") return { type: "sectionNext" };
     if (input === "[") return { type: "sectionPrevious" };

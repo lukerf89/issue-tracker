@@ -3,21 +3,23 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import { Box, Text, useApp, useInput, useStdout } from "ink";
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 
-import { createNodeEngineCatalogRuntime, createNodeRepositoryInspector, loadEngineCatalog, previewRun, requestRunStop, resolveEngineCatalogPath, resolveRunPermission, respondToRunInput, startRun, type IssueWithDetails, type ListIssueFilters, type ServiceContext } from "@issue-tracker/core";
+import { createNodeEngineCatalogRuntime, createNodeRepositoryInspector, loadEngineCatalog, previewRun, requestRunStop, resolveEngineCatalogPath, resolveRunPermission, respondToRunInput, startRun, tokenizeSearchQuery, type IssueWithDetails, type ListIssueFilters, type ServiceContext } from "@issue-tracker/core";
 
 import {
   commandFromMode,
   executeLinekeeperCommand,
   loadLinekeeperData,
   parseFilterInput,
+  removeFilterKey,
   type LinekeeperCommand,
   type LinekeeperCoreCommand,
   type LinekeeperData,
   type LinekeeperLoadOptions
 } from "./data.js";
 import {
+  buildFilterChips,
   childDoneMarker,
   formatActivityEvent,
   formatActor,
@@ -30,7 +32,8 @@ import {
   lastAgentActivity,
   padColumn,
   priorityLabel,
-  shortActor
+  shortActor,
+  type FilterChip
 } from "./format.js";
 import { mapKeyToLinekeeperAction } from "./keys.js";
 import {
@@ -83,9 +86,11 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
 
   const rows = typeof stdout?.rows === "number" && stdout.rows > 0 ? stdout.rows : 24;
   const columns = typeof stdout?.columns === "number" && stdout.columns > 0 ? stdout.columns : 80;
+  const chips = useMemo(() => buildFilterChips(data), [data]);
+  const chipLines = chips.length > 0 ? 1 : 0;
   const activityLines = uiState.activityExpanded ? Math.max(1, Math.min(6, data.activity.length)) + 1 : 1;
-  // Chrome = header (2) + body border (2) + activity + command line (1).
-  const bodyCapacity = Math.max(3, rows - (2 + 2 + activityLines + 1));
+  // Chrome = header (2) + optional chip bar + body border (2) + activity + command line (1).
+  const bodyCapacity = Math.max(3, rows - (2 + chipLines + 2 + activityLines + 1));
 
   function reload(nextOptions: LinekeeperLoadOptions = loadOptions): LinekeeperData {
     const nextData = loadLinekeeperData(context, nextOptions);
@@ -156,6 +161,22 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
           ? { type: "scrollDetail", delta }
           : { type: "moveSelection", delta }
       );
+      return;
+    }
+    if (action.type === "removeChip") {
+      const chip = chips[action.index];
+      if (!chip) {
+        dispatchBase({ type: "setStatus", message: "No filter chip at that number." });
+        return;
+      }
+      if (chip.key === "search") {
+        reloadAndCommit({ ...loadOptions, search: null });
+        dispatchBase({ type: "setStatus", message: "Search cleared." });
+      } else {
+        const filters = removeFilterKey(loadOptions.filters, chip.key);
+        reloadAndCommit({ ...loadOptions, filters });
+        dispatchBase({ type: "setStatus", message: `Removed filter ${chip.label}.` });
+      }
       return;
     }
     if (action.type === "submitMode") {
@@ -238,6 +259,7 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
   return (
     <Box flexDirection="column">
       <Header data={data} />
+      <FilterChips chips={chips} />
       {launchPreview ? (
         <RunPreview preview={launchPreview} capacity={bodyCapacity} columns={columns} />
       ) : showHelp ? (
@@ -294,6 +316,26 @@ function Header({ data }: { data: LinekeeperData }) {
   );
 }
 
+function FilterChips({ chips }: { chips: FilterChip[] }) {
+  if (chips.length === 0) return null;
+
+  return (
+    <Box paddingX={1}>
+      <Text wrap="truncate">
+        <Text color="gray">filters </Text>
+        {chips.map((chip, index) => (
+          <Fragment key={chip.key}>
+            {index > 0 ? "  " : ""}
+            <Text color="yellow">[{index + 1}]</Text>
+            {` ${chip.label}`}
+          </Fragment>
+        ))}
+        <Text color="gray">  (digit removes)</Text>
+      </Text>
+    </Box>
+  );
+}
+
 function HelpOverlay({
   dbPath,
   capacity,
@@ -314,6 +356,10 @@ function HelpOverlay({
     "  / search   f filter   v views   n new   m move   p priority",
     "  a assign   l labels   c comment  s sub-issue   b link",
     "  r preview run   x stop run   e answer/approve   F fleet",
+    "",
+    "Filters",
+    "  f + Enter (empty)  clear all filters",
+    "  1-9                remove that active filter chip",
     "",
     `db ${dbPath}`,
     "",
@@ -383,7 +429,15 @@ function IssueList({
   columns: number;
 }) {
   const total = data.issues.length;
-  const rowCapacity = Math.max(1, capacity - 1); // reserve one row for the footer
+  // In search mode each result occupies two lines (row + excerpt), so halve the
+  // per-row budget after reserving the footer. Counts below stay issue-indexed.
+  const searchMode = Boolean(data.search);
+  const linesPerRow = searchMode ? 2 : 1;
+  const rowCapacity = Math.max(1, Math.floor((capacity - 1) / linesPerRow));
+  const tokens = useMemo(
+    () => (searchMode && data.search ? tokenizeSearchQuery(data.search) : []),
+    [searchMode, data.search]
+  );
   const offsetRef = useRef(0);
 
   let offset = offsetRef.current;
@@ -418,11 +472,20 @@ function IssueList({
             `${padColumn(issue.identifier, 7)} ${padColumn(state?.name ?? "Unknown", 12)} ` +
             `${padColumn(priorityLabel(issue.priority), 11)} ${padColumn(shortActor(assignee), 14)} ` +
             issue.title;
+          const snippet = searchMode ? data.snippets.get(issue.id) : undefined;
 
           return (
-            <Text key={issue.id} color={color} wrap="truncate">
-              {row}
-            </Text>
+            <Fragment key={issue.id}>
+              <Text color={color} wrap="truncate">
+                {row}
+              </Text>
+              {snippet !== undefined ? (
+                <Text color="gray" wrap="truncate">
+                  {SNIPPET_INDENT}
+                  {highlightSnippet(snippet, tokens)}
+                </Text>
+              ) : null}
+            </Fragment>
           );
         })
       )}
@@ -435,6 +498,32 @@ function IssueList({
       </Text>
     </Box>
   );
+}
+
+// Snippet excerpts render one indented line under their result row, aligned
+// past the identifier column (row prefix "> * " + 7-wide id + space = 12).
+const SNIPPET_INDENT = " ".repeat(12);
+
+// Emphasize the words in a bm25 excerpt that caused the match. FTS matches on a
+// prefix of each query token, so a snippet word is highlighted when it
+// case-insensitively starts with any token — mirroring what actually matched.
+export function highlightSnippet(snippet: string, tokens: string[]): ReactNode {
+  if (tokens.length === 0) return snippet;
+  const lowered = tokens.map((token) => token.toLowerCase());
+  // Capturing split: word runs land on odd indices, delimiters on even ones.
+  const parts = snippet.split(/([\p{L}\p{N}]+)/u);
+
+  return parts.map((part, index) => {
+    const isWord = index % 2 === 1;
+    if (isWord && lowered.some((token) => part.toLowerCase().startsWith(token))) {
+      return (
+        <Text key={index} bold color="cyan">
+          {part}
+        </Text>
+      );
+    }
+    return <Fragment key={index}>{part}</Fragment>;
+  });
 }
 
 interface DetailLine {

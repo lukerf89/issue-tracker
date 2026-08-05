@@ -21,7 +21,8 @@ import {
   commandFromMode,
   executeLinekeeperCommand,
   loadLinekeeperData,
-  parseFilterInput
+  parseFilterInput,
+  removeFilterKey
 } from "../src/data.js";
 import { formatLastAgentActivity, issueAssignee, issueState } from "../src/format.js";
 
@@ -117,6 +118,43 @@ describe("Linekeeper core-facing handlers", () => {
         child?.identifier
       ]);
       expect(child?.parent?.identifier).toBe(parent?.identifier);
+    } finally {
+      setup.close();
+    }
+  });
+
+  it("removes a single filter key while leaving the rest, and clears to empty", () => {
+    const filters = parseFilterInput("state=Todo assignee=@codex priority=1");
+
+    const withoutAssignee = removeFilterKey(filters, "assignee");
+    expect(withoutAssignee).toEqual({ state: "Todo", priority: 1 });
+
+    const withoutState = removeFilterKey(withoutAssignee, "state");
+    expect(withoutState).toEqual({ priority: 1 });
+
+    expect(removeFilterKey(withoutState, "priority")).toEqual({});
+  });
+
+  it("carries per-issue bm25 snippets on the search path keyed by issue id", () => {
+    const setup = initializedContext();
+
+    try {
+      const matching = createIssue(setup.context, {
+        title: "Paginate the backlog cursor",
+        description: "Add cursor pagination to the backlog listing."
+      });
+      createIssue(setup.context, { title: "Unrelated docusign work" });
+
+      const data = loadLinekeeperData(setup.context, { team: "ENG", search: "cursor" });
+
+      expect(data.issues.map((issue) => issue.identifier)).toContain(matching.identifier);
+      const snippet = data.snippets.get(matching.id);
+      expect(snippet).toBeTruthy();
+      expect(snippet?.toLowerCase()).toContain("cursor");
+
+      // Non-search loads carry no snippets.
+      const plain = loadLinekeeperData(setup.context, { team: "ENG" });
+      expect(plain.snippets.size).toBe(0);
     } finally {
       setup.close();
     }

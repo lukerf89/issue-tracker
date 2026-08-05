@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createElement } from "react";
+import { createElement, isValidElement, type ReactElement } from "react";
 import { render } from "ink-testing-library";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -19,7 +19,7 @@ import {
   type ServiceContext
 } from "@issue-tracker/core";
 
-import { LinekeeperApp } from "../src/app.js";
+import { highlightSnippet, LinekeeperApp } from "../src/app.js";
 
 const tempDirs: string[] = [];
 
@@ -114,6 +114,96 @@ describe("LinekeeperApp render", () => {
     }
   });
 
+  it("renders a highlighted bm25 excerpt line under each search result", async () => {
+    const setup = initializedContext();
+
+    try {
+      createIssue(setup.context, {
+        title: "Paginate the backlog cursor",
+        description: "Add cursor pagination to the backlog listing."
+      });
+      createIssue(setup.context, { title: "Unrelated docusign work" });
+
+      const view = render(
+        createElement(LinekeeperApp, {
+          context: setup.context,
+          dbPath: setup.dbPath,
+          defaultTeam: "ENG"
+        })
+      );
+
+      await tick();
+      view.stdin.write("/");
+      await tick(25);
+      view.stdin.write("cursor");
+      await tick(25);
+      view.stdin.write("\r");
+      await tick();
+      await tick();
+
+      const frame = stripAnsi(view.lastFrame() ?? "");
+      // The matching issue is listed, and its excerpt renders as a second line:
+      // the title text therefore appears twice (row + indented excerpt). The
+      // renderer emits no ANSI in tests, so the highlight styling itself is
+      // asserted at the logic level in the highlightSnippet unit test below.
+      expect(frame).toContain("ENG-1");
+      const occurrences = frame.split("Paginate the backlog cursor").length - 1;
+      expect(occurrences).toBeGreaterThanOrEqual(2);
+      expect(frame).not.toContain("Unrelated docusign work");
+
+      view.unmount();
+    } finally {
+      setup.close();
+    }
+  });
+
+  it("renders an active-filter chip bar and removes one chip by number", async () => {
+    const setup = initializedContext();
+
+    try {
+      createActor(setup.context, { type: "agent", name: "Codex", handle: "codex" });
+      createIssue(setup.context, { title: "Filterable work", assignee: "codex" });
+
+      const view = render(
+        createElement(LinekeeperApp, {
+          context: setup.context,
+          dbPath: setup.dbPath,
+          defaultTeam: "ENG"
+        })
+      );
+
+      await tick();
+      view.stdin.write("f");
+      await tick(25);
+      view.stdin.write("state=Todo assignee=@codex");
+      await tick(25);
+      view.stdin.write("\r");
+      await tick();
+      await tick();
+
+      const chipFrame = stripAnsi(view.lastFrame() ?? "");
+      // Human-readable chips, numbered for removal.
+      expect(chipFrame).toContain("[1] state=Todo");
+      expect(chipFrame).toContain("[2] @codex");
+
+      // Pressing the chip number peels off exactly that one filter.
+      view.stdin.write("2");
+      await tick();
+      await tick();
+
+      const afterFrame = stripAnsi(view.lastFrame() ?? "");
+      // Exactly the assignee chip is peeled off; state chip remains as [1].
+      // (@codex still appears in the issue's assignee column, so assert on the
+      // chip number, not the bare handle.)
+      expect(afterFrame).toContain("[1] state=Todo");
+      expect(afterFrame).not.toContain("[2]");
+
+      view.unmount();
+    } finally {
+      setup.close();
+    }
+  });
+
   it("shows an error status instead of crashing when a submitted view is missing", async () => {
     const setup = initializedContext();
 
@@ -175,6 +265,29 @@ describe("LinekeeperApp render", () => {
     } finally {
       setup.close();
     }
+  });
+});
+
+describe("highlightSnippet", () => {
+  const styledWords = (nodes: ReturnType<typeof highlightSnippet>): string[] =>
+    (Array.isArray(nodes) ? nodes : [nodes])
+      .filter((node): node is ReactElement<{ bold?: boolean; color?: string; children?: unknown }> =>
+        isValidElement(node)
+      )
+      .filter((node) => node.props.bold === true && node.props.color === "cyan")
+      .map((node) => String(node.props.children));
+
+  it("emphasizes only the words that prefix-match a query token", () => {
+    const styled = styledWords(highlightSnippet("Paginate the backlog cursor", ["cursor", "pag"]));
+    // "cursor" (exact) and "Paginate" (prefix "pag") match; "the"/"backlog" do not.
+    expect(styled).toContain("cursor");
+    expect(styled).toContain("Paginate");
+    expect(styled).not.toContain("the");
+    expect(styled).not.toContain("backlog");
+  });
+
+  it("returns the plain string when there are no tokens", () => {
+    expect(highlightSnippet("nothing to match", [])).toBe("nothing to match");
   });
 });
 
