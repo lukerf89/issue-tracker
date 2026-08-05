@@ -3,6 +3,7 @@ import type {
   Actor,
   Cycle,
   IssueWithDetails,
+  ListIssueFilters,
   Project,
   WorkflowState
 } from "@issue-tracker/core";
@@ -70,6 +71,73 @@ export function issueCycle(data: LinekeeperData, issue: IssueWithDetails): Cycle
   return issue.cycleId
     ? data.cycles.find((cycle) => cycle.id === issue.cycleId) ?? null
     : null;
+}
+
+// A single active-filter (or active-search) chip. `key` identifies what to drop
+// on remove-one: a ListIssueFilters key, or "search" to clear the search.
+export interface FilterChip {
+  key: keyof ListIssueFilters | "search";
+  label: string;
+}
+
+// Build the ordered chip list for the active filters + search. Labels echo the
+// stored (human-entered) filter values, defensively resolving an id to a name
+// when the stored value happens to be one. `team`/`limit` are excluded: team is
+// already in the header and limit is not user-facing.
+export function buildFilterChips(data: LinekeeperData): FilterChip[] {
+  const filters = data.filters ?? {};
+  const chips: FilterChip[] = [];
+
+  if (filters.state !== undefined) {
+    const resolved = data.states.find((state) => state.id === filters.state)?.name;
+    chips.push({ key: "state", label: `state=${resolved ?? filters.state}` });
+  }
+
+  if (filters.assignee !== undefined) {
+    if (filters.assignee === null) {
+      chips.push({ key: "assignee", label: "unassigned" });
+    } else {
+      const handle = data.actors.find((actor) => actor.id === filters.assignee)?.handle;
+      chips.push({ key: "assignee", label: `@${handle ?? filters.assignee}` });
+    }
+  }
+
+  if (filters.priority !== undefined) {
+    chips.push({ key: "priority", label: `priority:${priorityLabel(filters.priority)}` });
+  }
+
+  if (filters.project !== undefined) {
+    if (filters.project === null) {
+      chips.push({ key: "project", label: "no-project" });
+    } else {
+      const resolved = data.projects.find((project) => project.id === filters.project)?.name;
+      chips.push({ key: "project", label: `project:${resolved ?? filters.project}` });
+    }
+  }
+
+  if (filters.label !== undefined) {
+    chips.push({ key: "label", label: `label:${filters.label}` });
+  }
+
+  if (filters.cycle !== undefined) {
+    // A cycle filter is stored as either the cycle number (e.g. 3) or an id;
+    // resolve against both so a numeric filter shows the cycle's name.
+    const match = data.cycles.find(
+      (cycle) => cycle.id === filters.cycle || cycle.number === filters.cycle
+    );
+    const resolved = match ? match.name ?? `Cycle ${match.number}` : String(filters.cycle);
+    chips.push({ key: "cycle", label: `cycle:${resolved}` });
+  }
+
+  if (filters.includeArchived) {
+    chips.push({ key: "includeArchived", label: "archived" });
+  }
+
+  if (data.search) {
+    chips.push({ key: "search", label: `/${data.search}` });
+  }
+
+  return chips;
 }
 
 export function childDoneMarker(data: LinekeeperData, childId: string): string {

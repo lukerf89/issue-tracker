@@ -194,6 +194,7 @@ export {
   decodeIssueCursor,
   moveIssue,
   searchIssues,
+  tokenizeSearchQuery,
   unarchiveIssue,
   updateIssue,
   ISSUE_SUMMARY_FIELDS,

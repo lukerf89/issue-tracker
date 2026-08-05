@@ -1074,14 +1074,21 @@ interface OrderedSearchResult {
   snippet: string;
 }
 
+// Split free-text search input into the alphanumeric tokens the FTS index
+// matches on: each run of letters/digits is one token. Callers rendering match
+// highlights reuse this so what they emphasize matches what actually matched.
+export function tokenizeSearchQuery(query: string): string[] {
+  return query.match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
 // Build an FTS5 MATCH expression from free-text user input. Each run of
 // letters/digits becomes a quoted prefix term; terms are ANDed together.
 // Quoting neutralizes FTS operators and SQL wildcards, and a query with no
 // alphanumeric tokens yields no match expression (→ no results).
 function buildFtsMatch(query: string): string | null {
-  const tokens = query.match(/[\p{L}\p{N}]+/gu);
+  const tokens = tokenizeSearchQuery(query);
 
-  if (!tokens || tokens.length === 0) {
+  if (tokens.length === 0) {
     return null;
   }
 
