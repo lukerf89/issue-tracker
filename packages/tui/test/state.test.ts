@@ -84,6 +84,31 @@ describe("Linekeeper key mapping and reducer", () => {
     expect(mapKeyToLinekeeperAction("?", {}, state)).toEqual({ type: "toggleHelp" });
   });
 
+  it("maps digits to chip removal in list focus but not while typing in a mode", () => {
+    const listState = initialLinekeeperState();
+
+    expect(mapKeyToLinekeeperAction("1", {}, listState)).toEqual({
+      type: "removeChip",
+      index: 0
+    });
+    expect(mapKeyToLinekeeperAction("3", {}, listState)).toEqual({
+      type: "removeChip",
+      index: 2
+    });
+
+    // In an input mode (e.g. the filter bar), a digit is text, not a chip
+    // removal — the mode guard must run before the digit rule.
+    const filterState = reduceLinekeeperState(
+      listState,
+      { type: "enterMode", kind: "filter" },
+      3
+    );
+    expect(mapKeyToLinekeeperAction("1", {}, filterState)).toEqual({
+      type: "appendModeInput",
+      value: "1"
+    });
+  });
+
   it("maps arrow and page keys by focus", () => {
     const listState = initialLinekeeperState();
 

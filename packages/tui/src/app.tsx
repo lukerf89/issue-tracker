@@ -169,13 +169,17 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
       const chip = chips[action.index];
       // No chip at that number: leave it a silent no-op, as digits were before.
       if (!chip) return;
-      if (chip.key === "search") {
-        reloadAndCommit({ ...loadOptions, search: null });
-        dispatchBase({ type: "setStatus", message: "Search cleared." });
-      } else {
-        const filters = removeFilterKey(loadOptions.filters, chip.key);
-        reloadAndCommit({ ...loadOptions, filters });
-        dispatchBase({ type: "setStatus", message: `Removed filter ${chip.label}.` });
+      try {
+        if (chip.key === "search") {
+          reloadAndCommit({ ...loadOptions, search: null });
+          dispatchBase({ type: "setStatus", message: "Search cleared." });
+        } else {
+          const filters = removeFilterKey(loadOptions.filters, chip.key);
+          reloadAndCommit({ ...loadOptions, filters });
+          dispatchBase({ type: "setStatus", message: `Removed filter ${chip.label}.` });
+        }
+      } catch (error) {
+        dispatchBase({ type: "setStatus", message: error instanceof Error ? error.message : String(error) });
       }
       return;
     }
