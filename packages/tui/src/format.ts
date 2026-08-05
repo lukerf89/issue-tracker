@@ -120,7 +120,11 @@ export function buildFilterChips(data: LinekeeperData): FilterChip[] {
   }
 
   if (filters.cycle !== undefined) {
-    const match = data.cycles.find((cycle) => cycle.id === String(filters.cycle));
+    // A cycle filter is stored as either the cycle number (e.g. 3) or an id;
+    // resolve against both so a numeric filter shows the cycle's name.
+    const match = data.cycles.find(
+      (cycle) => cycle.id === filters.cycle || cycle.number === filters.cycle
+    );
     const resolved = match ? match.name ?? `Cycle ${match.number}` : String(filters.cycle);
     chips.push({ key: "cycle", label: `cycle:${resolved}` });
   }

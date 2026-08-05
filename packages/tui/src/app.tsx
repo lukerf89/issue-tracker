@@ -155,20 +155,20 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
       return;
     }
     if (action.type === "pageSelection") {
-      const delta = action.delta * bodyCapacity;
-      dispatchBase(
-        uiState.focus === "detail"
-          ? { type: "scrollDetail", delta }
-          : { type: "moveSelection", delta }
-      );
+      if (uiState.focus === "detail") {
+        dispatchBase({ type: "scrollDetail", delta: action.delta * bodyCapacity });
+      } else {
+        // Page by the number of visible list rows, not raw lines: in search mode
+        // each result is two lines, so a full page is ~half as many issues.
+        const step = Math.max(1, Math.floor((bodyCapacity - 1) / (data.search ? 2 : 1)));
+        dispatchBase({ type: "moveSelection", delta: action.delta * step });
+      }
       return;
     }
     if (action.type === "removeChip") {
       const chip = chips[action.index];
-      if (!chip) {
-        dispatchBase({ type: "setStatus", message: "No filter chip at that number." });
-        return;
-      }
+      // No chip at that number: leave it a silent no-op, as digits were before.
+      if (!chip) return;
       if (chip.key === "search") {
         reloadAndCommit({ ...loadOptions, search: null });
         dispatchBase({ type: "setStatus", message: "Search cleared." });
@@ -472,7 +472,7 @@ function IssueList({
             `${padColumn(issue.identifier, 7)} ${padColumn(state?.name ?? "Unknown", 12)} ` +
             `${padColumn(priorityLabel(issue.priority), 11)} ${padColumn(shortActor(assignee), 14)} ` +
             issue.title;
-          const snippet = searchMode ? data.snippets.get(issue.id) : undefined;
+          const snippet = searchMode ? data.snippets.get(issue.id) ?? "" : undefined;
 
           return (
             <Fragment key={issue.id}>
