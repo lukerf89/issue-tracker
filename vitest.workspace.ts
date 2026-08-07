@@ -9,10 +9,15 @@ export default defineConfig({
       {
         test: {
           environment: "node",
-          hookTimeout: 30000,
+          // 120s (not 30s): several backend suites spawn CLI/MCP subprocesses (init +
+          // stdio round-trips) that run in ~10-20s in isolation but can be starved past
+          // 30s when all backend files run in parallel under CPU contention, producing
+          // flaky "Test timed out in 30000ms" failures. A larger bound only affects
+          // genuinely hung tests; healthy tests still finish fast.
+          hookTimeout: 120000,
           include: ["packages/{core,cli,mcp,tui,agentd}/test/**/*.test.ts"],
           name: "backend",
-          testTimeout: 30000
+          testTimeout: 120000
         }
       },
       {
