@@ -330,6 +330,10 @@ function serializeMilestone(row: Milestone): SerializedMilestone {
 }
 
 function serializeIssueRow(issue: Issue): SerializedIssue {
+  // NOTE: idempotency_key is deliberately omitted from export. Keys identify an external
+  // source (e.g. an email message id); re-importing them into another workspace would risk
+  // spurious cross-workspace dedupe collisions against the global unique index. Import
+  // therefore inserts issues with a NULL key.
   return {
     id: issue.id,
     identifier: issue.identifier,

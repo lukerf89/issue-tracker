@@ -54,7 +54,10 @@ import {
 import { withTrackerContext } from "./context";
 
 export async function createIssueAction(input: CreateIssueInput) {
-  return withTrackerContext((context) => serializeIssue(createIssue(context, input)));
+  return withTrackerContext((context) => {
+    const created = createIssue(context, input);
+    return { ...serializeIssue(created), alreadyExisted: created.alreadyExisted };
+  });
 }
 
 export async function createIssueFormAction(formData: FormData) {

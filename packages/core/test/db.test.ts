@@ -128,6 +128,53 @@ describe("core database foundation", () => {
     }
   });
 
+  it("adds a partial unique idempotency-key index that dedupes non-null keys at the DB layer", () => {
+    const db = openTempDb();
+
+    try {
+      applyMigrations(db);
+      insertIssueFixture(db);
+
+      const columns = db.$client
+        .prepare("pragma table_info(issues)")
+        .all() as Array<{ name: string }>;
+      expect(columns.map((column) => column.name)).toContain("idempotency_key");
+
+      const indexes = db.$client
+        .prepare("pragma index_list(issues)")
+        .all() as Array<{ name: string; unique: number; partial: number }>;
+      const idempotencyIndex = indexes.find(
+        (index) => index.name === "issues_idempotency_key_unique"
+      );
+      expect(idempotencyIndex).toMatchObject({ unique: 1, partial: 1 });
+
+      const insertWithKey = (id: string, number: number, key: string | null): void => {
+        db.insert(issues)
+          .values({
+            id,
+            identifier: `ENG-${number}`,
+            teamId: "team-eng",
+            number,
+            title: `Issue ${number}`,
+            stateId: "state-todo",
+            creatorId: "actor-human",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            idempotencyKey: key
+          })
+          .run();
+      };
+
+      // Multiple NULL keys are allowed (NULLs are distinct); the fixture row already has one.
+      expect(() => insertWithKey("issue-eng-2", 2, null)).not.toThrow();
+      // A first non-null key is fine; a second row reusing it is rejected by the unique index.
+      expect(() => insertWithKey("issue-eng-3", 3, "dup-key")).not.toThrow();
+      expect(() => insertWithKey("issue-eng-4", 4, "dup-key")).toThrow(/UNIQUE/i);
+    } finally {
+      db.$client.close();
+    }
+  });
+
   it("enforces duplicate team keys, issue numbers, saved view names, and template names at the DB layer", () => {
     const db = openTempDb();
 
@@ -300,19 +347,25 @@ function insertIssueFixture(db: ReturnType<typeof openDb>): void {
       position: 1
     })
     .run();
-  db.insert(issues)
-    .values({
-      id: "issue-eng-1",
-      identifier: "ENG-1",
-      teamId: "team-eng",
-      number: 1,
-      title: "Set up CI",
-      stateId: "state-todo",
-      creatorId: "actor-human",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z"
-    })
-    .run();
+  // Raw SQL (not the drizzle `issues` schema) so this fixture models an issue row created
+  // before later migrations added columns — e.g. it runs against pre-0010 tables that have
+  // no idempotency_key column, which a drizzle insert would reference and fail on.
+  db.$client
+    .prepare(
+      "insert into issues (id, identifier, team_id, number, title, state_id, creator_id, created_at, updated_at) " +
+        "values (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .run(
+      "issue-eng-1",
+      "ENG-1",
+      "team-eng",
+      1,
+      "Set up CI",
+      "state-todo",
+      "actor-human",
+      "2026-01-01T00:00:00.000Z",
+      "2026-01-01T00:00:00.000Z"
+    );
 }
 
 function insertPreBlockedTeamFixture(db: ReturnType<typeof openDb>): void {

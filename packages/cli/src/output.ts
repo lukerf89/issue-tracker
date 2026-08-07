@@ -274,15 +274,29 @@ export function printTemplate(
   );
 }
 
-export function printIssue(context: ServiceContext, issue: Issue, options: OutputOptions): void {
+export function printIssue(
+  context: ServiceContext,
+  issue: Issue,
+  options: OutputOptions,
+  meta?: { alreadyExisted?: boolean }
+): void {
   if (options.json) {
-    printJson(serializeIssue(issue));
+    printJson(
+      meta?.alreadyExisted === undefined
+        ? serializeIssue(issue)
+        : { ...serializeIssue(issue), alreadyExisted: meta.alreadyExisted }
+    );
     return;
   }
 
   const row = issueRow(context, issue);
   printIssueTable([row]);
   printIssueRelations(issue);
+  if (meta?.alreadyExisted) {
+    process.stdout.write(
+      pc.dim(`\nidempotency key matched ${issue.identifier}; no duplicate created`) + "\n"
+    );
+  }
 }
 
 export function printIssues(
