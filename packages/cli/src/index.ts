@@ -594,14 +594,16 @@ export function createProgram(): Command {
         const options = optionsWithGlobals(command);
         const template = stringOption(options.template);
         if (template) {
+          const created = createIssueFromTemplate(
+            cli.context,
+            template,
+            issueCreateTemplateOverrides(title, options)
+          );
           printIssue(
             cli.context,
-            createIssueFromTemplate(
-              cli.context,
-              template,
-              issueCreateTemplateOverrides(title, options)
-            ),
-            options
+            created,
+            options,
+            { alreadyExisted: created.alreadyExisted }
           );
           return;
         }
@@ -1313,7 +1315,8 @@ function issueCreateTemplateOverrides(
     parent: nullableStringOption(options.parent),
     labels: stringArrayOption(options.label),
     blockedBy: stringArrayOption(options.blockedBy),
-    blocks: stringArrayOption(options.blocks)
+    blocks: stringArrayOption(options.blocks),
+    idempotencyKey: stringOption(options.idempotencyKey)
   }));
 }
 
