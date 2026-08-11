@@ -76,7 +76,7 @@ describe("durable provider permission hook", () => {
   it("degrades to resume delivery when no operator answers within the bounded wait", async () => {
     const fixture = setup();
     try {
-      const result = decisionOf(await runPermissionHook(WRITE_CALL, { ...fixture.env(), ISSUE_TRACKER_PERMISSION_TIMEOUT_MS: "60", ISSUE_TRACKER_PERMISSION_POLL_MS: "10", ISSUE_TRACKER_PERMISSION_PROGRESS_MS: "20" }));
+      const result = decisionOf(await runPermissionHook(WRITE_CALL, { ...fixture.env(), ISSUE_TRACKER_PERMISSION_TIMEOUT_MS: "200", ISSUE_TRACKER_PERMISSION_POLL_MS: "10", ISSUE_TRACKER_PERMISSION_PROGRESS_MS: "30" }));
       expect(result).toMatchObject({ permissionDecision: "deny" });
       expect(result.permissionDecisionReason).toMatch(/remains pending/i);
 
