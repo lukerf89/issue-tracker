@@ -29,7 +29,7 @@ import {
   type Clock,
   type ServiceContext
 } from "../src/index.js";
-import { milestones } from "../src/db/schema.js";
+import { issues, milestones } from "../src/db/schema.js";
 
 const tempDirs: string[] = [];
 
@@ -91,6 +91,41 @@ describe("importSnapshot", () => {
       expect(importedChild.attachments.map((attachment) => attachment.kind)).toEqual(["branch"]);
       expect(listActivity(destination.context, { issue: importedChild.identifier }).map((entry) => entry.id))
         .toEqual(snapshot.activity.filter((entry) => entry.issueId === importedChild.id).map((entry) => entry.id));
+    } finally {
+      source.close();
+      destination.close();
+    }
+  });
+
+  it("drops idempotency keys on export so re-import stays collision-free", () => {
+    const source = initializedContext("2026-05-01T00:00:00.000Z");
+    const destination = emptyContext("2026-05-02T00:00:00.000Z");
+
+    try {
+      createIssue(source.context, {
+        title: "Captured from inbox",
+        idempotencyKey: "email:message-99"
+      });
+
+      const snapshot = exportSnapshot(source.context);
+      // The key is intentionally omitted from the portable snapshot.
+      expect(snapshot.issues).toHaveLength(1);
+      expect("idempotencyKey" in snapshot.issues[0]).toBe(false);
+
+      importSnapshot(destination.context, snapshot);
+
+      // Imported issues carry a NULL key, so the global unique index can't collide and a
+      // fresh create with the original key still files a new issue rather than deduping.
+      const imported = destination.db.select().from(issues).all();
+      expect(imported).toHaveLength(1);
+      expect(imported[0]?.idempotencyKey).toBeNull();
+
+      destination.context.actor = whoami(destination.context);
+      const recreated = createIssue(destination.context, {
+        title: "Same key, fresh workspace",
+        idempotencyKey: "email:message-99"
+      });
+      expect(recreated.alreadyExisted).toBe(false);
     } finally {
       source.close();
       destination.close();

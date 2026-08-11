@@ -584,19 +584,31 @@ export function createProgram(): Command {
     .option("--state <state>", "workflow state")
     .option("--label <label>", "label name or id", collectValues, [])
     .option("--template <name>", "template name")
+    .option(
+      "--idempotency-key <key>",
+      "dedupe key; re-running with the same key returns the original issue instead of a duplicate"
+    )
     .option("--json", "print JSON output")
     .action((title, _options, command) =>
       withContext(command, {}, (cli) => {
         const options = optionsWithGlobals(command);
         const template = stringOption(options.template);
-        const issue = template
-          ? createIssueFromTemplate(
-              cli.context,
-              template,
-              issueCreateTemplateOverrides(title, options)
-            )
-          : createIssue(cli.context, issueCreateInput(title, options, cli.defaultTeam));
-        printIssue(cli.context, issue, options);
+        if (template) {
+          const created = createIssueFromTemplate(
+            cli.context,
+            template,
+            issueCreateTemplateOverrides(title, options)
+          );
+          printIssue(
+            cli.context,
+            created,
+            options,
+            { alreadyExisted: created.alreadyExisted }
+          );
+          return;
+        }
+        const created = createIssue(cli.context, issueCreateInput(title, options, cli.defaultTeam));
+        printIssue(cli.context, created, options, { alreadyExisted: created.alreadyExisted });
       })
     );
   issue
@@ -1282,7 +1294,8 @@ function issueCreateInput(
     parent: nullableStringOption(options.parent),
     labels: stringArrayOption(options.label),
     blockedBy: stringArrayOption(options.blockedBy),
-    blocks: stringArrayOption(options.blocks)
+    blocks: stringArrayOption(options.blocks),
+    idempotencyKey: stringOption(options.idempotencyKey)
   });
 }
 
@@ -1302,7 +1315,8 @@ function issueCreateTemplateOverrides(
     parent: nullableStringOption(options.parent),
     labels: stringArrayOption(options.label),
     blockedBy: stringArrayOption(options.blockedBy),
-    blocks: stringArrayOption(options.blocks)
+    blocks: stringArrayOption(options.blocks),
+    idempotencyKey: stringOption(options.idempotencyKey)
   }));
 }
 

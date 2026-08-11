@@ -10,7 +10,7 @@ import {
   createTemplateInputSchema,
   templateLabelsSchema
 } from "../schemas/template.js";
-import { createIssue, type CreateIssueInput, type IssueWithDetails } from "./issue.js";
+import { createIssue, type CreateIssueInput, type CreateIssueResult } from "./issue.js";
 import { getProject } from "./project.js";
 
 export interface CreateTemplateInput {
@@ -96,7 +96,7 @@ export function createIssueFromTemplate(
   context: ServiceContext,
   name: string,
   overrides: CreateIssueFromTemplateOverrides = {}
-): IssueWithDetails {
+): CreateIssueResult {
   const template = getTemplateByName(context, name);
   const parsedOverrides = omitUndefined(createIssueFromTemplateOverridesSchema.parse(overrides));
   const input: Partial<CreateIssueInput> = { ...parsedOverrides };

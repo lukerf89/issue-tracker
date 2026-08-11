@@ -86,7 +86,7 @@ import {
   type Db,
   type ServiceContext
 } from "../src/index.js";
-import { teams } from "../src/db/schema.js";
+import { issues, teams } from "../src/db/schema.js";
 
 const tempDirs: string[] = [];
 
@@ -1712,6 +1712,164 @@ describe("core services", () => {
 
       const [team] = secondDb.select().from(teams).where(eq(teams.key, "ENG")).all();
       expect(team?.issueCounter).toBe(2);
+    } finally {
+      firstDb.$client.close();
+      secondDb.$client.close();
+    }
+  });
+
+  it("dedupes create_issue by idempotency key without minting a duplicate", () => {
+    const { context, db, close } = initializedContext();
+
+    try {
+      const first = createIssue(context, {
+        title: "Capture inbound email",
+        idempotencyKey: "email:message-42"
+      });
+
+      expect(first.alreadyExisted).toBe(false);
+      expect(first.identifier).toBe("ENG-1");
+      expect(getTeamByKey(context, "ENG").issueCounter).toBe(1);
+
+      const retry = createIssue(context, {
+        title: "Capture inbound email (retry)",
+        idempotencyKey: "email:message-42"
+      });
+
+      // Same key returns the original issue, flagged, with no new row or identifier minted.
+      expect(retry.alreadyExisted).toBe(true);
+      expect(retry.id).toBe(first.id);
+      expect(retry.identifier).toBe("ENG-1");
+      expect(retry.title).toBe("Capture inbound email");
+      expect(getTeamByKey(context, "ENG").issueCounter).toBe(1);
+      expect(db.select().from(issues).all()).toHaveLength(1);
+    } finally {
+      close();
+    }
+  });
+
+  it("treats distinct idempotency keys as distinct issues", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      const first = createIssue(context, { title: "First", idempotencyKey: "key-a" });
+      const second = createIssue(context, { title: "Second", idempotencyKey: "key-b" });
+
+      expect(first.alreadyExisted).toBe(false);
+      expect(second.alreadyExisted).toBe(false);
+      expect(first.identifier).toBe("ENG-1");
+      expect(second.identifier).toBe("ENG-2");
+    } finally {
+      close();
+    }
+  });
+
+  it("preserves keyless create behavior and treats blank keys as no key", () => {
+    const { context, db, close } = initializedContext();
+
+    try {
+      // Absent, null, empty, and whitespace keys are all "no key": multiple coexist (NULLs
+      // distinct) and blank keys never dedupe against each other.
+      const absent = createIssue(context, { title: "No key" });
+      const nullKey = createIssue(context, { title: "Null key", idempotencyKey: null });
+      const emptyKey = createIssue(context, { title: "Empty key", idempotencyKey: "" });
+      const blankKey = createIssue(context, { title: "Blank key", idempotencyKey: "   " });
+
+      for (const issue of [absent, nullKey, emptyKey, blankKey]) {
+        expect(issue.alreadyExisted).toBe(false);
+      }
+      expect(db.select().from(issues).all()).toHaveLength(4);
+      expect(
+        db.select().from(issues).all().every((row) => row.idempotencyKey === null)
+      ).toBe(true);
+    } finally {
+      close();
+    }
+  });
+
+  it("scopes idempotency keys globally across teams", () => {
+    const { context, db, close } = initializedContext();
+
+    try {
+      createTeam(context, { key: "OPS", name: "Operations" });
+
+      const first = createIssue(context, {
+        title: "Global key",
+        team: "ENG",
+        idempotencyKey: "shared-key"
+      });
+      const second = createIssue(context, {
+        title: "Different team, same key",
+        team: "OPS",
+        idempotencyKey: "shared-key"
+      });
+
+      // The key is global: the OPS create returns the original ENG issue rather than minting
+      // a new OPS issue, and the OPS counter stays untouched.
+      expect(first.alreadyExisted).toBe(false);
+      expect(second.alreadyExisted).toBe(true);
+      expect(second.identifier).toBe(first.identifier);
+      expect(getTeamByKey(context, "OPS").issueCounter).toBe(0);
+      expect(db.select().from(issues).all()).toHaveLength(1);
+    } finally {
+      close();
+    }
+  });
+
+  it("keeps serializeIssue output free of the alreadyExisted flag", () => {
+    const { context, close } = initializedContext();
+
+    try {
+      const created = createIssue(context, { title: "Serialize me", idempotencyKey: "key" });
+      expect(created.alreadyExisted).toBe(false);
+
+      const serialized = serializeIssue(created);
+      expect("alreadyExisted" in serialized).toBe(false);
+      expect(serialized).toEqual(serializeIssue(getIssue(context, created.identifier)));
+    } finally {
+      close();
+    }
+  });
+
+  it("dedupes same-key creates across two WAL connections", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "issue-tracker-services-"));
+    tempDirs.push(tempDir);
+    const dbPath = join(tempDir, "tracker.db");
+    const firstDb = openDb(dbPath);
+    const secondDb = openDb(dbPath);
+
+    try {
+      applyMigrations(firstDb);
+
+      const firstContext: ServiceContext = {
+        db: firstDb,
+        actor: null,
+        clock: fixedClock("2026-01-01T00:00:00.000Z")
+      };
+      init(firstContext);
+      firstContext.actor = whoami(firstContext);
+
+      const secondContext: ServiceContext = {
+        db: secondDb,
+        actor: whoami({ ...firstContext, db: secondDb }),
+        clock: fixedClock("2026-01-01T00:01:00.000Z")
+      };
+
+      const first = createIssue(firstContext, {
+        title: "From first connection",
+        idempotencyKey: "race-key"
+      });
+      const second = createIssue(secondContext, {
+        title: "From second connection",
+        idempotencyKey: "race-key"
+      });
+
+      // IMMEDIATE-transaction serialization plus the DB unique index guarantee exactly one
+      // row; the second connection observes the committed row and dedupes.
+      expect(first.alreadyExisted).toBe(false);
+      expect(second.alreadyExisted).toBe(true);
+      expect(second.identifier).toBe(first.identifier);
+      expect(secondDb.select().from(issues).all()).toHaveLength(1);
     } finally {
       firstDb.$client.close();
       secondDb.$client.close();

@@ -51,7 +51,10 @@ export const createIssueInputSchema = z.object({
   sortOrder: optionalIntegerSchema,
   labels: z.array(nonEmptyStringSchema).optional(),
   blockedBy: z.array(nonEmptyStringSchema).optional(),
-  blocks: z.array(nonEmptyStringSchema).optional()
+  blocks: z.array(nonEmptyStringSchema).optional(),
+  // Bounded; blank/whitespace keys are normalized to "no key" by the service, so an empty
+  // string stays back-compatible with today's keyless create rather than erroring.
+  idempotencyKey: z.string().max(255).nullable().optional()
 }) satisfies z.ZodType<CreateIssueInput>;
 
 export const listIssueFiltersSchema = z.object({

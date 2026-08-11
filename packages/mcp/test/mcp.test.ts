@@ -145,14 +145,51 @@ describe("MCP server", () => {
       expect(created).toMatchObject({
         identifier: "ENG-1",
         title: "Set up CI",
-        priority: 2
+        priority: 2,
+        alreadyExisted: false
       });
 
       const fetched = await callJsonTool(client, "get_issue", {
         identifier: "ENG-1"
       });
 
-      expect(fetched).toEqual(created);
+      // create_issue surfaces alreadyExisted; get_issue does not — otherwise identical.
+      const { alreadyExisted, ...createdIssue } = created as Record<string, unknown>;
+      expect(alreadyExisted).toBe(false);
+      expect(fetched).toEqual(createdIssue);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("dedupes create_issue by idempotency key and signals alreadyExisted (CLI+MCP parity)", async () => {
+    const dbPath = initializedDbPath();
+    const client = await connectClient(dbPath, { handle: "build-agent" });
+
+    try {
+      const first = await callJsonTool(client, "create_issue", {
+        title: "Capture inbound email",
+        idempotencyKey: "email:message-1"
+      });
+      expect(first).toMatchObject({ identifier: "ENG-1", alreadyExisted: false });
+
+      const retry = await callJsonTool(client, "create_issue", {
+        title: "Capture inbound email (retry)",
+        idempotencyKey: "email:message-1"
+      });
+
+      // Same key returns the original issue, flagged, with no new identifier minted.
+      expect(retry).toMatchObject({
+        id: (first as { id: string }).id,
+        identifier: "ENG-1",
+        title: "Capture inbound email",
+        alreadyExisted: true
+      });
+
+      const listed = (await callJsonTool(client, "list_issues", {})) as unknown as {
+        issues: Array<{ identifier: string }>;
+      };
+      expect(listed.issues.map((issue) => issue.identifier)).toEqual(["ENG-1"]);
     } finally {
       await client.close();
     }
