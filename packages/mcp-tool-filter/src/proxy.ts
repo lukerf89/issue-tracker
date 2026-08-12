@@ -42,6 +42,12 @@ export function runProxy(options: RunProxyOptions): Promise<number> {
   });
 
   // Client -> server: raw passthrough, no filtering needed in this direction.
+  // `.pipe()` does not forward `error` events between streams, so without this
+  // handler an EPIPE from the child closing/exiting mid-write would surface as
+  // an unhandled error on child.stdin and crash the whole proxy process.
+  child.stdin?.on("error", (error) => {
+    stderr.write(`[mcp-tool-filter] child stdin error: ${String(error)}\n`);
+  });
   stdin.pipe(child.stdin);
 
   if (child.stderr) {
@@ -76,10 +82,17 @@ export function runProxy(options: RunProxyOptions): Promise<number> {
       const shouldContinue = stdout.write(serializeMessage(filtered));
 
       if (!shouldContinue) {
+        // Stop draining now: pausing child.stdout only blocks new "data"
+        // events, it does not stop this loop from writing any further
+        // messages already sitting in readBuffer, which would defeat the
+        // backpressure signal write() just gave us. Resume draining once
+        // the writer catches up.
         child.stdout?.pause();
         stdout.once("drain", () => {
           child.stdout?.resume();
+          drainBuffer();
         });
+        break;
       }
     }
   }
