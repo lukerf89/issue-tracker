@@ -30,6 +30,17 @@ granted for git's XDG config/ignore location; git's primary `~/.gitconfig` is in
 granted. The profile does not grant blanket access to `~/.config`, `~/.codex`,
 `~/Library/Preferences`, or `~/Library/Keychains`.
 
+Claude Code does not use `TMPDIR` for its own temp root. It opens `/tmp/claude-$UID`, which the
+profile denies, so a jailed run aborted at startup with `EPERM` before doing any work. The wrapper
+therefore creates a per-run temp directory beside the generated profile, grants that directory, and
+points `CLAUDE_CODE_TMPDIR` and `CLAUDE_TMPDIR` at it. The directory is removed with the profile
+when the run ends. Granting `/tmp/claude-$UID` instead would have been broader: that root is shared
+by every Claude Code run on the host, so a confined run could read another run's scratch. Both
+variable names are set because the provider reads `CLAUDE_CODE_TMPDIR` first and falls back to
+`CLAUDE_TMPDIR`; they are inert for providers that ignore them. If a future Claude Code release
+stopped honoring them, the run would fail loudly on the denied temp root rather than silently
+escaping the jail.
+
 Residual gaps remain. The provider retains outbound network access and macOS service access. System
 TLS trust anchors under `/System/Library/Keychains` remain reachable through the `/System` grant and
 securityd/mach-lookup, without exposing the user's login keychain. Host credentials including

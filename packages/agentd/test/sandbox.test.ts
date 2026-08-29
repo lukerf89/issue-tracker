@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -36,6 +36,9 @@ import {
 
 const tempDirs: string[] = [];
 const seatbeltIntegrationAvailable = canApplySeatbelt();
+// A real claude invocation needs credentials and network, which CI runners do not have; the stub
+// provider below is the CI-verifiable regression guard, and this is the opt-in end-to-end check.
+const claudeSmokeAvailable = seatbeltIntegrationAvailable && process.env.TRACKER_SEATBELT_CLAUDE_SMOKE === "1";
 afterEach(() => {
   for (const directory of tempDirs.splice(0)) rmSync(directory, { recursive: true, force: true });
   __resetSeatbeltWarningsForTest();
@@ -289,6 +292,86 @@ describe("provider Seatbelt sandbox", () => {
 
     const survivingNewDirectories = [...profileDirectories()].filter((entry) => !before.has(entry));
     expect(survivingNewDirectories).toEqual([]);
+  });
+
+  it.skipIf(!seatbeltIntegrationAvailable)(
+    "lets a provider write its redirected temp root while a shared temp root outside the jail stays denied",
+    async () => {
+      const root = temporarySeatbeltDirectory();
+      const worktree = join(root, "worktree");
+      const providerDirectory = join(root, "provider");
+      // Stands in for `/tmp/claude-$UID`: a temp root shared across runs, which the jail must not
+      // reach even though the provider needs a temp root of its own.
+      const sharedTemporaryRoot = join(root, "claude-shared");
+      mkdirSync(worktree);
+      mkdirSync(providerDirectory);
+      mkdirSync(sharedTemporaryRoot);
+      writeFileSync(join(sharedTemporaryRoot, "other-session"), "fictional-other-session");
+      const provider = join(providerDirectory, "provider.sh");
+      writeFileSync(
+        provider,
+        `#!/bin/sh\nprintf probe > "$CLAUDE_CODE_TMPDIR/probe" && printf redirect-writable\ncat ${JSON.stringify(join(sharedTemporaryRoot, "other-session"))}\n`,
+        { mode: 0o755 }
+      );
+
+      const result = await runProcess(provider, [], {
+        cwd: worktree,
+        sandbox: { worktree, executable: provider, hook: null }
+      });
+
+      expect(result.stdout, result.stderr).toBe("redirect-writable");
+      expect(result.stdout).not.toContain("fictional-other-session");
+      expect(result.stderr).toMatch(/denied|not permitted|operation not permitted/i);
+    }
+  );
+
+  it.skipIf(!claudeSmokeAvailable)(
+    "runs a real claude invocation under the jail without failing on its temp root",
+    async () => {
+      const worktree = join(temporarySeatbeltDirectory(), "worktree");
+      mkdirSync(worktree);
+
+      const result = await runProcess("claude", ["-p", "reply with just: ok"], {
+        cwd: worktree,
+        sandbox: { worktree, executable: "claude", hook: null }
+      });
+
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.stdout.toLowerCase()).toContain("ok");
+      expect(`${result.stdout}${result.stderr}`).not.toMatch(/EPERM|not permitted/i);
+    },
+    180_000
+  );
+
+  // Claude Code ignores TMPDIR and opens `/tmp/claude-$UID`, so the jail denied its temp root and
+  // every osSandbox run aborted at startup (LF-109). Guard both halves of the fix: the redirect is
+  // published to the provider, and the grant stays per-run rather than widening to the shared root.
+  it("redirects the provider temp root into a granted per-run directory", () => {
+    const wrapped = wrapForSandbox({
+      executable: process.execPath,
+      args: ["--fictional"],
+      cwd: process.cwd(),
+      sandbox: { worktree: process.cwd(), executable: process.execPath, hook: null },
+      available: true
+    });
+    try {
+      const temporaryRoot = wrapped.env.CLAUDE_CODE_TMPDIR;
+      expect(temporaryRoot).toBeTruthy();
+      expect(wrapped.env.CLAUDE_TMPDIR).toBe(temporaryRoot);
+      // Claude Code refuses a temp root it does not exclusively own.
+      expect(statSync(temporaryRoot!).mode & 0o777).toBe(0o700);
+
+      const profile = readFileSync(wrapped.args[1]!, "utf8");
+      expect(profile).toContain(`(subpath ${JSON.stringify(temporaryRoot)})`);
+      expect(profile).not.toContain(`/tmp/claude-${process.getuid?.()}`);
+      // The profile file itself lives one level up and must stay outside the writable grant.
+      expect(profile).not.toContain(`(subpath ${JSON.stringify(dirname(temporaryRoot!))})`);
+
+      wrapped.cleanup();
+      expect(existsSync(temporaryRoot!)).toBe(false);
+    } finally {
+      wrapped.cleanup();
+    }
   });
 
   // These assertions run on every platform without kernel Seatbelt: they guard the generated

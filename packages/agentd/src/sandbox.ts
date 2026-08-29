@@ -6,7 +6,7 @@
  * hook child as its sanctioned control channel, while host secrets such as ~/.ssh and ~/.aws are
  * never allowlisted.
  */
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
@@ -98,7 +98,7 @@ export function wrapForSandbox(input: {
   cwd: string;
   sandbox: ProviderSandbox;
   available?: boolean;
-}): { executable: string; args: string[]; cleanup: () => void } {
+}): { executable: string; args: string[]; env: NodeJS.ProcessEnv; cleanup: () => void } {
   if (!(input.available ?? isSeatbeltAvailable())) {
     if (!seatbeltUnavailableWarned) {
       console.warn(
@@ -106,12 +106,14 @@ export function wrapForSandbox(input: {
       );
       seatbeltUnavailableWarned = true;
     }
-    return { executable: input.executable, args: input.args, cleanup: () => {} };
+    return { executable: input.executable, args: input.args, env: {}, cleanup: () => {} };
   }
   const directory = mkdtempSync(join(tmpdir(), "tracker-seatbelt-"));
   let profilePath: string;
+  let providerTemporaryDirectory: string;
   try {
     profilePath = join(directory, "provider.sb");
+    providerTemporaryDirectory = createProviderTemporaryDirectory(directory);
     const readPaths = [
       ...resolveToolchainReadPaths(input.sandbox.executable),
       ...(input.sandbox.hook ? resolveHookReadPaths(input.sandbox.hook.hookScriptPath) : [])
@@ -119,7 +121,7 @@ export function wrapForSandbox(input: {
     const profile = buildSeatbeltProfile({
       worktree: input.sandbox.worktree,
       readPaths,
-      writePaths: [input.cwd],
+      writePaths: [input.cwd, providerTemporaryDirectory],
       hook: input.sandbox.hook
     });
     writeFileSync(profilePath, profile, { mode: 0o600 });
@@ -130,8 +132,29 @@ export function wrapForSandbox(input: {
   return {
     executable: "/usr/bin/sandbox-exec",
     args: ["-f", profilePath, input.executable, ...input.args],
+    // Claude Code ignores TMPDIR for its own temp root and opens `/tmp/claude-$UID`, which the jail
+    // denies -- every osSandbox run aborted at startup before doing any work. Both names are set
+    // because the provider reads CLAUDE_CODE_TMPDIR first and falls back to CLAUDE_TMPDIR; they are
+    // inert for providers that do not read them.
+    env: {
+      CLAUDE_CODE_TMPDIR: providerTemporaryDirectory,
+      CLAUDE_TMPDIR: providerTemporaryDirectory
+    },
     cleanup: () => rmSync(directory, { recursive: true, force: true })
   };
+}
+
+/**
+ * A per-run temp root that is torn down with the profile. Redirecting the provider here keeps the
+ * grant narrower than `/tmp/claude-$UID`, which is shared by every claude run on the host and would
+ * leak one run's scratch to the next.
+ */
+function createProviderTemporaryDirectory(profileDirectory: string) {
+  const directory = join(profileDirectory, "tmp");
+  mkdirSync(directory);
+  // Claude Code refuses a temp root it does not exclusively own, so do not leave this to the umask.
+  chmodSync(directory, 0o700);
+  return canonical(directory);
 }
 
 function resolveExecutable(executable: string) {

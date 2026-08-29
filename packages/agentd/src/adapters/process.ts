@@ -4,10 +4,13 @@ import { wrapForSandbox, type ProviderSandbox } from "../sandbox.js";
 
 export async function runProcess(executable: string, args: string[], options: { cwd: string; env?: NodeJS.ProcessEnv; signal?: AbortSignal; stdin?: string; onProcess?: (pid: number) => void; sandbox?: ProviderSandbox | null }) {
   return await new Promise<{ exitCode: number | null; stdout: string; stderr: string }>((resolve, reject) => {
-    const wrapped = options.sandbox ? wrapForSandbox({ executable, args, cwd: options.cwd, sandbox: options.sandbox }) : { executable, args, cleanup: () => {} };
+    const wrapped = options.sandbox ? wrapForSandbox({ executable, args, cwd: options.cwd, sandbox: options.sandbox }) : { executable, args, env: {}, cleanup: () => {} };
     let child;
     try {
-      child = spawn(wrapped.executable, wrapped.args, { cwd: options.cwd, env: options.env, signal: options.signal, stdio: ["pipe", "pipe", "pipe"] });
+      // `options.env` being undefined means "inherit", so spread the ambient environment
+      // explicitly rather than dropping it when the sandbox contributes its own variables.
+      const env = { ...(options.env ?? process.env), ...wrapped.env };
+      child = spawn(wrapped.executable, wrapped.args, { cwd: options.cwd, env, signal: options.signal, stdio: ["pipe", "pipe", "pipe"] });
     } catch (error) {
       wrapped.cleanup();
       reject(error);
