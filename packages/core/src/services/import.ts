@@ -183,7 +183,9 @@ const issueSnapshotSchema = z.strictObject({
   startedAt: nullableIsoTimestampSchema,
   completedAt: nullableIsoTimestampSchema,
   canceledAt: nullableIsoTimestampSchema,
-  archivedAt: nullableIsoTimestampSchema
+  archivedAt: nullableIsoTimestampSchema,
+  // Optional keeps snapshots created before issue idempotency keys importable.
+  idempotencyKey: nullableStringSchema.optional().default(null)
 });
 
 const labelSnapshotSchema = z.strictObject({

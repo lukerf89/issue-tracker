@@ -151,6 +151,7 @@ interface SerializedIssue {
   completedAt: string | null;
   canceledAt: string | null;
   archivedAt: string | null;
+  idempotencyKey: string | null;
 }
 
 interface SerializedIssueLabel {
@@ -352,7 +353,8 @@ function serializeIssueRow(issue: Issue): SerializedIssue {
     startedAt: toIsoOrNull(issue.startedAt),
     completedAt: toIsoOrNull(issue.completedAt),
     canceledAt: toIsoOrNull(issue.canceledAt),
-    archivedAt: toIsoOrNull(issue.archivedAt)
+    archivedAt: toIsoOrNull(issue.archivedAt),
+    idempotencyKey: issue.idempotencyKey ?? null
   };
 }
 

@@ -206,6 +206,7 @@ export {
   type ArchiveIssueInput,
   type AssignIssueInput,
   type CreateIssueInput,
+  type CreateIssueResult,
   type GetIssueOptions,
   type IssueCommentMode,
   type IssueReference,

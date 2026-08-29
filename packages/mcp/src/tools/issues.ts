@@ -123,14 +123,19 @@ export function registerIssueTools(
     "create_issue",
     {
       title: "Create issue",
-      description: "Create an issue.",
+      description:
+        "Create an issue. Pass an optional global `idempotencyKey` to make retries safe: " +
+        "re-submitting the same key returns the original issue with `alreadyExisted: true` " +
+        "instead of filing a duplicate. A deduped result reflects the original issue's current " +
+        "state (it may have been edited or archived since it was created).",
       inputSchema: createIssueInputSchema.shape
     },
     (input) => mcpToolResult(() => {
       const parsed = createIssueInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeIssue(createIssue(context, parsed)))
-      );
+      return withMcpContext({ ...options, requireActor: true }, ({ context }) => {
+        const created = createIssue(context, parsed);
+        return jsonResult({ ...serializeIssue(created), alreadyExisted: created.alreadyExisted });
+      });
     })
   );
 

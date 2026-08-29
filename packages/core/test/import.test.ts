@@ -29,7 +29,7 @@ import {
   type Clock,
   type ServiceContext
 } from "../src/index.js";
-import { milestones } from "../src/db/schema.js";
+import { issues, milestones } from "../src/db/schema.js";
 
 const tempDirs: string[] = [];
 
@@ -91,6 +91,66 @@ describe("importSnapshot", () => {
       expect(importedChild.attachments.map((attachment) => attachment.kind)).toEqual(["branch"]);
       expect(listActivity(destination.context, { issue: importedChild.identifier }).map((entry) => entry.id))
         .toEqual(snapshot.activity.filter((entry) => entry.issueId === importedChild.id).map((entry) => entry.id));
+    } finally {
+      source.close();
+      destination.close();
+    }
+  });
+
+  it("preserves idempotency keys across export and import", () => {
+    const source = initializedContext("2026-05-01T00:00:00.000Z");
+    const destination = emptyContext("2026-05-02T00:00:00.000Z");
+
+    try {
+      createIssue(source.context, {
+        title: "Captured from inbox",
+        idempotencyKey: "email:message-99"
+      });
+
+      const snapshot = exportSnapshot(source.context);
+      expect(snapshot.issues).toHaveLength(1);
+      expect(snapshot.issues[0]?.idempotencyKey).toBe("email:message-99");
+
+      importSnapshot(destination.context, snapshot);
+
+      const imported = destination.db.select().from(issues).all();
+      expect(imported).toHaveLength(1);
+      expect(imported[0]?.idempotencyKey).toBe("email:message-99");
+
+      destination.context.actor = whoami(destination.context);
+      const recreated = createIssue(destination.context, {
+        title: "Retry after migration",
+        idempotencyKey: "email:message-99"
+      });
+      expect(recreated.alreadyExisted).toBe(true);
+      expect(recreated.id).toBe(snapshot.issues[0]?.id);
+    } finally {
+      source.close();
+      destination.close();
+    }
+  });
+
+  it("imports older snapshots without idempotency keys", () => {
+    const source = populatedContext();
+    const destination = emptyContext();
+
+    try {
+      const snapshot = exportSnapshot(source.context);
+      const legacySnapshot = {
+        ...snapshot,
+        issues: snapshot.issues.map((issue) => {
+          const legacyIssue: Partial<typeof issue> = { ...issue };
+          delete legacyIssue.idempotencyKey;
+          return legacyIssue;
+        })
+      };
+
+      importSnapshot(destination.context, legacySnapshot);
+
+      expect(destination.db.select().from(issues).all()).toHaveLength(snapshot.issues.length);
+      expect(
+        destination.db.select().from(issues).all().every((issue) => issue.idempotencyKey === null)
+      ).toBe(true);
     } finally {
       source.close();
       destination.close();

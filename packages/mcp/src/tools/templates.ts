@@ -73,13 +73,14 @@ export function registerTemplateTools(
     },
     (input) => mcpToolResult(() => {
       const parsed = createIssueFromTemplateInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeIssue(createIssueFromTemplate(
+      return withMcpContext({ ...options, requireActor: true }, ({ context }) => {
+        const created = createIssueFromTemplate(
           context,
           parsed.name,
           parsed.overrides
-        )))
-      );
+        );
+        return jsonResult({ ...serializeIssue(created), alreadyExisted: created.alreadyExisted });
+      });
     })
   );
 }

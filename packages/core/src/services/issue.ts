@@ -45,6 +45,10 @@ export interface CreateIssueInput {
   labels?: string[];
   blockedBy?: string[];
   blocks?: string[];
+  // Optional, globally-scoped idempotency key. Re-submitting the same key returns the
+  // original issue (with `alreadyExisted: true`) instead of filing a duplicate. Absent,
+  // null, or blank => no key (today's behavior).
+  idempotencyKey?: string | null;
 }
 
 export interface ListIssueFilters {
@@ -201,10 +205,60 @@ export type IssueWithDetails = IssueWithLabels & {
   attachments: Attachment[];
 };
 
-export function createIssue(context: ServiceContext, input: CreateIssueInput) {
+// createIssue returns the full issue detail plus an `alreadyExisted` flag: `true` when an
+// idempotency key matched an existing issue and no new row was created, `false` otherwise.
+// The flag rides on the detail object (rather than a wrapper tuple) so existing callers that
+// read issue fields directly keep working; serializeIssue ignores it, so get/list/search
+// JSON contracts are unchanged. Adapters surface it explicitly on the create output.
+export type CreateIssueResult = IssueWithDetails & { alreadyExisted: boolean };
+
+// A blank/whitespace-only key must never act as a dedupe token (it would collide across
+// unrelated creates), so it collapses to null == "no key".
+function normalizeIdempotencyKey(key: string | null | undefined): string | null {
+  if (key === null || key === undefined) {
+    return null;
+  }
+  const trimmed = key.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function findIssueRowByIdempotencyKey(context: ServiceContext, key: string): Issue | undefined {
+  return context.db.query.issues.findFirst({
+    where: eq(issues.idempotencyKey, key)
+  }).sync();
+}
+
+export function findExistingIssueByIdempotencyKey(
+  context: ServiceContext,
+  key: string | null | undefined
+): CreateIssueResult | undefined {
   requireActor(context);
+  const normalizedKey = normalizeIdempotencyKey(key);
+  if (normalizedKey === null) {
+    return undefined;
+  }
+
+  const existing = findIssueRowByIdempotencyKey(context, normalizedKey);
+  return existing
+    ? { ...getIssue(context, existing.identifier), alreadyExisted: true }
+    : undefined;
+}
+
+export function createIssue(context: ServiceContext, input: CreateIssueInput): CreateIssueResult {
+  requireActor(context);
+  const idempotencyKey = normalizeIdempotencyKey(input.idempotencyKey);
 
   return inTransaction(context, (txContext) => {
+    // Fast path: a prior create with this key already committed. Return it as-is without
+    // minting an identifier or incrementing the team counter. Writers serialize via the
+    // IMMEDIATE transaction's RESERVED lock, so this check reliably sees committed rows.
+    if (idempotencyKey !== null) {
+      const existing = findIssueRowByIdempotencyKey(txContext, idempotencyKey);
+      if (existing) {
+        return { ...getIssue(txContext, existing.identifier), alreadyExisted: true };
+      }
+    }
+
     const team = resolveTeam(txContext, input.teamId ?? input.team);
     const state = input.stateId ?? input.state
       ? getState(txContext, input.stateId ?? input.state ?? "", team.id)
@@ -250,10 +304,25 @@ export function createIssue(context: ServiceContext, input: CreateIssueInput) {
       startedAt: null,
       completedAt: null,
       canceledAt: null,
-      archivedAt: null
+      archivedAt: null,
+      idempotencyKey
     };
 
-    txContext.db.insert(issues).values(row).run();
+    try {
+      txContext.db.insert(issues).values(row).run();
+    } catch (error) {
+      // Defense-in-depth: IMMEDIATE-transaction serialization makes this effectively
+      // unreachable, but if a concurrent writer won the key between the check above and
+      // this insert, honor idempotency by returning the winner instead of throwing.
+      if (idempotencyKey !== null && isIdempotencyKeyConflict(error)) {
+        const existing = findIssueRowByIdempotencyKey(txContext, idempotencyKey);
+        if (existing) {
+          return { ...getIssue(txContext, existing.identifier), alreadyExisted: true };
+        }
+      }
+      throw error;
+    }
+
     appendActivityInTransaction(txContext, {
       issueId: row.id,
       actorId: row.creatorId,
@@ -273,8 +342,23 @@ export function createIssue(context: ServiceContext, input: CreateIssueInput) {
       applyDependencyEdge(txContext, row, blocked, "blocks", "add");
     }
 
-    return getIssue(txContext, row.identifier);
+    return { ...getIssue(txContext, row.identifier), alreadyExisted: false };
   });
+}
+
+// better-sqlite3 surfaces a UNIQUE violation as a SqliteError with a SQLITE_CONSTRAINT_UNIQUE
+// code; match on the idempotency index name to avoid swallowing unrelated constraint errors.
+function isIdempotencyKeyConflict(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+  const code = (error as { code?: unknown }).code;
+  const message = (error as { message?: unknown }).message;
+  return (
+    (code === "SQLITE_CONSTRAINT_UNIQUE" || code === "SQLITE_CONSTRAINT") &&
+    typeof message === "string" &&
+    message.includes("issues.idempotency_key")
+  );
 }
 
 export function getIssue(

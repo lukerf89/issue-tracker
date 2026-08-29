@@ -178,6 +178,45 @@ describe("tracker CLI", () => {
     });
   });
 
+  it("dedupes issue create by --idempotency-key and carries alreadyExisted in --json", async () => {
+    const dbPath = tempDbPath();
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+
+    const first = await tracker(dbPath, [
+      "issue",
+      "create",
+      "--title",
+      "Capture inbound email",
+      "--idempotency-key",
+      "email:msg-1",
+      "--json"
+    ]);
+    expect(first.status).toBe(0);
+    const firstJson = JSON.parse(first.stdout) as Record<string, unknown>;
+    expect(firstJson).toMatchObject({ identifier: "ENG-1", alreadyExisted: false });
+
+    const retry = await tracker(dbPath, [
+      "issue",
+      "create",
+      "--title",
+      "Capture inbound email (retry)",
+      "--idempotency-key",
+      "email:msg-1",
+      "--json"
+    ]);
+    expect(retry.status).toBe(0);
+    const retryJson = JSON.parse(retry.stdout) as Record<string, unknown>;
+    expect(retryJson).toMatchObject({
+      id: firstJson.id,
+      identifier: "ENG-1",
+      alreadyExisted: true
+    });
+
+    const list = await tracker(dbPath, ["issue", "list", "--json"]);
+    const listed = JSON.parse(list.stdout) as { issues: Array<{ identifier: string }> };
+    expect(listed.issues.map((issue) => issue.identifier)).toEqual(["ENG-1"]);
+  });
+
   it("backs up a live database with a restorable copy", async () => {
     const dbPath = tempDbPath();
     const backupPath = join(dirname(dbPath), "tracker-backup-test.db");
@@ -941,6 +980,53 @@ describe("tracker CLI", () => {
     const templatesAfterDelete = await tracker(dbPath, ["template", "list", "--json"]);
     expect(templatesAfterDelete.status).toBe(0);
     expect(JSON.parse(templatesAfterDelete.stdout)).toEqual([]);
+  });
+
+  it("dedupes template-based issue creates by --idempotency-key", async () => {
+    const dbPath = tempDbPath();
+
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect(
+      (await tracker(dbPath, ["template", "create", "Inbox item", "--title", "From template"])).status
+    ).toBe(0);
+
+    const first = await tracker(dbPath, [
+      "issue",
+      "create",
+      "--template",
+      "Inbox item",
+      "--idempotency-key",
+      "inbox:message-1",
+      "--json"
+    ]);
+    expect(first.status).toBe(0);
+    const firstJson = JSON.parse(first.stdout) as Record<string, unknown>;
+    expect(firstJson).toMatchObject({ identifier: "ENG-1", alreadyExisted: false });
+
+    const retry = await tracker(dbPath, [
+      "issue",
+      "create",
+      "--template",
+      "Inbox item",
+      "--title",
+      "Retry title must not create another issue",
+      "--idempotency-key",
+      "inbox:message-1",
+      "--json"
+    ]);
+    expect(retry.status).toBe(0);
+    expect(JSON.parse(retry.stdout)).toMatchObject({
+      id: firstJson.id,
+      identifier: "ENG-1",
+      title: "From template",
+      alreadyExisted: true
+    });
+
+    const listed = await tracker(dbPath, ["issue", "list", "--json"]);
+    expect(listed.status).toBe(0);
+    expect(JSON.parse(listed.stdout)).toMatchObject({
+      issues: [{ identifier: "ENG-1" }]
+    });
   });
 
   it("searches issues as JSON by title and description, hides archived issues, and supports team and limit filters", async () => {

@@ -137,9 +137,19 @@ export const issues = sqliteTable(
     startedAt: text("started_at"),
     completedAt: text("completed_at"),
     canceledAt: text("canceled_at"),
-    archivedAt: text("archived_at")
+    archivedAt: text("archived_at"),
+    // Optional, GLOBALLY-scoped idempotency key so agent retries / multi-harness runs
+    // don't file duplicate issues. NULL = no key (SQLite treats NULLs as distinct, so
+    // the partial unique index below only constrains non-NULL keys and keyless issues
+    // stay unconstrained).
+    idempotencyKey: text("idempotency_key")
   },
-  (table) => [unique("issues_team_id_number_unique").on(table.teamId, table.number)]
+  (table) => [
+    unique("issues_team_id_number_unique").on(table.teamId, table.number),
+    uniqueIndex("issues_idempotency_key_unique")
+      .on(table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} IS NOT NULL`)
+  ]
 );
 
 export const labels = sqliteTable(
