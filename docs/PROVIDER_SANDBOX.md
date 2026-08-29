@@ -24,11 +24,17 @@ for aliases such as `/tmp` and `/var/folders`, whose canonical locations live un
 
 Seatbelt confinement is inherited by the permission-hook child and every provider subprocess,
 including `git`, `npm`, and `node`. The allowlist therefore covers the provider and Node prefixes,
-system libraries, package-manager state, Claude Code authentication support, the hook installation,
-and the tracker database directory.
+system libraries, the hook installation, and the tracker database directory. Under the user's home
+directory, read access is limited to `~/.npm`, `~/.cache`, and `~/.config/git`. The last path is
+granted for git's XDG config/ignore location; git's primary `~/.gitconfig` is intentionally not
+granted. The profile does not grant blanket access to `~/.config`, `~/.codex`,
+`~/Library/Preferences`, or `~/Library/Keychains`.
 
-Residual gaps remain. The provider retains outbound network access and macOS Keychain-related read
-and service access so it can reach and authenticate to the model API. Claude Code can write its
-`~/.claude` state directory for transcripts, todos, and runtime telemetry. Codex also retains its own
-orthogonal `--sandbox` layer; fully enumerating the read paths used by Codex's Seatbelt helper is
-follow-up work.
+Residual gaps remain. The provider retains outbound network access and macOS service access. System
+TLS trust anchors under `/System/Library/Keychains` remain reachable through the `/System` grant and
+securityd/mach-lookup, without exposing the user's login keychain. Host credentials including
+`~/.ssh`, `~/.aws`, `~/.config/gh`, `~/.codex/auth.json`, and cloud credential stores such as
+`~/.config/gcloud`, `~/.config/1Password`, and `~/.config/op` are outside the read boundary. Claude
+Code can write its `~/.claude` state directory for authentication, transcripts, todos, and runtime
+telemetry. Codex also retains its own orthogonal `--sandbox` layer; fully enumerating the read paths
+used by Codex's Seatbelt helper is follow-up work.
