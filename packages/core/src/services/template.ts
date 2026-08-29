@@ -10,7 +10,12 @@ import {
   createTemplateInputSchema,
   templateLabelsSchema
 } from "../schemas/template.js";
-import { createIssue, type CreateIssueInput, type CreateIssueResult } from "./issue.js";
+import {
+  createIssue,
+  findExistingIssueByIdempotencyKey,
+  type CreateIssueInput,
+  type CreateIssueResult
+} from "./issue.js";
 import { getProject } from "./project.js";
 
 export interface CreateTemplateInput {
@@ -97,8 +102,13 @@ export function createIssueFromTemplate(
   name: string,
   overrides: CreateIssueFromTemplateOverrides = {}
 ): CreateIssueResult {
-  const template = getTemplateByName(context, name);
   const parsedOverrides = omitUndefined(createIssueFromTemplateOverridesSchema.parse(overrides));
+  const existing = findExistingIssueByIdempotencyKey(context, parsedOverrides.idempotencyKey);
+  if (existing) {
+    return existing;
+  }
+
+  const template = getTemplateByName(context, name);
   const input: Partial<CreateIssueInput> = { ...parsedOverrides };
 
   applyTemplateField(input, "title", template.title);

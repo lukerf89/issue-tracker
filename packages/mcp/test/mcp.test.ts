@@ -845,7 +845,8 @@ describe("MCP server", () => {
         name: "Bug report",
         overrides: {
           title: "Investigate export bug",
-          priority: 1
+          priority: 1,
+          idempotencyKey: "template:create-1"
         }
       });
       expect(issue).toMatchObject({
@@ -853,7 +854,8 @@ describe("MCP server", () => {
         title: "Investigate export bug",
         description: "Capture reproduction steps.",
         priority: 1,
-        projectId
+        projectId,
+        alreadyExisted: false
       });
       expect((issue.labels as Array<{ name: string }>).map((label) => label.name)).toEqual([
         "Bug"
@@ -866,6 +868,19 @@ describe("MCP server", () => {
         name: "Bug report",
         project: projectId,
         labels: ["Bug"]
+      });
+
+      const retry = await callJsonTool(client, "create_issue_from_template", {
+        name: "Bug report",
+        overrides: {
+          title: "Retry after template deletion",
+          idempotencyKey: "template:create-1"
+        }
+      });
+      expect(retry).toMatchObject({
+        id: (issue as { id: string }).id,
+        title: "Investigate export bug",
+        alreadyExisted: true
       });
 
       const afterDelete = await callJsonTool(client, "list_templates", {});

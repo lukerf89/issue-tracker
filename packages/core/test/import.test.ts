@@ -97,7 +97,7 @@ describe("importSnapshot", () => {
     }
   });
 
-  it("drops idempotency keys on export so re-import stays collision-free", () => {
+  it("preserves idempotency keys across export and import", () => {
     const source = initializedContext("2026-05-01T00:00:00.000Z");
     const destination = emptyContext("2026-05-02T00:00:00.000Z");
 
@@ -108,24 +108,49 @@ describe("importSnapshot", () => {
       });
 
       const snapshot = exportSnapshot(source.context);
-      // The key is intentionally omitted from the portable snapshot.
       expect(snapshot.issues).toHaveLength(1);
-      expect("idempotencyKey" in snapshot.issues[0]).toBe(false);
+      expect(snapshot.issues[0]?.idempotencyKey).toBe("email:message-99");
 
       importSnapshot(destination.context, snapshot);
 
-      // Imported issues carry a NULL key, so the global unique index can't collide and a
-      // fresh create with the original key still files a new issue rather than deduping.
       const imported = destination.db.select().from(issues).all();
       expect(imported).toHaveLength(1);
-      expect(imported[0]?.idempotencyKey).toBeNull();
+      expect(imported[0]?.idempotencyKey).toBe("email:message-99");
 
       destination.context.actor = whoami(destination.context);
       const recreated = createIssue(destination.context, {
-        title: "Same key, fresh workspace",
+        title: "Retry after migration",
         idempotencyKey: "email:message-99"
       });
-      expect(recreated.alreadyExisted).toBe(false);
+      expect(recreated.alreadyExisted).toBe(true);
+      expect(recreated.id).toBe(snapshot.issues[0]?.id);
+    } finally {
+      source.close();
+      destination.close();
+    }
+  });
+
+  it("imports older snapshots without idempotency keys", () => {
+    const source = populatedContext();
+    const destination = emptyContext();
+
+    try {
+      const snapshot = exportSnapshot(source.context);
+      const legacySnapshot = {
+        ...snapshot,
+        issues: snapshot.issues.map((issue) => {
+          const legacyIssue: Partial<typeof issue> = { ...issue };
+          delete legacyIssue.idempotencyKey;
+          return legacyIssue;
+        })
+      };
+
+      importSnapshot(destination.context, legacySnapshot);
+
+      expect(destination.db.select().from(issues).all()).toHaveLength(snapshot.issues.length);
+      expect(
+        destination.db.select().from(issues).all().every((issue) => issue.idempotencyKey === null)
+      ).toBe(true);
     } finally {
       source.close();
       destination.close();

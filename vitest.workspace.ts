@@ -15,7 +15,7 @@ export default defineConfig({
           // flaky "Test timed out in 30000ms" failures. A larger bound only affects
           // genuinely hung tests; healthy tests still finish fast.
           hookTimeout: 120000,
-          include: ["packages/{core,cli,mcp,tui,agentd}/test/**/*.test.ts"],
+          include: ["packages/{core,cli,mcp,mcp-tool-filter,tui,agentd}/test/**/*.test.ts"],
           name: "backend",
           testTimeout: 120000
         }

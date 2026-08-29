@@ -151,6 +151,7 @@ interface SerializedIssue {
   completedAt: string | null;
   canceledAt: string | null;
   archivedAt: string | null;
+  idempotencyKey: string | null;
 }
 
 interface SerializedIssueLabel {
@@ -330,10 +331,6 @@ function serializeMilestone(row: Milestone): SerializedMilestone {
 }
 
 function serializeIssueRow(issue: Issue): SerializedIssue {
-  // NOTE: idempotency_key is deliberately omitted from export. Keys identify an external
-  // source (e.g. an email message id); re-importing them into another workspace would risk
-  // spurious cross-workspace dedupe collisions against the global unique index. Import
-  // therefore inserts issues with a NULL key.
   return {
     id: issue.id,
     identifier: issue.identifier,
@@ -356,7 +353,8 @@ function serializeIssueRow(issue: Issue): SerializedIssue {
     startedAt: toIsoOrNull(issue.startedAt),
     completedAt: toIsoOrNull(issue.completedAt),
     canceledAt: toIsoOrNull(issue.canceledAt),
-    archivedAt: toIsoOrNull(issue.archivedAt)
+    archivedAt: toIsoOrNull(issue.archivedAt),
+    idempotencyKey: issue.idempotencyKey ?? null
   };
 }
 

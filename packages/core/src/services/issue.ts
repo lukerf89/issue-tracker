@@ -222,10 +222,26 @@ function normalizeIdempotencyKey(key: string | null | undefined): string | null 
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function findIssueByIdempotencyKey(context: ServiceContext, key: string): Issue | undefined {
+function findIssueRowByIdempotencyKey(context: ServiceContext, key: string): Issue | undefined {
   return context.db.query.issues.findFirst({
     where: eq(issues.idempotencyKey, key)
   }).sync();
+}
+
+export function findExistingIssueByIdempotencyKey(
+  context: ServiceContext,
+  key: string | null | undefined
+): CreateIssueResult | undefined {
+  requireActor(context);
+  const normalizedKey = normalizeIdempotencyKey(key);
+  if (normalizedKey === null) {
+    return undefined;
+  }
+
+  const existing = findIssueRowByIdempotencyKey(context, normalizedKey);
+  return existing
+    ? { ...getIssue(context, existing.identifier), alreadyExisted: true }
+    : undefined;
 }
 
 export function createIssue(context: ServiceContext, input: CreateIssueInput): CreateIssueResult {
@@ -237,7 +253,7 @@ export function createIssue(context: ServiceContext, input: CreateIssueInput): C
     // minting an identifier or incrementing the team counter. Writers serialize via the
     // IMMEDIATE transaction's RESERVED lock, so this check reliably sees committed rows.
     if (idempotencyKey !== null) {
-      const existing = findIssueByIdempotencyKey(txContext, idempotencyKey);
+      const existing = findIssueRowByIdempotencyKey(txContext, idempotencyKey);
       if (existing) {
         return { ...getIssue(txContext, existing.identifier), alreadyExisted: true };
       }
@@ -299,7 +315,7 @@ export function createIssue(context: ServiceContext, input: CreateIssueInput): C
       // unreachable, but if a concurrent writer won the key between the check above and
       // this insert, honor idempotency by returning the winner instead of throwing.
       if (idempotencyKey !== null && isIdempotencyKeyConflict(error)) {
-        const existing = findIssueByIdempotencyKey(txContext, idempotencyKey);
+        const existing = findIssueRowByIdempotencyKey(txContext, idempotencyKey);
         if (existing) {
           return { ...getIssue(txContext, existing.identifier), alreadyExisted: true };
         }

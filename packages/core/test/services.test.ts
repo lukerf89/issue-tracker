@@ -1059,9 +1059,25 @@ describe("core services", () => {
         AppErrorCode.TEMPLATE_NOT_FOUND
       );
 
+      const original = createIssueFromTemplate(context, "Bug report", {
+        title: "Created before template removal",
+        idempotencyKey: "template-retry-1"
+      });
+      expect(original.alreadyExisted).toBe(false);
+
       const deleted = deleteTemplate(context, template.name);
       expect(deleted.id).toBe(template.id);
       expect(listTemplates(context)).toEqual([]);
+
+      const retryAfterTemplateRemoval = createIssueFromTemplate(context, "Still missing", {
+        title: "Retry must return the original issue",
+        idempotencyKey: "template-retry-1"
+      });
+      expect(retryAfterTemplateRemoval).toMatchObject({
+        id: original.id,
+        title: "Created before template removal",
+        alreadyExisted: true
+      });
     } finally {
       close();
     }
