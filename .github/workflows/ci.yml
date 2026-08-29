@@ -8,7 +8,15 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Run on macOS too so the Seatbelt containment tests (packages/agentd/test/sandbox.test.ts)
+    # actually execute: they self-gate on a real `sandbox-exec` probe (canApplySeatbelt), which
+    # passes on GitHub's non-nested macOS runners and skips everywhere else — so the macOS job can
+    # only add coverage, never turn CI red.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
