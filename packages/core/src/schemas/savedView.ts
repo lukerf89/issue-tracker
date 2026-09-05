@@ -11,7 +11,7 @@ import { issuePageOptionsSchema, issueProjectionFieldSchema, listIssueFiltersSch
 
 export const createSavedViewInputSchema = z.object({
   name: nonEmptyStringSchema,
-  filters: listIssueFiltersSchema,
+  filters: listIssueFiltersSchema.strict(),
   description: optionalNullableStringSchema
 }) satisfies z.ZodType<CreateSavedViewInput>;
 

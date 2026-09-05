@@ -82,11 +82,13 @@ export interface FilterChip {
 
 // Build the ordered chip list for the active filters + search. Labels echo the
 // stored (human-entered) filter values, defensively resolving an id to a name
-// when the stored value happens to be one. `team`/`limit` are excluded: team is
-// already in the header and limit is not user-facing.
+// when the stored value happens to be one. Page size is not a constraint chip.
 export function buildFilterChips(data: LinekeeperData): FilterChip[] {
   const filters = data.filters ?? {};
   const chips: FilterChip[] = [];
+
+  if (filters.stateTypes !== undefined) chips.push({ key: "stateTypes", label: `workflow:${filters.stateTypes.join(",") || "none"}` });
+  if (filters.sort) chips.push({ key: "sort", label: `sort:${filters.sort === "updatedAt" ? "newest update" : "identifier"}` });
 
   if (filters.state !== undefined) {
     const resolved = data.states.find((state) => state.id === filters.state)?.name;

@@ -44,6 +44,7 @@ import {
   createProjectInputSchema,
   createProject,
   createSavedView,
+  builtinIssueViews,
   createSavedViewInputSchema,
   createTeam,
   createTemplate,
@@ -613,7 +614,10 @@ export function createProgram(): Command {
     );
   issue
     .command("list")
-    .option("--view <name>", "saved view name")
+    .option("--view <name>", "saved or builtin view reference")
+    .option("--query <text>", "search within these filters")
+    .option("--sort <order>", "identifier or updatedAt (newest first)")
+    .option("--state-types <types>", "comma-separated workflow types")
     .option("--state <state>", "workflow state")
     .option("--assignee <actor>", "assignee id or handle")
     .option("--unassigned", "only unassigned issues")
@@ -650,6 +654,17 @@ export function createProgram(): Command {
   issue
     .command("search")
     .argument("<query>")
+    .option("--state <state>", "workflow state")
+    .option("--state-types <types>", "comma-separated workflow types")
+    .option("--sort <order>", "identifier or updatedAt (newest first)")
+    .option("--assignee <actor>", "assignee id or handle")
+    .option("--unassigned", "only unassigned issues")
+    .option("--project <project>", "project id or name")
+    .option("--no-project", "only issues without a project")
+    .option("--cycle <cycle>", "cycle number or id")
+    .option("--label <label>", "label name")
+    .option("--priority <number>", "priority", parseInteger)
+    .option("--include-archived", "include archived issues")
     .option("--team <key>", "team key")
     .option("--limit <number>", "maximum number of issues per page", parseInteger)
     .option("--cursor <cursor>", "pagination cursor from a prior page")
@@ -917,9 +932,13 @@ export function createProgram(): Command {
   runCommand.command("metrics").option("--json").action((_options, command) => withContext(command, { requireActor: false }, (cli) => printJson(getRunMetrics(cli.context))));
 
   const view = program.command("view").description("manage saved issue views");
+  view.command("builtins").description("list built-in references and their query semantics").option("--json").action(() => printJson(builtinIssueViews));
   view
     .command("save")
     .argument("<name>")
+    .option("--query <text>", "saved search text")
+    .option("--sort <order>", "identifier or updatedAt (newest first)")
+    .option("--state-types <types>", "comma-separated workflow types")
     .option("--state <state>", "workflow state")
     .option("--assignee <actor>", "assignee id or handle")
     .option("--unassigned", "only unassigned issues")
@@ -1325,6 +1344,9 @@ function issueListFilters(options: Record<string, unknown>, defaultTeam?: string
   const assignee = options.unassigned === true ? null : nullableStringOption(options.assignee);
 
   return listIssueFiltersSchema.parse(omitUndefined({
+    query: stringOption(options.query),
+    sort: stringOption(options.sort),
+    stateTypes: stringOption(options.stateTypes)?.split(",").map(value => value.trim()),
     state: stringOption(options.state),
     assignee,
     project,
@@ -1355,7 +1377,7 @@ function issueListInput(
 ): ListIssuesWithViewInput {
   return listIssuesWithViewInputSchema.parse(omitUndefined({
     view: stringOption(options.view),
-    filters: issueListFilters(options, defaultTeam)
+    filters: issueListFilters(options, options.view ? undefined : defaultTeam)
   }));
 }
 
@@ -1365,7 +1387,7 @@ function issueListPageInput(
 ): ListIssuesPageWithViewInput {
   return listIssuesPageWithViewInputSchema.parse(omitUndefined({
     view: stringOption(options.view),
-    filters: issueListFilters(options, defaultTeam),
+    filters: issueListFilters(options, options.view ? undefined : defaultTeam),
     cursor: stringOption(options.cursor),
     fields: fieldsOption(options.fields)
   }));
@@ -1405,9 +1427,8 @@ function issueSearchInput(
   defaultTeam?: string
 ): SearchIssuesInput {
   return searchInputSchema.parse(omitUndefined({
-    query,
-    team: stringOption(options.team) ?? defaultTeam,
-    limit: numberOption(options.limit)
+    ...issueListFilters(options, defaultTeam),
+    query
   }));
 }
 
@@ -1417,9 +1438,8 @@ function issueSearchPageInput(
   defaultTeam?: string
 ) {
   return searchPageInputSchema.parse(omitUndefined({
+    ...issueListFilters(options, defaultTeam),
     query,
-    team: stringOption(options.team) ?? defaultTeam,
-    limit: numberOption(options.limit),
     cursor: stringOption(options.cursor),
     fields: fieldsOption(options.fields)
   }));

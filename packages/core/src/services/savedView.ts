@@ -3,6 +3,7 @@ import { asc, eq } from "drizzle-orm";
 import { inTransaction, type ServiceContext } from "../context.js";
 import { savedViews, type SavedView } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
+import { whoami } from "./config.js";
 import { uuid } from "../ids.js";
 import { listIssueFiltersSchema } from "../schemas/issue.js";
 import { listIssues, listIssuesPage, type IssuePage, type IssuePageOptions, type IssueWithDetails, type ListIssueFilters } from "./issue.js";
@@ -34,6 +35,8 @@ export function createSavedView(
   context: ServiceContext,
   input: CreateSavedViewInput
 ): SavedViewWithFilters {
+  if (input.name.startsWith("builtin:")) throw new AppError(AppErrorCode.VALIDATION_FAILED, "The builtin: prefix is reserved.");
+  const validatedFilters = listIssueFiltersSchema.strict().parse(input.filters);
   return inTransaction(context, (txContext) => {
     const existing = findSavedViewByName(txContext, input.name);
 
@@ -49,7 +52,7 @@ export function createSavedView(
     const row = {
       id: uuid(),
       name: input.name,
-      filters: listIssueFiltersSchema.parse(input.filters),
+      filters: validatedFilters,
       description: input.description ?? null,
       createdAt: now,
       updatedAt: now
@@ -82,6 +85,15 @@ export function resolveSavedView(
   context: ServiceContext,
   name: string
 ): ListIssueFilters {
+  const builtin = builtinIssueViews.find(view => view.name === name);
+  if (builtin) {
+    if (name === "builtin:my-open") {
+      const actor = context.actor ?? whoami(context);
+      if (actor.type !== "human") throw new AppError(AppErrorCode.VALIDATION_FAILED, "My open issues requires a current human actor.");
+      return { ...builtin.filters, assignee: actor.id };
+    }
+    return listIssueFiltersSchema.parse(builtin.filters);
+  }
   return getSavedViewByName(context, name).filters;
 }
 
@@ -160,7 +172,7 @@ function savedViewWithParsedFilters(view: SavedView): SavedViewWithFilters {
 
 function parseStoredFilters(filters: unknown): ListIssueFilters {
   const parsed = typeof filters === "string" ? JSON.parse(filters) as unknown : filters;
-  return listIssueFiltersSchema.parse(parsed);
+  return listIssueFiltersSchema.strict().parse(parsed);
 }
 
 function mergeIssueListFilters(
@@ -185,3 +197,13 @@ function notFound(idOrName: string): never {
     { savedView: idOrName }
   );
 }
+
+
+/** Open includes backlog, unstarted, started, and blocked; excludes completed/canceled. */
+const openStateTypes: NonNullable<ListIssueFilters["stateTypes"]> = ["backlog", "unstarted", "started", "blocked"];
+export const builtinIssueViews: ReadonlyArray<{ name: string; title: string; description: string; filters: ListIssueFilters }> = [
+  { name: "builtin:my-open", title: "My open issues", description: "Current human; backlog, unstarted, started, blocked; non-archived; all teams", filters: { stateTypes: openStateTypes } },
+  { name: "builtin:unassigned", title: "Unassigned", description: "Unassigned; all workflow states; non-archived; all teams", filters: { assignee: null } },
+  { name: "builtin:all-open", title: "All open", description: "All assignees; backlog, unstarted, started, blocked; non-archived; all teams", filters: { stateTypes: openStateTypes } },
+  { name: "builtin:recent", title: "Recently updated", description: "All non-archived issues; newest update first; all teams; no time cutoff", filters: { sort: "updatedAt" } }
+];
