@@ -6,6 +6,15 @@ on:
       - main
   pull_request:
 
+# One in-flight run per ref. Pushing three commits to a PR branch used to leave three full matrices
+# running; with two OS legs that is six jobs racing to report on a diff nobody is reading any more.
+# cancel-in-progress is scoped to pull_request so a push to main always builds to completion --
+# main's run is the one that says whether the branch is actually green, and cancelling it would
+# leave a commit with no verdict.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     # Run the suite on macOS as well as Linux. Most of this repo is platform-agnostic, but the
@@ -42,3 +51,21 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+  ci:
+    # Stable name for branch protection to require. The matrix legs report as "test (ubuntu-latest)"
+    # and "test (macos-latest)" -- names that change the moment the OS list changes, so pinning them
+    # means protection silently waits forever on a check that no longer reports. This job is the one
+    # name that survives adding or dropping an OS. needs.test.result aggregates every leg, so it is
+    # 'success' only when all of them passed; if: always() is what lets it run (and fail) after a
+    # failed leg rather than being skipped along with it.
+    name: ci
+    if: always()
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify every test leg passed
+        if: needs.test.result != 'success'
+        run: |
+          echo "test matrix result: ${{ needs.test.result }}"
+          exit 1
