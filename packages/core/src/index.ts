@@ -450,3 +450,5 @@ export type {
   WorkflowState,
   Workspace
 } from "./db/schema.js";
+
+export { parseIssueFilterText } from "./services/filterText.js";
