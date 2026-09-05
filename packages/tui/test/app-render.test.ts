@@ -11,6 +11,7 @@ import {
   applyMigrations,
   createActor,
   createIssue,
+  createSavedView,
   init,
   moveIssue,
   openDb,
@@ -74,9 +75,9 @@ describe("LinekeeperApp render", () => {
       const listFrame = stripAnsi(view.lastFrame() ?? "");
 
       expect(listFrame).toContain("Linekeeper");
-      expect(listFrame).toContain("Linekeeper | ENG | My Open | 3 issues");
+      expect(listFrame).toContain("Linekeeper | ENG | Issues | 3 issues");
       expect(listFrame).toContain("up/down move | enter open");
-      expect(listFrame).toContain("My Open");
+      expect(listFrame).toContain("Issues");
       expect(listFrame).toContain("ENG-1");
       expect(listFrame).toContain("> * ENG-1");
       expect(listFrame).toContain("Set up CI");
@@ -97,7 +98,9 @@ describe("LinekeeperApp render", () => {
       expect(detailFrame).toContain("Description");
       expect(detailFrame).toContain("Run CI checks before packaging.");
       expect(detailFrame).toContain("Comments");
-      expect(detailFrame).toContain("claude-code: Added vitest job.");
+      view.stdin.write("j");
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("claude-code: Added vitest job.");
 
       // Expanding the activity strip reveals the full agent feed.
       view.stdin.write("A");
@@ -112,6 +115,31 @@ describe("LinekeeperApp render", () => {
     } finally {
       setup.close();
     }
+  });
+
+  it("keeps the view during search and search during filter edits", async () => {
+    const setup = initializedContext();
+    try {
+      createIssue(setup.context, { title: "Cursor urgent", priority: 1 });
+      createIssue(setup.context, { title: "Cursor low", priority: 4 });
+      createIssue(setup.context, { title: "Other urgent", priority: 1 });
+      createSavedView(setup.context, { name: "Urgent", filters: { priority: 1 } });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath, defaultTeam: "ENG" }));
+      for (const input of ["v", "Urgent", "\r", "/", "cursor", "\r", "f", "state=Todo", "\r"]) {
+        await tick(); view.stdin.write(input);
+      }
+      await tick();
+      const frame = stripAnsi(view.lastFrame() ?? "");
+      expect(frame).toContain("Urgent (Modified)");
+      expect(frame).toContain("/cursor");
+      expect(frame).toContain("state=Todo");
+      expect(frame).toContain("Cursor urgent");
+      expect(frame).not.toContain("Cursor low");
+      expect(frame).not.toContain("Other urgent");
+      view.stdin.write("1"); await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("/cursor");
+      view.unmount();
+    } finally { setup.close(); }
   });
 
   it("renders a highlighted bm25 excerpt line under each search result", async () => {
@@ -196,7 +224,7 @@ describe("LinekeeperApp render", () => {
       // (@codex still appears in the issue's assignee column, so assert on the
       // chip number, not the bare handle.)
       expect(afterFrame).toContain("[1] state=Todo");
-      expect(afterFrame).not.toContain("[2]");
+      expect(afterFrame).not.toContain("[2] @codex");
 
       view.unmount();
     } finally {

@@ -9,6 +9,8 @@ import {
   createActor,
   createIssue,
   createLabel,
+  createSavedView,
+  createTeam,
   init,
   listActivitySince,
   openDb,
@@ -19,6 +21,7 @@ import {
 
 import {
   commandFromMode,
+  effectiveLoadOptions,
   executeLinekeeperCommand,
   loadLinekeeperData,
   parseFilterInput,
@@ -35,6 +38,36 @@ afterEach(() => {
 });
 
 describe("Linekeeper core-facing handlers", () => {
+  it("composes views, search and edits and removes inherited/default team scope", () => {
+    const setup = initializedContext();
+    try {
+      createTeam(setup.context, { key: "OPS", name: "Operations" });
+      const match = createIssue(setup.context, { title: "Cursor work", priority: 1 });
+      createIssue(setup.context, { title: "Cursor other", priority: 2 });
+      const other = createIssue(setup.context, { title: "Cursor remote", team: "OPS", priority: 1 });
+      createSavedView(setup.context, { name: "Urgent", filters: { team: "ENG", priority: 1 } });
+      const view = loadLinekeeperData(setup.context, { view: "Urgent", search: "cursor" });
+      expect(view.issues.map(issue => issue.id)).toEqual([match.id]);
+      expect(view.filters).toEqual({ team: "ENG", priority: 1 });
+      expect(view.modifiedView).toBe(true);
+      const edited = loadLinekeeperData(setup.context, {
+        ...effectiveLoadOptions(view), filters: { ...view.filters, state: "Todo" }
+      });
+      expect(edited.search).toBe("cursor");
+      expect(edited.activeView).toBe("Urgent");
+      const allTeams = loadLinekeeperData(setup.context, {
+        ...effectiveLoadOptions(edited), filters: removeFilterKey(edited.filters, "team")
+      });
+      expect(allTeams.issues.map(issue => issue.id)).toEqual(expect.arrayContaining([match.id, other.id]));
+      expect(allTeams.activeTeamKey).toBeNull();
+      const configured = loadLinekeeperData(setup.context, { team: "ENG" });
+      expect(loadLinekeeperData(setup.context, {
+        ...effectiveLoadOptions(configured), team: null
+      }).issues).toHaveLength(3);
+      expect(loadLinekeeperData(setup.context, { view: "Urgent" }).modifiedView).toBe(false);
+    } finally { setup.close(); }
+  });
+
   it("loads list/detail/activity data through core services", () => {
     const setup = initializedContext();
 
