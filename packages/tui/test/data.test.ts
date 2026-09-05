@@ -24,6 +24,7 @@ import {
   effectiveLoadOptions,
   executeLinekeeperCommand,
   loadLinekeeperData,
+  loadMoreLinekeeperData,
   parseFilterInput,
   removeFilterKey
 } from "../src/data.js";
@@ -65,6 +66,31 @@ describe("Linekeeper core-facing handlers", () => {
         ...effectiveLoadOptions(configured), team: null
       }).issues).toHaveLength(3);
       expect(loadLinekeeperData(setup.context, { view: "Urgent" }).modifiedView).toBe(false);
+    } finally { setup.close(); }
+  });
+
+  it.each([null, "cursor"])("traverses every result once, preserving rows for search %s", search => {
+    const setup = initializedContext();
+    try {
+      for (let i = 0; i < 205; i++) createIssue(setup.context, { title: `Cursor task ${i}` });
+      let data = loadLinekeeperData(setup.context, { search });
+      expect(data.issues).toHaveLength(100);
+      expect(data.nextCursor).toBe("100");
+      const first = data.issues[0];
+      const failed = { ...data, nextCursor: "invalid" };
+      expect(() => loadMoreLinekeeperData(setup.context, failed)).toThrow("Invalid cursor");
+      expect(failed.issues).toHaveLength(100);
+      data = loadMoreLinekeeperData(setup.context, data);
+      expect(data.issues).toHaveLength(200);
+      expect(data.issues[0]).toEqual(first);
+      data = loadMoreLinekeeperData(setup.context, data);
+      expect(data.issues).toHaveLength(205);
+      expect(new Set(data.issues.map(issue => issue.id)).size).toBe(205);
+      expect(data.nextCursor).toBeNull();
+      expect(loadMoreLinekeeperData(setup.context, data)).toBe(data);
+      const reset = loadLinekeeperData(setup.context, { ...effectiveLoadOptions(data), search: "absent" });
+      expect(reset.issues).toEqual([]);
+      expect(reset.nextCursor).toBeNull();
     } finally { setup.close(); }
   });
 
