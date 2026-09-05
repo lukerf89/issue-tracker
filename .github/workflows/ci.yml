@@ -9,11 +9,9 @@ on:
 jobs:
   test:
     # Run the suite on macOS as well as Linux. Most of this repo is platform-agnostic, but the
-    # agentd supervisor shells out to the OS (process spawning, temp dirs, file locks) and macOS is
-    # the primary dev platform, so Linux-only CI leaves those paths unverified where they are most
-    # used. It is also the leg that will exercise any future macOS-gated containment tests, which
-    # self-gate on a runtime capability probe and skip where the platform can't support them.
-    # fail-fast: false keeps a failure on one OS from cancelling the other leg.
+    # agentd supervisor shells out to the OS (process spawning, temp dirs, worktree file locks) and
+    # macOS is the primary dev platform, so Linux-only CI leaves those paths unverified where they
+    # are most used. fail-fast: false keeps a failure on one OS from cancelling the other leg.
     strategy:
       fail-fast: false
       matrix:
