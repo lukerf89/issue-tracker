@@ -212,6 +212,47 @@ describe("LinekeeperApp render", () => {
     } finally { setup.close(); }
   });
 
+  it("saves and reopens search/filter/sort and restores the selected view", async () => {
+    const setup = initializedContext();
+    try {
+      createIssue(setup.context, { title: "Cursor urgent", priority: 1 });
+      createIssue(setup.context, { title: "Other work", priority: 1 });
+      const props = { context: setup.context, dbPath: setup.dbPath };
+      const view = render(createElement(LinekeeperApp, props));
+      for (const input of ["v", "Recently updated", "\r", "/", "cursor", "\r", ":", "priority=1", "\r", "V", "Cursor queue", "\r"]) {
+        await tick(); view.stdin.write(input);
+      }
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("Saved view Cursor queue");
+      expect(stripAnsi(view.lastFrame() ?? "")).not.toContain("Modified");
+      view.unmount();
+      const restored = render(createElement(LinekeeperApp, props));
+      await tick();
+      const frame = stripAnsi(restored.lastFrame() ?? "");
+      expect(frame).toContain("Cursor queue");
+      expect(frame).toContain("/cursor");
+      expect(frame).toContain("sort:newest update");
+      expect(frame).toContain("priority:Urgent");
+      expect(frame).not.toContain("Other work");
+      restored.unmount();
+    } finally { setup.close(); }
+  });
+
+  it("selects a saved view named save independently of the save action", async () => {
+    const setup = initializedContext();
+    try {
+      createIssue(setup.context, { title: "Urgent task", priority: 1 });
+      createIssue(setup.context, { title: "Other task", priority: 4 });
+      createSavedView(setup.context, { name: "save", filters: { priority: 1 } });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath }));
+      for (const input of ["v", "save", "\u001b[B", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("Loaded save");
+      expect(stripAnsi(view.lastFrame() ?? "")).not.toContain("Other task");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
   it("renders a highlighted bm25 excerpt line under each search result", async () => {
     const setup = initializedContext();
 
@@ -302,7 +343,7 @@ describe("LinekeeperApp render", () => {
     }
   });
 
-  it("shows an error status instead of crashing when a submitted view is missing", async () => {
+  it("shows no matches and can cancel a missing view search", async () => {
     const setup = initializedContext();
 
     try {
@@ -329,9 +370,9 @@ describe("LinekeeperApp render", () => {
 
       const frame = stripAnsi(view.lastFrame() ?? "");
 
-      expect(frame).toContain("Saved view Missing view was not found.");
-      expect(frame).toContain("ENG-1");
-      expect(frame).toContain("Keep current issue visible");
+      expect(frame).toContain("No matches.");
+      view.stdin.write("\u001b"); await tick(100);
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("Keep current issue visible");
 
       view.unmount();
     } finally {

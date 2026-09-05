@@ -657,6 +657,38 @@ describe("MCP server", () => {
     }
   });
 
+  it("shares saved search/sort/workflow queries and built-ins with CLI", async () => {
+    const dbPath = initializedDbPath();
+    const setup = openContext(dbPath);
+    try {
+      setup.context.actor = whoami(setup.context);
+      createIssue(setup.context, { title: "Cursor mine", assignee: setup.context.actor.id });
+      createIssue(setup.context, { title: "Other work" });
+    } finally { setup.close(); }
+    const client = await connectClient(dbPath, { handle: "owner", type: "human" });
+    try {
+      const created = await callJsonTool(client, "create_saved_view", {
+        name: "Cursor queue", filters: { query: "cursor", sort: "updatedAt", stateTypes: ["unstarted"] }
+      });
+      expect(created).toMatchObject({ filters: { query: "cursor", sort: "updatedAt", stateTypes: ["unstarted"] } });
+      const result = await callJsonTool(client, "list_issues", { view: "Cursor queue" });
+      expect(result).toMatchObject({ issues: [{ identifier: "ENG-1" }], nextCursor: null });
+      expect(result).toEqual(JSON.parse(tracker(dbPath, ["issue", "list", "--view", "Cursor queue", "--json"])));
+      expect(await callJsonTool(client, "list_issues", { view: "builtin:my-open" })).toEqual(
+        JSON.parse(tracker(dbPath, ["issue", "list", "--view", "builtin:my-open", "--json"]))
+      );
+      expect(await callJsonTool(client, "list_builtin_views", {})).toEqual(
+        JSON.parse(tracker(dbPath, ["view", "builtins", "--json"]))
+      );
+      expect(await callJsonTool(client, "search", { query: "cursor", sort: "updatedAt", stateTypes: ["unstarted"] })).toEqual(
+        JSON.parse(tracker(dbPath, ["issue", "search", "cursor", "--sort", "updatedAt", "--state-types", "unstarted", "--json"]))
+      );
+      const saved = JSON.parse(tracker(dbPath, ["view", "save", "CLI queue", "--query", "cursor", "--sort", "updatedAt", "--state-types", "unstarted", "--json"]));
+      expect(saved.filters).toMatchObject({ query: "cursor", sort: "updatedAt", stateTypes: ["unstarted"] });
+      expect(await callJsonTool(client, "list_issues", { view: "CLI queue" })).toEqual(result);
+    } finally { await client.close(); }
+  });
+
   it("returns byte-identical list_saved_views JSON to CLI view list --json", async () => {
     const dbPath = initializedDbPath();
     const setup = openContext(dbPath);

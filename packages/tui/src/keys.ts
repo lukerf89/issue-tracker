@@ -38,6 +38,7 @@ const normalModeKeys: Record<string, LinekeeperCommandKind> = {
   f: "filter",
   ":": "filter",
   v: "view",
+  V: "saveView",
   n: "new",
   m: "move",
   p: "priority",

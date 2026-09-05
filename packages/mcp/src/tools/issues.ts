@@ -57,7 +57,7 @@ export function registerIssueTools(
       return withMcpContext({ ...options, requireActor: false }, ({ context }) => {
         const page = listIssuesPageWithView(context, { view, filters, cursor, fields });
         return jsonResult({
-          issues: page.rows.map((row) => serializeIssueSummary(row.issue, row.fields)),
+          issues: page.rows.map((row) => serializeIssueSummary(row.issue, row.fields, row.snippet)),
           nextCursor: page.nextCursor
         });
       });
