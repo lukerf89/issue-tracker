@@ -10,6 +10,7 @@ import { createNodeEngineCatalogRuntime, createNodeRepositoryInspector, loadEngi
 import {
   commandFromMode,
   executeLinekeeperCommand,
+  effectiveLoadOptions,
   loadLinekeeperData,
   parseFilterInput,
   removeFilterKey,
@@ -171,11 +172,11 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
       if (!chip) return;
       try {
         if (chip.key === "search") {
-          reloadAndCommit({ ...loadOptions, search: null });
+          reloadAndCommit({ ...effectiveLoadOptions(data), search: null });
           dispatchBase({ type: "setStatus", message: "Search cleared." });
         } else {
-          const filters = removeFilterKey(loadOptions.filters, chip.key);
-          reloadAndCommit({ ...loadOptions, filters });
+          const filters = removeFilterKey(data.filters, chip.key);
+          reloadAndCommit({ ...effectiveLoadOptions(data), filters });
           dispatchBase({ type: "setStatus", message: `Removed filter ${chip.label}.` });
         }
       } catch (error) {
@@ -214,25 +215,25 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
       const command = commandFromMode(mode, issue, defaultTeam);
 
       if (command.kind === "search") {
-        const nextOptions = { ...loadOptions, search: command.input || null, view: null };
+        const nextOptions = { ...effectiveLoadOptions(data), search: command.input || null };
         reloadAndCommit(nextOptions);
         dispatchBase({
           type: "setStatus",
           message: command.input ? `Searching "${command.input}".` : "Search cleared."
         });
       } else if (command.kind === "view") {
-        const nextOptions = { ...loadOptions, view: command.input || null, search: null };
+        const nextOptions = { view: command.input || null, search: null };
         reloadAndCommit(nextOptions);
         dispatchBase({
           type: "setStatus",
-          message: command.input ? `Loaded view ${command.input}.` : "View cleared."
+          message: command.input ? `Loaded view ${command.input}; search and overrides reset.` : "View cleared."
         });
       } else if (command.kind === "filter") {
         const filters = command.input ? parseFilterInput(command.input) : {};
         const nextOptions = {
-          ...loadOptions,
-          filters: mergeFilters(loadOptions.filters, filters),
-          search: null
+          ...effectiveLoadOptions(data),
+          filters: mergeFilters(data.filters, filters),
+          ...(command.input.includes("team=all") ? { team: null } : {})
         };
         reloadAndCommit(nextOptions);
         dispatchBase({
@@ -303,15 +304,15 @@ function runRuntime() {
 }
 
 function Header({ data }: { data: LinekeeperData }) {
-  const teamLabel = data.activeTeamKey ?? data.teams[0]?.key ?? "all teams";
-  const viewLabel = data.activeView ?? "My Open";
+  const teamLabel = data.activeTeamKey ?? "all teams";
+  const viewLabel = (data.activeView ?? "Issues") + (data.modifiedView ? " (Modified)" : "");
   const count = data.issues.length;
 
   return (
     <Box flexDirection="column" paddingX={1}>
       <Text wrap="truncate">
         <Text bold>Linekeeper</Text>
-        <Text color="gray"> | {teamLabel} | {viewLabel} | {count} issues</Text>
+        <Text color="gray"> | {teamLabel} | {viewLabel} | {count} issues | {data.filters.includeArchived ? "including archived" : "non-archived"}</Text>
       </Text>
       <Text color="gray" wrap="truncate">
         up/down move | enter open | r run | x stop | F fleet | supervisor {data.supervisor.healthy ? "online" : "offline: start tracker-agentd"} | ? help | q quit
@@ -363,7 +364,9 @@ function HelpOverlay({
     "",
     "Filters",
     "  f + Enter (empty)  clear all filters",
-    "  1-9                remove that active filter chip",
+    "  1-9 remove effective chip; / empty clears search",
+    "  v selects view, resetting search and overrides",
+    "  team=all clears team; empty filter clears inherited filters",
     "",
     `db ${dbPath}`,
     "",

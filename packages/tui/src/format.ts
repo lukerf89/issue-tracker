@@ -137,6 +137,8 @@ export function buildFilterChips(data: LinekeeperData): FilterChip[] {
     chips.push({ key: "search", label: `/${data.search}` });
   }
 
+  if (filters.team) chips.push({ key: "team", label: `team:${data.teams.find(team => team.id === filters.team)?.key ?? filters.team}` });
+
   return chips;
 }
 
