@@ -6,6 +6,8 @@ import {
   createIssue,
   listActivitySince,
   listActors,
+  listLabels,
+  parseIssueFilterText,
   listCycles,
   listIssuesPageWithView,
   resolveIssueListFilters,
@@ -64,6 +66,7 @@ export interface LinekeeperData {
   teams: Team[];
   states: WorkflowState[];
   actors: Actor[];
+  labels: ReturnType<typeof listLabels>;
   projects: Project[];
   cycles: Cycle[];
   savedViews: SavedViewWithFilters[];
@@ -148,6 +151,7 @@ export function loadLinekeeperData(
     teams,
     states,
     actors: listActors(context),
+    labels: listLabels(context),
     projects: listProjects(context),
     cycles: listCycles(context, filters.team ? { team: filters.team } : {}),
     savedViews: listSavedViews(context),
@@ -326,44 +330,7 @@ export function executeLinekeeperCommand(
 }
 
 export function parseFilterInput(input: string): ListIssueFilters {
-  const filters: Record<string, unknown> = {};
-  const parts = input
-    .split(/\s+/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  for (const part of parts) {
-    if (part === "unassigned") {
-      filters.assignee = null;
-      continue;
-    }
-
-    if (part === "no-project") {
-      filters.project = null;
-      continue;
-    }
-
-    if (part === "archived") {
-      filters.includeArchived = true;
-      continue;
-    }
-
-    const separator = part.includes("=") ? "=" : ":";
-    const [rawKey, ...rest] = part.split(separator);
-    const key = rawKey?.trim();
-    const value = rest.join(separator).trim();
-    if (!key || !value) continue;
-
-    if (key === "state") filters.state = value;
-    if (key === "assignee") filters.assignee = normalizeHandle(value);
-    if (key === "project") filters.project = value;
-    if (key === "label") filters.label = value;
-    if (key === "team" && value !== "all") filters.team = value;
-    if (key === "cycle") filters.cycle = /^\d+$/.test(value) ? Number.parseInt(value, 10) : value;
-    if (key === "priority") filters.priority = Number.parseInt(value, 10);
-  }
-
-  return listIssueFiltersSchema.parse(filters);
+  return parseIssueFilterText(input).filters;
 }
 
 // Return a copy of the filters with a single key removed (re-parsed to keep the

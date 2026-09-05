@@ -12,6 +12,9 @@ import {
   createActor,
   createIssue,
   createSavedView,
+  createProject,
+  createLabel,
+  createCycle,
   init,
   moveIssue,
   openDb,
@@ -125,7 +128,7 @@ describe("LinekeeperApp render", () => {
       createIssue(setup.context, { title: "Other urgent", priority: 1 });
       createSavedView(setup.context, { name: "Urgent", filters: { priority: 1 } });
       const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath, defaultTeam: "ENG" }));
-      for (const input of ["v", "Urgent", "\r", "/", "cursor", "\r", "f", "state=Todo", "\r"]) {
+      for (const input of ["v", "Urgent", "\r", "/", "cursor", "\r", ":", "state=Todo", "\r"]) {
         await tick(); view.stdin.write(input);
       }
       await tick();
@@ -158,6 +161,53 @@ describe("LinekeeperApp render", () => {
       view.stdin.write("\u001b"); await tick();
       for (const input of ["/", "absent", "\r"]) { view.stdin.write(input); await tick(); }
       expect(stripAnsi(view.lastFrame() ?? "")).toContain("0 loaded · end of results");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
+  it.each([
+    ["Status", "In Progress", "state=In Progress"],
+    ["Assignee", "Unassigned", "unassigned"],
+    ["Assignee", "Me", "@human"],
+    ["Project", "No project", "no-project"],
+    ["Project", "Test Project", "project:Test Project"],
+    ["Label", "Test Label", "label:Test Label"],
+    ["Priority", "Urgent", "priority:Urgent"],
+    ["Cycle", "Test Cycle", "cycle:Test Cycle"],
+    ["Team", "All teams", "all teams"],
+  ])("picks %s / %s and preserves search", async (field, value, expected) => {
+    const setup = initializedContext();
+    try {
+      createProject(setup.context, { name: "Test Project" });
+      createLabel(setup.context, { name: "Test Label" });
+      createCycle(setup.context, { name: "Test Cycle" });
+      createIssue(setup.context, { title: "Cursor work" });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath, defaultTeam: "ENG" }));
+      for (const input of ["/", "cursor", "\r", "f", field, "\r", value, "\r"]) {
+        await tick(); view.stdin.write(input);
+      }
+      await tick();
+      const frame = stripAnsi(view.lastFrame() ?? "");
+      expect(frame).toContain(expected === "@human" ? `@${setup.context.actor!.handle}` : expected);
+      expect(frame).toContain("/cursor");
+      expect(frame).not.toContain("type to search");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
+  it("cancels picker edits and supports arrow selection", async () => {
+    const setup = initializedContext();
+    try {
+      createIssue(setup.context, { title: "Unchanged task" });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath }));
+      for (const input of ["f", "Priority", "\r", "Urgent", "\u001b"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      await tick(100);
+      expect(stripAnsi(view.lastFrame() ?? "")).not.toContain("type to search");
+      expect(stripAnsi(view.lastFrame() ?? "")).not.toContain("priority:Urgent");
+      for (const input of ["f", "Priority", "\r", "\u001b[B", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("priority:No priority");
       view.unmount();
     } finally { setup.close(); }
   });
@@ -221,7 +271,7 @@ describe("LinekeeperApp render", () => {
       );
 
       await tick();
-      view.stdin.write("f");
+      view.stdin.write(":");
       await tick(25);
       view.stdin.write("state=Todo assignee=@codex");
       await tick(25);

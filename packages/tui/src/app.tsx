@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { Fragment, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 
-import { createNodeEngineCatalogRuntime, createNodeRepositoryInspector, loadEngineCatalog, previewRun, requestRunStop, resolveEngineCatalogPath, resolveRunPermission, respondToRunInput, startRun, tokenizeSearchQuery, type IssueWithDetails, type ListIssueFilters, type ServiceContext } from "@issue-tracker/core";
+import { createNodeEngineCatalogRuntime, createNodeRepositoryInspector, loadEngineCatalog, previewRun, requestRunStop, resolveEngineCatalogPath, resolveRunPermission, respondToRunInput, startRun, parseIssueFilterText, tokenizeSearchQuery, type IssueWithDetails, type ListIssueFilters, type ServiceContext } from "@issue-tracker/core";
 
 import {
   commandFromMode,
@@ -13,7 +13,6 @@ import {
   effectiveLoadOptions,
   loadLinekeeperData,
   loadMoreLinekeeperData,
-  parseFilterInput,
   removeFilterKey,
   type LinekeeperCommand,
   type LinekeeperCoreCommand,
@@ -37,6 +36,7 @@ import {
   shortActor,
   type FilterChip
 } from "./format.js";
+import { filterFields, filterValues, searchPickerOptions, type PickerOption } from "./picker.js";
 import { mapKeyToLinekeeperAction } from "./keys.js";
 import {
   initialLinekeeperState,
@@ -82,6 +82,7 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
     };
   }, [stdout]);
 
+  const [picker, setPicker] = useState<{ field: keyof ListIssueFilters | null; query: string; index: number } | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const [showFleet, setShowFleet] = useState(false);
   const [launchPreview, setLaunchPreview] = useState<ReturnType<typeof previewRun> | null>(null);
@@ -89,7 +90,7 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
   const rows = typeof stdout?.rows === "number" && stdout.rows > 0 ? stdout.rows : 24;
   const columns = typeof stdout?.columns === "number" && stdout.columns > 0 ? stdout.columns : 80;
   const chips = useMemo(() => buildFilterChips(data), [data]);
-  const chipLines = chips.length > 0 ? 1 : 0;
+  const chipLines = chips.length > 0 ? Math.ceil((chips.reduce((n, chip) => n + chip.label.length + 7, 25)) / Math.max(1, columns - 2)) : 0;
   const activityLines = uiState.activityExpanded ? Math.max(1, Math.min(6, data.activity.length)) + 1 : 1;
   // Chrome = header (2) + optional chip bar + body border (2) + activity + command line (1).
   const bodyCapacity = Math.max(3, rows - (2 + chipLines + 2 + activityLines + 1));
@@ -133,8 +134,38 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
       }
       return;
     }
+    if (picker) {
+      if (key.escape) { setPicker(null); return; }
+      const options = searchPickerOptions(picker.field ? filterValues(picker.field, data, context) : filterFields, picker.query);
+      if (key.upArrow || key.downArrow) {
+        setPicker({ ...picker, index: Math.max(0, Math.min(options.length - 1, picker.index + (key.downArrow ? 1 : -1))) });
+      } else if (key.return) {
+        const option = options[picker.index];
+        if (!option) return;
+        if (!picker.field && option.id === "advanced") {
+          setPicker(null); dispatchBase({ type: "enterMode", kind: "filter" });
+        } else if (!picker.field && option.id !== "clear") {
+          setPicker({ field: option.id as keyof ListIssueFilters, query: "", index: 0 });
+        } else {
+          try {
+            const filters = picker.field
+              ? option.value === undefined ? removeFilterKey(data.filters, picker.field) : { ...data.filters, [picker.field]: option.value }
+              : {};
+            reloadAndCommit({ ...effectiveLoadOptions(data), filters });
+            setPicker(null);
+            dispatchBase({ type: "setStatus", message: `Applied ${option.label}.` });
+          } catch (error) { dispatchBase({ type: "setStatus", message: error instanceof Error ? error.message : String(error) }); }
+        }
+      } else if (key.backspace || key.delete) setPicker({ ...picker, query: picker.query.slice(0, -1), index: 0 });
+      else if (input && !key.ctrl) setPicker({ ...picker, query: picker.query + input, index: 0 });
+      return;
+    }
     const action = mapKeyToLinekeeperAction(input, key, uiState);
 
+    if (action.type === "enterMode" && action.kind === "filter" && input === "f") {
+      if (uiState.focus === "detail") dispatchBase({ type: "focusPrevious" });
+      setPicker({ field: null, query: "", index: 0 }); return;
+    }
     if (action.type === "none") return;
     if (action.type === "quit") {
       exit();
@@ -250,11 +281,13 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
           message: command.input ? `Loaded view ${command.input}; search and overrides reset.` : "View cleared."
         });
       } else if (command.kind === "filter") {
-        const filters = command.input ? parseFilterInput(command.input) : {};
+        const parsed = parseIssueFilterText(command.input);
+        let filters = mergeFilters(data.filters, parsed.filters);
+        if (parsed.clear.length && !Object.keys(parsed.filters).length) filters = { ...data.filters };
+        for (const key of parsed.clear) filters = removeFilterKey(filters, key);
         const nextOptions = {
           ...effectiveLoadOptions(data),
-          filters: mergeFilters(data.filters, filters),
-          ...(command.input.includes("team=all") ? { team: null } : {})
+          filters
         };
         reloadAndCommit(nextOptions);
         dispatchBase({
@@ -287,7 +320,9 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
     <Box flexDirection="column">
       <Header data={data} />
       <FilterChips chips={chips} />
-      {launchPreview ? (
+      {picker ? (
+        <PickerPanel title={picker.field ? `Filter: ${filterFields.find(field => field.id === picker.field)?.label}` : "Filter field"} query={picker.query} index={picker.index} options={searchPickerOptions(picker.field ? filterValues(picker.field, data, context) : filterFields, picker.query)} capacity={bodyCapacity} columns={columns} />
+      ) : launchPreview ? (
         <RunPreview preview={launchPreview} capacity={bodyCapacity} columns={columns} />
       ) : showHelp ? (
         <HelpOverlay dbPath={dbPath} capacity={bodyCapacity} columns={columns} />
@@ -314,6 +349,20 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
       <CommandLine uiState={uiState} />
     </Box>
   );
+}
+
+function PickerPanel({ title, query, index, options, capacity, columns }: {
+  title: string; query: string; index: number; options: PickerOption[]; capacity: number; columns: number;
+}) {
+  const size = Math.max(1, capacity - 3);
+  const start = Math.max(0, index - size + 1);
+  return <Box borderStyle="single" flexDirection="column" paddingX={1} width={columns}>
+    <Text bold>{title} — type to search: {query}</Text>
+    {options.length ? options.slice(start, start + size).map((option, offset) =>
+      <Text key={option.id} color={start + offset === index ? "cyan" : undefined} wrap="truncate">{start + offset === index ? "> " : "  "}{option.label}{option.description ? ` · ${option.description}` : ""}</Text>
+    ) : <Text>No matches. Change the search or press Escape.</Text>}
+    <Text color="gray">↑/↓ select · Enter apply · Escape cancel</Text>
+  </Box>;
 }
 
 function isCoreCommand(command: LinekeeperCommand): command is LinekeeperCoreCommand {
@@ -348,7 +397,7 @@ function FilterChips({ chips }: { chips: FilterChip[] }) {
 
   return (
     <Box paddingX={1}>
-      <Text wrap="truncate">
+      <Text wrap="wrap">
         <Text color="gray">filters </Text>
         {chips.map((chip, index) => (
           <Fragment key={chip.key}>
@@ -385,7 +434,8 @@ function HelpOverlay({
     "  r preview run   x stop run   e answer/approve   F fleet",
     "",
     "Filters",
-    "  f + Enter (empty)  clear all filters",
+    "  f searchable fields/values; : advanced quoted filters",
+    "  Pick Clear all filters, or : + Enter (empty)",
     "  1-9 remove effective chip; / empty clears search",
     "  v selects view, resetting search and overrides",
     "  team=all clears team; empty filter clears inherited filters",

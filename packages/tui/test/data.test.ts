@@ -94,6 +94,14 @@ describe("Linekeeper core-facing handlers", () => {
     } finally { setup.close(); }
   });
 
+  it("parses quoted multiword filters and rejects malformed text", () => {
+    expect(parseFilterInput(`state="In Progress" project='Test Project'`)).toEqual({ state: "In Progress", project: "Test Project" });
+    expect(() => parseFilterInput("unknown=foo")).toThrow("Unknown filter");
+    expect(() => parseFilterInput("priority=1oops")).toThrow("Priority must");
+    expect(() => parseFilterInput('state="In Progress')).toThrow("Close the quoted");
+    expect(() => parseFilterInput("state=In Progress")).toThrow("quote multiword");
+  });
+
   it("loads list/detail/activity data through core services", () => {
     const setup = initializedContext();
 

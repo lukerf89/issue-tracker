@@ -36,6 +36,7 @@ export type LinekeeperKeyAction =
 const normalModeKeys: Record<string, LinekeeperCommandKind> = {
   "/": "search",
   f: "filter",
+  ":": "filter",
   v: "view",
   n: "new",
   m: "move",
