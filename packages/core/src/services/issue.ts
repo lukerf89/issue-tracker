@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 
 import { inTransaction, type ServiceContext, type ServiceTransaction } from "../context.js";
 import { actors, issueDependencies, issueLabels, issues, labels, projects, teams, workflowStates, type Actor, type Attachment, type Issue } from "../db/schema.js";
@@ -52,6 +52,9 @@ export interface CreateIssueInput {
 }
 
 export interface ListIssueFilters {
+  query?: string;
+  sort?: "identifier" | "updatedAt";
+  stateTypes?: ("backlog" | "unstarted" | "started" | "blocked" | "completed" | "canceled")[];
   state?: string;
   assignee?: string | null;
   project?: string | null;
@@ -382,6 +385,7 @@ export function getIssue(
 }
 
 export function listIssues(context: ServiceContext, filters: ListIssueFilters = {}) {
+  if (filters.query) return searchIssues(context, { ...filters, query: filters.query });
   const conditions = issueFilterConditions(context, filters);
 
   if (conditions === null) {
@@ -393,7 +397,7 @@ export function listIssues(context: ServiceContext, filters: ListIssueFilters = 
     .from(issues)
     .innerJoin(teams, eq(teams.id, issues.teamId))
     .where(conditions.length ? and(...conditions) : undefined)
-    .orderBy(asc(teams.key), asc(issues.number), asc(issues.id))
+    .orderBy(...(filters.sort === "updatedAt" ? [desc(issues.updatedAt)] : []), asc(teams.key), asc(issues.number), asc(issues.id))
     .limit(filters.limit ?? -1)
     .all()
     .map(({ issue }) => withIssueDetails(context, issue));
@@ -443,7 +447,7 @@ function needsIssueDetails(fields: IssueProjectionField[] | undefined): boolean 
 function paginateIssueRows(
   context: ServiceContext,
   baseConditions: SQL[],
-  options: IssuePageOptions & { limit?: number }
+  options: IssuePageOptions & { limit?: number; sort?: ListIssueFilters["sort"] }
 ): IssuePage {
   const offset = decodeIssueCursor(options.cursor);
   const pageSize = resolvePageSize(options.limit);
@@ -454,7 +458,7 @@ function paginateIssueRows(
     .from(issues)
     .innerJoin(teams, eq(teams.id, issues.teamId))
     .where(baseConditions.length ? and(...baseConditions) : undefined)
-    .orderBy(asc(teams.key), asc(issues.number), asc(issues.id))
+    .orderBy(...(options.sort === "updatedAt" ? [desc(issues.updatedAt)] : []), asc(teams.key), asc(issues.number), asc(issues.id))
     .limit(pageSize + 1)
     .offset(offset)
     .all();
@@ -477,13 +481,14 @@ export function listIssuesPage(
   filters: ListIssueFilters = {},
   options: IssuePageOptions = {}
 ): IssuePage {
+  if (filters.query) return searchIssuesPage(context, { ...filters, query: filters.query }, options);
   const conditions = issueFilterConditions(context, filters);
 
   if (conditions === null) {
     return { rows: [], nextCursor: null, fields: options.fields };
   }
 
-  return paginateIssueRows(context, conditions, { ...options, limit: filters.limit });
+  return paginateIssueRows(context, conditions, { ...options, limit: filters.limit, sort: filters.sort });
 }
 
 export function searchIssuesPage(
@@ -522,6 +527,13 @@ function issueFilterConditions(
 ): SQL[] | null {
   const conditions: SQL[] = [];
 
+  if (filters.stateTypes) {
+    if (!filters.stateTypes.length) return null;
+    const states = context.db.select({ id: workflowStates.id }).from(workflowStates)
+      .where(inArray(workflowStates.type, filters.stateTypes)).all();
+    if (!states.length) return null;
+    conditions.push(inArray(issues.stateId, states.map(state => state.id)));
+  }
   if (!filters.includeArchived) {
     conditions.push(isNull(issues.archivedAt));
   }
@@ -1222,10 +1234,12 @@ function orderedSearchResults(
   return context.db
     .select({ issue: issues })
     .from(issues)
+    .innerJoin(teams, eq(teams.id, issues.teamId))
+    .orderBy(...(input.sort === "updatedAt" ? [desc(issues.updatedAt)] : []), asc(teams.key), asc(issues.number), asc(issues.id))
     .where(and(...conditions))
     .all()
     .map(({ issue }) => ({ issue, meta: metaByIssueId.get(issue.id)! }))
-    .sort((a, b) => a.meta.order - b.meta.order)
+    .sort((a, b) => input.sort ? 0 : a.meta.order - b.meta.order)
     .map(({ issue, meta }) => ({ issue, snippet: meta.snippet }));
 }
 

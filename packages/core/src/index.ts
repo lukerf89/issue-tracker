@@ -151,6 +151,7 @@ export {
   listIssuesPageWithView,
   listSavedViews,
   resolveIssueListFilters,
+  builtinIssueViews,
   resolveSavedView,
   type CreateSavedViewInput,
   type DeleteSavedViewInput,

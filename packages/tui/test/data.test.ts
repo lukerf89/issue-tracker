@@ -10,6 +10,7 @@ import {
   createIssue,
   createLabel,
   createSavedView,
+  deleteSavedView,
   createTeam,
   init,
   listActivitySince,
@@ -25,6 +26,8 @@ import {
   executeLinekeeperCommand,
   loadLinekeeperData,
   loadMoreLinekeeperData,
+  rememberLinekeeperView,
+  restoreLinekeeperData,
   parseFilterInput,
   removeFilterKey
 } from "../src/data.js";
@@ -49,7 +52,7 @@ describe("Linekeeper core-facing handlers", () => {
       createSavedView(setup.context, { name: "Urgent", filters: { team: "ENG", priority: 1 } });
       const view = loadLinekeeperData(setup.context, { view: "Urgent", search: "cursor" });
       expect(view.issues.map(issue => issue.id)).toEqual([match.id]);
-      expect(view.filters).toEqual({ team: "ENG", priority: 1 });
+      expect(view.filters).toEqual({ team: "ENG", priority: 1, query: "cursor" });
       expect(view.modifiedView).toBe(true);
       const edited = loadLinekeeperData(setup.context, {
         ...effectiveLoadOptions(view), filters: { ...view.filters, state: "Todo" }
@@ -100,6 +103,27 @@ describe("Linekeeper core-facing handlers", () => {
     expect(() => parseFilterInput("priority=1oops")).toThrow("Priority must");
     expect(() => parseFilterInput('state="In Progress')).toThrow("Close the quoted");
     expect(() => parseFilterInput("state=In Progress")).toThrow("quote multiword");
+  });
+
+  it("restores the last view per database and visibly falls back when missing", () => {
+    const first = initializedContext();
+    const second = initializedContext();
+    try {
+      createIssue(first.context, { title: "Cursor work" });
+      createSavedView(first.context, { name: "My query", filters: { query: "cursor", sort: "updatedAt", priority: 0 } });
+      rememberLinekeeperView(first.context, "My query");
+      const restored = restoreLinekeeperData(first.context);
+      expect(restored.data.search).toBe("cursor");
+      expect(restored.data.filters.sort).toBe("updatedAt");
+      expect(restored.data.modifiedView).toBe(false);
+      expect(restored.data.issues).toHaveLength(1);
+      expect(restoreLinekeeperData(second.context).data.activeView).toBeNull();
+      deleteSavedView(first.context, "My query");
+      const missing = restoreLinekeeperData(first.context);
+      expect(missing.message).toContain("Could not restore view My query");
+      expect(missing.data.activeView).toBeNull();
+      expect(missing.data.issues).toHaveLength(1);
+    } finally { first.close(); second.close(); }
   });
 
   it("loads list/detail/activity data through core services", () => {

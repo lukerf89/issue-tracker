@@ -14,6 +14,7 @@ export type LinekeeperCommandKind =
   | "search"
   | "filter"
   | "view"
+  | "saveView"
   | "new"
   | "move"
   | "priority"

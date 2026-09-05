@@ -68,6 +68,7 @@ const TEMPLATE_TOOL_NAMES = [
 const SAVED_VIEW_TOOL_NAMES = [
   "create_saved_view",
   "list_saved_views",
+  "list_builtin_views",
   "delete_saved_view"
 ] as const;
 

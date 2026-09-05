@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { Fragment, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 
-import { createNodeEngineCatalogRuntime, createNodeRepositoryInspector, loadEngineCatalog, previewRun, requestRunStop, resolveEngineCatalogPath, resolveRunPermission, respondToRunInput, startRun, parseIssueFilterText, tokenizeSearchQuery, type IssueWithDetails, type ListIssueFilters, type ServiceContext } from "@issue-tracker/core";
+import { builtinIssueViews, createSavedView, createSavedViewInputSchema, createNodeEngineCatalogRuntime, createNodeRepositoryInspector, loadEngineCatalog, previewRun, requestRunStop, resolveEngineCatalogPath, resolveRunPermission, respondToRunInput, startRun, parseIssueFilterText, tokenizeSearchQuery, type IssueWithDetails, type ListIssueFilters, type ServiceContext } from "@issue-tracker/core";
 
 import {
   commandFromMode,
@@ -13,6 +13,8 @@ import {
   effectiveLoadOptions,
   loadLinekeeperData,
   loadMoreLinekeeperData,
+  rememberLinekeeperView,
+  restoreLinekeeperData,
   removeFilterKey,
   type LinekeeperCommand,
   type LinekeeperCoreCommand,
@@ -54,17 +56,14 @@ export interface LinekeeperAppProps {
 
 export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppProps) {
   const { exit } = useApp();
-  const [loadOptions, setLoadOptions] = useState<LinekeeperLoadOptions>({
-    team: defaultTeam
-  });
-  const [data, setData] = useState<LinekeeperData>(() =>
-    loadLinekeeperData(context, loadOptions)
-  );
+  const [startup] = useState(() => restoreLinekeeperData(context, defaultTeam));
+  const [loadOptions, setLoadOptions] = useState<LinekeeperLoadOptions>(startup.options);
+  const [data, setData] = useState<LinekeeperData>(startup.data);
   const [uiState, dispatchBase] = useReducer(
     (state: LinekeeperUiState, action: Parameters<typeof reduceLinekeeperState>[1]) =>
       reduceLinekeeperState(state, action, data.issues.length),
     undefined,
-    initialLinekeeperState
+    () => ({ ...initialLinekeeperState(), statusMessage: startup.message })
   );
   const selectedIssue = useMemo(
     () => data.issues[Math.min(uiState.selectedIndex, Math.max(0, data.issues.length - 1))] ?? null,
@@ -82,7 +81,7 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
     };
   }, [stdout]);
 
-  const [picker, setPicker] = useState<{ field: keyof ListIssueFilters | null; query: string; index: number } | null>(null);
+  const [picker, setPicker] = useState<{ field: keyof ListIssueFilters | null; query: string; index: number; views?: boolean } | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const [showFleet, setShowFleet] = useState(false);
   const [launchPreview, setLaunchPreview] = useState<ReturnType<typeof previewRun> | null>(null);
@@ -94,6 +93,17 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
   const activityLines = uiState.activityExpanded ? Math.max(1, Math.min(6, data.activity.length)) + 1 : 1;
   // Chrome = header (2) + optional chip bar + body border (2) + activity + command line (1).
   const bodyCapacity = Math.max(3, rows - (2 + chipLines + 2 + activityLines + 1));
+
+  function pickerOptions(): PickerOption[] {
+    if (picker?.views) return [
+      { id: "", label: "All issues", description: "Clear view, search and filters; all teams; non-archived" },
+      { id: "save", label: "Save current query as a view" },
+      ...builtinIssueViews.map(view => ({ id: `view:${view.name}`, label: view.title, description: view.description })),
+      ...data.savedViews.map(view => ({ id: `view:${view.name}`, label: view.name,
+        description: [buildFilterChips({ ...data, filters: view.filters, search: view.filters.query ?? null }).map(chip => chip.label).join(" · "), !view.filters.team ? "all teams" : "", !view.filters.state && !view.filters.stateTypes ? "all workflow states" : "", !view.filters.includeArchived ? "non-archived" : ""].filter(Boolean).join(" · ") }))
+    ];
+    return picker?.field ? filterValues(picker.field, data, context) : filterFields;
+  }
 
   function reload(nextOptions: LinekeeperLoadOptions = loadOptions): LinekeeperData {
     let nextData = loadLinekeeperData(context, nextOptions);
@@ -136,13 +146,22 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
     }
     if (picker) {
       if (key.escape) { setPicker(null); return; }
-      const options = searchPickerOptions(picker.field ? filterValues(picker.field, data, context) : filterFields, picker.query);
+      const options = searchPickerOptions(pickerOptions(), picker.query);
       if (key.upArrow || key.downArrow) {
         setPicker({ ...picker, index: Math.max(0, Math.min(options.length - 1, picker.index + (key.downArrow ? 1 : -1))) });
       } else if (key.return) {
         const option = options[picker.index];
         if (!option) return;
-        if (!picker.field && option.id === "advanced") {
+        if (picker.views) {
+          if (option.id === "save") { setPicker(null); dispatchBase({ type: "enterMode", kind: "saveView" }); return; }
+          try {
+            const name = option.id ? option.id.slice(5) : null;
+            reloadAndCommit(name ? { view: name } : {});
+            rememberLinekeeperView(context, name);
+            setPicker(null);
+            dispatchBase({ type: "setStatus", message: `Loaded ${option.label}; search and overrides reset.` });
+          } catch (error) { dispatchBase({ type: "setStatus", message: error instanceof Error ? error.message : String(error) }); }
+        } else if (!picker.field && option.id === "advanced") {
           setPicker(null); dispatchBase({ type: "enterMode", kind: "filter" });
         } else if (!picker.field && option.id !== "clear") {
           setPicker({ field: option.id as keyof ListIssueFilters, query: "", index: 0 });
@@ -162,6 +181,10 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
     }
     const action = mapKeyToLinekeeperAction(input, key, uiState);
 
+    if (action.type === "enterMode" && action.kind === "view") {
+      if (uiState.focus === "detail") dispatchBase({ type: "focusPrevious" });
+      setPicker({ views: true, field: null, query: "", index: 0 }); return;
+    }
     if (action.type === "enterMode" && action.kind === "filter" && input === "f") {
       if (uiState.focus === "detail") dispatchBase({ type: "focusPrevious" });
       setPicker({ field: null, query: "", index: 0 }); return;
@@ -266,7 +289,13 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
       }
       const command = commandFromMode(mode, issue, defaultTeam);
 
-      if (command.kind === "search") {
+      if (command.kind === "saveView") {
+        const filters = { ...data.filters };
+        createSavedView(context, createSavedViewInputSchema.parse({ name: command.input, filters }));
+        reloadAndCommit({ view: command.input });
+        rememberLinekeeperView(context, command.input);
+        dispatchBase({ type: "setStatus", message: `Saved view ${command.input}.` });
+      } else if (command.kind === "search") {
         const nextOptions = { ...effectiveLoadOptions(data), search: command.input || null };
         reloadAndCommit(nextOptions);
         dispatchBase({
@@ -321,7 +350,7 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
       <Header data={data} />
       <FilterChips chips={chips} />
       {picker ? (
-        <PickerPanel title={picker.field ? `Filter: ${filterFields.find(field => field.id === picker.field)?.label}` : "Filter field"} query={picker.query} index={picker.index} options={searchPickerOptions(picker.field ? filterValues(picker.field, data, context) : filterFields, picker.query)} capacity={bodyCapacity} columns={columns} />
+        <PickerPanel title={picker.views ? "Views (selection resets overrides)" : picker.field ? `Filter: ${filterFields.find(field => field.id === picker.field)?.label}` : "Filter field"} query={picker.query} index={picker.index} options={searchPickerOptions(pickerOptions(), picker.query)} capacity={bodyCapacity} columns={columns} />
       ) : launchPreview ? (
         <RunPreview preview={launchPreview} capacity={bodyCapacity} columns={columns} />
       ) : showHelp ? (
@@ -354,19 +383,22 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
 function PickerPanel({ title, query, index, options, capacity, columns }: {
   title: string; query: string; index: number; options: PickerOption[]; capacity: number; columns: number;
 }) {
-  const size = Math.max(1, capacity - 3);
+  const description = options[index]?.description;
+  const descriptionRows = description ? Math.ceil(description.length / Math.max(1, columns - 4)) : 0;
+  const size = Math.max(1, capacity - 3 - descriptionRows);
   const start = Math.max(0, index - size + 1);
   return <Box borderStyle="single" flexDirection="column" paddingX={1} width={columns}>
     <Text bold>{title} — type to search: {query}</Text>
     {options.length ? options.slice(start, start + size).map((option, offset) =>
       <Text key={option.id} color={start + offset === index ? "cyan" : undefined} wrap="truncate">{start + offset === index ? "> " : "  "}{option.label}{option.description ? ` · ${option.description}` : ""}</Text>
     ) : <Text>No matches. Change the search or press Escape.</Text>}
+    {description ? <Text wrap="wrap">{description}</Text> : null}
     <Text color="gray">↑/↓ select · Enter apply · Escape cancel</Text>
   </Box>;
 }
 
 function isCoreCommand(command: LinekeeperCommand): command is LinekeeperCoreCommand {
-  return command.kind !== "search" && command.kind !== "filter" && command.kind !== "view" && command.kind !== "runResponse";
+  return command.kind !== "search" && command.kind !== "filter" && command.kind !== "view" && command.kind !== "saveView" && command.kind !== "runResponse";
 }
 
 function runRuntime() {
@@ -376,7 +408,7 @@ function runRuntime() {
 
 function Header({ data }: { data: LinekeeperData }) {
   const teamLabel = data.activeTeamKey ?? "all teams";
-  const viewLabel = (data.activeView ?? "Issues") + (data.modifiedView ? " (Modified)" : "");
+  const viewLabel = (builtinIssueViews.find(view => view.name === data.activeView)?.title ?? data.activeView ?? "Issues") + (data.modifiedView ? " (Modified)" : "");
   const count = data.issues.length;
 
   return (
@@ -429,7 +461,7 @@ function HelpOverlay({
     "  A            toggle activity     y           copy identifier",
     "",
     "Commands",
-    "  / search   f filter   v views   n new   m move   p priority",
+    "  / search   f filter   v views   V save view   n new",
     "  a assign   l labels   c comment  s sub-issue   b link",
     "  r preview run   x stop run   e answer/approve   F fleet",
     "",
@@ -826,6 +858,8 @@ function modePrompt(kind: NonNullable<LinekeeperUiState["mode"]>["kind"]): strin
       return "filter state=Todo assignee=@codex ";
     case "view":
       return "view ";
+    case "saveView":
+      return "Save current query as view name: ";
     case "new":
       return "new title ";
     case "move":
