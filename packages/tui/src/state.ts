@@ -42,6 +42,7 @@ export interface LinekeeperUiState {
 
 export type LinekeeperAction =
   | { type: "moveSelection"; delta: number }
+  | { type: "selectIndex"; index: number }
   | { type: "selectTop" }
   | { type: "selectBottom" }
   | { type: "focusNext" }
@@ -88,6 +89,8 @@ export function reduceLinekeeperState(
         detailScroll: 0,
         pendingG: false
       };
+    case "selectIndex":
+      return { ...state, selectedIndex: Math.max(0, action.index), detailScroll: 0, pendingG: false };
     case "selectTop":
       return { ...state, selectedIndex: 0, detailScroll: 0, pendingG: false };
     case "selectBottom":

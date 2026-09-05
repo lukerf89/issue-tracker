@@ -75,7 +75,7 @@ describe("LinekeeperApp render", () => {
       const listFrame = stripAnsi(view.lastFrame() ?? "");
 
       expect(listFrame).toContain("Linekeeper");
-      expect(listFrame).toContain("Linekeeper | ENG | Issues | 3 issues");
+      expect(listFrame).toContain("Linekeeper | ENG | Issues | 3 loaded");
       expect(listFrame).toContain("up/down move | enter open");
       expect(listFrame).toContain("Issues");
       expect(listFrame).toContain("ENG-1");
@@ -138,6 +138,26 @@ describe("LinekeeperApp render", () => {
       expect(frame).not.toContain("Other urgent");
       view.stdin.write("1"); await tick();
       expect(stripAnsi(view.lastFrame() ?? "")).toContain("/cursor");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
+  it("loads beyond 100 on navigation, goes backward, and resets for a new query", async () => {
+    const setup = initializedContext();
+    try {
+      for (let i = 0; i < 105; i++) createIssue(setup.context, { title: `Cursor task ${i}` });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath }));
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("100 loaded · more available");
+      view.stdin.write("G"); await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("105 loaded · end of results");
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("ENG-105");
+      view.stdin.write("k"); await tick();
+      view.stdin.write("\r"); await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("ENG-104  Cursor task 103");
+      view.stdin.write("\u001b"); await tick();
+      for (const input of ["/", "absent", "\r"]) { view.stdin.write(input); await tick(); }
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("0 loaded · end of results");
       view.unmount();
     } finally { setup.close(); }
   });

@@ -7,7 +7,7 @@ import {
   listActivitySince,
   listActors,
   listCycles,
-  listIssuesWithView,
+  listIssuesPageWithView,
   resolveIssueListFilters,
   resolveSavedView,
   getSupervisorHealth,
@@ -25,7 +25,6 @@ import {
   createIssueInputSchema,
   linkIssueInputSchema,
   listIssueFiltersSchema,
-  listIssuesWithViewInputSchema,
   moveIssueInputSchema,
   searchInputSchema,
   updateIssueInputSchema,
@@ -52,10 +51,12 @@ export interface LinekeeperLoadOptions {
   search?: string | null;
   filters?: ListIssueFilters;
   limit?: number;
+  cursor?: string;
 }
 
 export interface LinekeeperData {
   issues: IssueWithDetails[];
+  nextCursor: string | null;
   // Per-issue bm25 excerpt, keyed by issue id. Populated only on the search
   // path; empty for plain lists/filters. TUI-only display concern — kept off
   // core's shared IssueWithDetails.
@@ -120,28 +121,14 @@ export function loadLinekeeperData(
     Object.keys({ ...base, ...filters }).some(key =>
       base[key as keyof ListIssueFilters] !== filters[key as keyof ListIssueFilters]));
   const queryFilters = { ...filters, limit: options.limit ?? filters.limit ?? 100 };
-  let issues: IssueWithDetails[];
+  const page = search
+    ? searchIssuesPage(context, searchInputSchema.parse({ ...queryFilters, query: search }),
+        { fields: ["labels"], cursor: options.cursor })
+    : listIssuesPageWithView(context, { filters: queryFilters, fields: ["labels"], cursor: options.cursor });
+  const issues = page.rows.map(row => row.issue as IssueWithDetails);
   const snippets = new Map<string, string>();
-  if (search) {
-    // Use the paged, snippet-carrying search backend. Requesting a relation
-    // field (labels) flips the detail load on so rows are full IssueWithDetails,
-    // matching the plain-list path. Pagination itself is out of scope here.
-    const page = searchIssuesPage(
-      context,
-      searchInputSchema.parse({ ...queryFilters, query: search }),
-      { fields: ["labels"] }
-    );
-    issues = page.rows.map((row) => row.issue as IssueWithDetails);
-    for (const row of page.rows) {
-      if (row.snippet) snippets.set(row.issue.id, row.snippet);
-    }
-  } else {
-    issues = listIssuesWithView(
-      context,
-      listIssuesWithViewInputSchema.parse({
-        filters: queryFilters
-      })
-    );
+  for (const row of page.rows) {
+    if (row.snippet) snippets.set(row.issue.id, row.snippet);
   }
   const teams = listTeams(context);
   const teamIds = new Set<string>([
@@ -156,6 +143,7 @@ export function loadLinekeeperData(
 
   return {
     issues,
+    nextCursor: page.nextCursor,
     snippets,
     teams,
     states,
@@ -176,6 +164,24 @@ export function loadLinekeeperData(
   };
 }
 
+
+// Fetch before replacing the usable list; callers can show an error and retry.
+export function loadMoreLinekeeperData(
+  context: ServiceContext,
+  data: LinekeeperData,
+  limit = 100
+): LinekeeperData {
+  if (!data.nextCursor) return data;
+  const page = loadLinekeeperData(context, {
+    ...effectiveLoadOptions(data), cursor: data.nextCursor, limit
+  });
+  const known = new Set(data.issues.map(issue => issue.id));
+  return {
+    ...page,
+    issues: [...data.issues, ...page.issues.filter(issue => !known.has(issue.id))],
+    snippets: new Map([...data.snippets, ...page.snippets])
+  };
+}
 
 // A view is resolved on selection; subsequent edits operate on the visible query.
 export function effectiveLoadOptions(data: LinekeeperData): LinekeeperLoadOptions {
