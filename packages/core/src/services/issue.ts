@@ -81,6 +81,7 @@ export const ISSUE_SUMMARY_FIELDS = [
 // Extra fields a caller may opt into via `fields`. Deliberately excludes
 // `comments` and `attachments` — those are full-fidelity only via get_issue.
 export const ISSUE_PROJECTABLE_FIELDS = [
+  "stateName", "stateType", "assigneeHandle", "revision",
   "description",
   "labels",
   "parent",
@@ -466,7 +467,7 @@ function paginateIssueRows(
 
   return {
     rows: pageRows.map(({ issue }) => ({
-      issue: detailed ? withIssueDetails(context, issue) : issue,
+      issue: withReadableIssueFields(context, detailed ? withIssueDetails(context, issue) : issue, options.fields),
       fields: options.fields
     })),
     nextCursor: hasMore ? String(offset + pageSize) : null,
@@ -509,7 +510,7 @@ export function searchIssuesPage(
 
   return {
     rows: pageResults.map(({ issue, snippet }) => ({
-      issue: detailed ? withIssueDetails(context, issue) : issue,
+      issue: withReadableIssueFields(context, detailed ? withIssueDetails(context, issue) : issue, options.fields),
       fields: options.fields,
       snippet
     })),
@@ -1441,4 +1442,16 @@ export function claimIssue(context: ServiceContext, issueIdentifier: string, opt
     if (issue.archivedAt !== null || !["backlog", "unstarted"].includes(state.type)) throw new AppError(AppErrorCode.CONSTRAINT_VIOLATION, "Only active backlog or unstarted issues can be claimed.");
     return assignIssue(txContext, issueIdentifier, actor.id);
   });
+}
+
+function withReadableIssueFields<T extends Issue>(context: ServiceContext, issue: T, fields: IssueProjectionField[] = []): T {
+  const extra: Record<string, string | null> = {};
+  if (fields.includes("stateName") || fields.includes("stateType")) {
+    const state = getState(context, issue.stateId, issue.teamId);
+    if (fields.includes("stateName")) extra.stateName = state.name;
+    if (fields.includes("stateType")) extra.stateType = state.type;
+  }
+  if (fields.includes("assigneeHandle")) extra.assigneeHandle = issue.assigneeId
+    ? context.db.query.actors.findFirst({ where: eq(actors.id, issue.assigneeId) }).sync()?.handle ?? null : null;
+  return { ...issue, ...extra };
 }

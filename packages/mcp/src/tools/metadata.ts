@@ -22,9 +22,9 @@ export function registerMetadataTools(
       inputSchema: describeTrackerInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
-      describeTrackerInputSchema.parse(input);
+      const parsed = describeTrackerInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(describeTracker(context))
+        jsonResult(describeTracker(context, parsed))
       );
     })
   );

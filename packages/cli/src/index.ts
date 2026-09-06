@@ -272,12 +272,16 @@ export function createProgram(): Command {
 
   program
     .command("describe")
+    .option("--team <team>", "scope team/state metadata")
+    .option("--sections <list>", "comma-separated metadata sections")
+    .option("--compact", "small project references without descriptions")
     .description("discover tracker metadata for agents and scripts")
     .option("--json", "print JSON output")
     .action((_options, command) =>
       withContext(command, {}, (cli) => {
-        describeTrackerInputSchema.parse({});
-        printJson(describeTracker(cli.context));
+        const options = optionsWithGlobals(command);
+        const input = describeTrackerInputSchema.parse({ team: stringOption(options.team), sections: fieldsOption(options.sections), compact: booleanOption(options.compact) });
+        printJson(describeTracker(cli.context, input));
       })
     );
 
