@@ -1,3 +1,5 @@
+import { toolProfileSchema, type ToolProfile } from "@issue-tracker/core";
+import { ToolProfileTransport } from "./tool-profile.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
@@ -20,10 +22,12 @@ import type { McpActorContext } from "./context.js";
 
 export interface CreateServerOptions {
   dbPath: string;
+  toolProfile?: ToolProfile;
   actor?: McpActorContext;
 }
 
 export function createServer(options: CreateServerOptions): McpServer {
+  const profile = toolProfileSchema.parse(options.toolProfile ?? "full");
   const server = new McpServer({
     name: "issue-tracker",
     version: "0.0.0"
@@ -47,6 +51,8 @@ export function createServer(options: CreateServerOptions): McpServer {
   registerTemplateTools(server, options);
   registerIssueResources(server, options);
 
+  const connect = server.connect.bind(server);
+  server.connect = (transport) => connect(new ToolProfileTransport(transport, profile));
   return server;
 }
 
