@@ -230,10 +230,15 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
         });
       } else if (command.kind === "filter") {
         const filters = command.input ? parseFilterInput(command.input) : {};
+        // team=all is a whole token, not a substring: `team=alligator` and
+        // `label=team=all` are ordinary filters and must not widen the scope.
+        const clearsTeam = command.input
+          .split(/\s+/)
+          .some((token) => token === "team=all" || token === "team:all");
         const nextOptions = {
           ...effectiveLoadOptions(data),
           filters: mergeFilters(data.filters, filters),
-          ...(command.input.includes("team=all") ? { team: null } : {})
+          ...(clearsTeam ? { team: null } : {})
         };
         reloadAndCommit(nextOptions);
         dispatchBase({

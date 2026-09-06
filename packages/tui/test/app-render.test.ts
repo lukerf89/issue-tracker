@@ -142,6 +142,25 @@ describe("LinekeeperApp render", () => {
     } finally { setup.close(); }
   });
 
+  it("treats team=all as a whole token rather than a substring", async () => {
+    const setup = initializedContext();
+    try {
+      createIssue(setup.context, { title: "Cursor task" });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath, defaultTeam: "ENG" }));
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("| ENG |");
+      // A label whose value happens to spell team=all is an ordinary filter and
+      // must not widen the scope to every team.
+      for (const input of ["f", "label=team=all", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("| ENG |");
+      for (const input of ["f", "team=all", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("| all teams |");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
   it("renders a highlighted bm25 excerpt line under each search result", async () => {
     const setup = initializedContext();
 
