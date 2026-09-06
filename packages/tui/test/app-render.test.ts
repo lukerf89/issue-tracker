@@ -391,6 +391,22 @@ describe("LinekeeperApp render", () => {
     } finally { setup.close(); }
   });
 
+  it("documents every command key in the help overlay", async () => {
+    const setup = initializedContext();
+    try {
+      createIssue(setup.context, { title: "Cursor task" });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath }));
+      await tick();
+      view.stdin.write("?"); await tick();
+      const frame = stripAnsi(view.lastFrame() ?? "");
+      for (const entry of ["/ search", "f filter", "v views", "V save view", "n new", "m move",
+        "p priority", "a assign", "l labels", "c comment", "s sub-issue", "b link"]) {
+        expect(frame).toContain(entry);
+      }
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
   it("selects a saved view named save independently of the save action", async () => {
     const setup = initializedContext();
     try {
