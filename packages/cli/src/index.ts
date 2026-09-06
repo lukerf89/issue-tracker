@@ -16,6 +16,7 @@ import {
   claimIssueInputSchema,
   issueResponseSchema,
   withIssueMutationReceipt,
+  getIssueResponse, getIssuesResponse, readIssueSection, getIssuesInputSchema, readIssueSectionInputSchema,
   addAttachment,
   archiveIssue,
   archiveRun,
@@ -717,6 +718,8 @@ export function createProgram(): Command {
     );
   issue
     .command("view")
+    .option("--fields <list>", "selected fields; bounded JSON output")
+    .option("--max-bytes <number>", "maximum bounded JSON bytes", parsePositiveInteger)
     .argument("<identifier>")
     .option("--comments <mode>", "comment payload: none, latest, or all")
     .option("--comment-cursor <cursor>", "comment pagination cursor")
@@ -725,6 +728,12 @@ export function createProgram(): Command {
     .action((identifier, _options, command) =>
       withContext(command, { requireActor: false }, (cli) => {
         const options = optionsWithGlobals(command);
+        if (options.fields !== undefined || options.maxBytes !== undefined) {
+          if (!options.json) throw new InvalidArgumentError("bounded issue reads require --json");
+          const input = getIssueInputSchema.parse({ identifier, fields: fieldsOption(options.fields), maxBytes: numberOption(options.maxBytes), comments: stringOption(options.comments), commentCursor: stringOption(options.commentCursor), commentLimit: numberOption(options.commentLimit) });
+          printJson(getIssueResponse(cli.context, input)); return;
+        }
+
         const input = getIssueInputSchema.parse(omitUndefined({
           identifier,
           comments: stringOption(options.comments),
@@ -898,6 +907,18 @@ export function createProgram(): Command {
       printIssue(cli.context, claimIssue(cli.context, identifier, input), options);
     }));
 
+  issue.command("read-many").argument("<identifiers...>").option("--fields <list>").option("--max-bytes <number>", "total JSON byte budget", parsePositiveInteger).option("--json")
+    .action((identifiers, _options, command) => withContext(command, { requireActor: false }, (cli) => {
+      const options = optionsWithGlobals(command);
+      printJson(getIssuesResponse(cli.context, getIssuesInputSchema.parse({ identifiers, fields: fieldsOption(options.fields), maxBytes: numberOption(options.maxBytes) })));
+    }));
+  issue.command("read-section").argument("<identifier>").requiredOption("--path <path>", "dot-separated section path, e.g. comments.0.body")
+    .option("--cursor <cursor>").option("--snapshot <snapshot>").option("--limit <number>", "array items", parsePositiveInteger).option("--max-bytes <number>", "JSON byte budget", parsePositiveInteger).option("--json")
+    .action((identifier, _options, command) => withContext(command, { requireActor: false }, (cli) => {
+      const options = optionsWithGlobals(command);
+      const path = String(options.path).split(".").map((part) => /^\d+$/.test(part) ? Number(part) : part);
+      printJson(readIssueSection(cli.context, readIssueSectionInputSchema.parse({ identifier, path, cursor: stringOption(options.cursor), snapshot: stringOption(options.snapshot), limit: numberOption(options.limit), maxBytes: numberOption(options.maxBytes) })));
+    }));
   const repository = program.command("repo").description("manage registered repositories");
   repository.command("add")
     .argument("<name>")
