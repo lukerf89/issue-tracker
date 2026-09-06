@@ -9,10 +9,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   addComment,
   applyMigrations,
+  archiveIssue,
   createActor,
   createIssue,
   createSavedView,
   createTeam,
+  createProject,
+  createLabel,
+  createCycle,
   init,
   moveIssue,
   openDb,
@@ -126,7 +130,7 @@ describe("LinekeeperApp render", () => {
       createIssue(setup.context, { title: "Other urgent", priority: 1 });
       createSavedView(setup.context, { name: "Urgent", filters: { priority: 1 } });
       const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath, defaultTeam: "ENG" }));
-      for (const input of ["v", "Urgent", "\r", "/", "cursor", "\r", "f", "state=Todo", "\r"]) {
+      for (const input of ["v", "Urgent", "\r", "/", "cursor", "\r", ":", "state=Todo", "\r"]) {
         await tick(); view.stdin.write(input);
       }
       await tick();
@@ -168,10 +172,10 @@ describe("LinekeeperApp render", () => {
       expect(stripAnsi(view.lastFrame() ?? "")).toContain("| ENG |");
       // A label whose value happens to spell team=all is an ordinary filter and
       // must not widen the scope to every team.
-      for (const input of ["f", "label=team=all", "\r"]) { await tick(); view.stdin.write(input); }
+      for (const input of [":", "label=team=all", "\r"]) { await tick(); view.stdin.write(input); }
       await tick();
       expect(stripAnsi(view.lastFrame() ?? "")).toContain("| ENG |");
-      for (const input of ["f", "team=all", "\r"]) { await tick(); view.stdin.write(input); }
+      for (const input of [":", "team=all", "\r"]) { await tick(); view.stdin.write(input); }
       await tick();
       expect(stripAnsi(view.lastFrame() ?? "")).toContain("| all teams |");
       view.unmount();
@@ -239,6 +243,128 @@ describe("LinekeeperApp render", () => {
     } finally { setup.close(); }
   });
 
+  it.each([
+    ["Status", "In Progress", "state=In Progress"],
+    ["Assignee", "Unassigned", "unassigned"],
+    ["Assignee", "Me", "@human"],
+    ["Project", "No project", "no-project"],
+    ["Project", "Test Project", "project:Test Project"],
+    ["Label", "Test Label", "label:Test Label"],
+    ["Priority", "Urgent", "priority:Urgent"],
+    ["Cycle", "Test Cycle", "cycle:Test Cycle"],
+    ["Team", "All teams", "all teams"],
+  ])("picks %s / %s and preserves search", async (field, value, expected) => {
+    const setup = initializedContext();
+    try {
+      createProject(setup.context, { name: "Test Project" });
+      createLabel(setup.context, { name: "Test Label" });
+      createCycle(setup.context, { name: "Test Cycle" });
+      createIssue(setup.context, { title: "Cursor work" });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath, defaultTeam: "ENG" }));
+      for (const input of ["/", "cursor", "\r", "f", field, "\r", value, "\r"]) {
+        await tick(); view.stdin.write(input);
+      }
+      await tick();
+      const frame = stripAnsi(view.lastFrame() ?? "");
+      expect(frame).toContain(expected === "@human" ? `@${setup.context.actor!.handle}` : expected);
+      expect(frame).toContain("/cursor");
+      expect(frame).not.toContain("type to search");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
+  it("applies a picked label so matching rows survive and others drop out", async () => {
+    const setup = initializedContext();
+    try {
+      createLabel(setup.context, { name: "Test Label" });
+      createIssue(setup.context, { title: "Labeled task", labels: ["Test Label"] });
+      createIssue(setup.context, { title: "Plain task" });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath, defaultTeam: "ENG" }));
+      for (const input of ["f", "Label", "\r", "Test Label", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      const frame = stripAnsi(view.lastFrame() ?? "");
+      expect(frame).toContain("label:Test Label");
+      expect(frame).toContain("Labeled task");
+      expect(frame).not.toContain("Plain task");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
+  it("scopes the status picker to the active team however the key was spelled", async () => {
+    const setup = initializedContext();
+    try {
+      createTeam(setup.context, { key: "OPS", name: "Operations" });
+      createIssue(setup.context, { title: "Eng task" });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath }));
+      // Core canonicalizes team=eng to ENG, but the filter keeps what was typed.
+      for (const input of [":", "team=eng", "\r", "f", "Status", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      const frame = stripAnsi(view.lastFrame() ?? "");
+      expect(frame).toContain("(ENG)");
+      expect(frame).not.toContain("(OPS)");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
+  it("switches archive scope from the picker", async () => {
+    const setup = initializedContext();
+    try {
+      createIssue(setup.context, { title: "Live task" });
+      const gone = createIssue(setup.context, { title: "Filed task" });
+      archiveIssue(setup.context, gone.identifier);
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath }));
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).not.toContain("Filed task");
+      for (const input of ["f", "Archive scope", "\r", "Include archived", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      const included = stripAnsi(view.lastFrame() ?? "");
+      expect(included).toContain("Filed task");
+      expect(included).toContain("including archived");
+      for (const input of ["f", "Archive scope", "\r", "Non-archived only", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).not.toContain("Filed task");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
+  it("clears a populated filter set from the picker", async () => {
+    const setup = initializedContext();
+    try {
+      createIssue(setup.context, { title: "Urgent task", priority: 1 });
+      createIssue(setup.context, { title: "Low task", priority: 4 });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath }));
+      for (const input of [":", "priority=1", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      const filtered = stripAnsi(view.lastFrame() ?? "");
+      expect(filtered).toContain("priority:Urgent");
+      expect(filtered).not.toContain("Low task");
+      for (const input of ["f", "Clear all filters", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      const cleared = stripAnsi(view.lastFrame() ?? "");
+      expect(cleared).not.toContain("priority:Urgent");
+      expect(cleared).toContain("Low task");
+      expect(cleared).toContain("Urgent task");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
+  it("cancels picker edits and supports arrow selection", async () => {
+    const setup = initializedContext();
+    try {
+      createIssue(setup.context, { title: "Unchanged task" });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath }));
+      for (const input of ["f", "Priority", "\r", "Urgent", "\u001b"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      await tick(100);
+      expect(stripAnsi(view.lastFrame() ?? "")).not.toContain("type to search");
+      expect(stripAnsi(view.lastFrame() ?? "")).not.toContain("priority:Urgent");
+      for (const input of ["f", "Priority", "\r", "\u001b[B", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("priority:No priority");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
   it("renders a highlighted bm25 excerpt line under each search result", async () => {
     const setup = initializedContext();
 
@@ -298,7 +424,7 @@ describe("LinekeeperApp render", () => {
       );
 
       await tick();
-      view.stdin.write("f");
+      view.stdin.write(":");
       await tick(25);
       view.stdin.write("state=Todo assignee=@codex");
       await tick(25);

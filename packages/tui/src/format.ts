@@ -116,7 +116,7 @@ export function buildFilterChips(data: LinekeeperData): FilterChip[] {
   }
 
   if (filters.label !== undefined) {
-    chips.push({ key: "label", label: `label:${filters.label}` });
+    chips.push({ key: "label", label: `label:${data.labels?.find(label => label.id === filters.label)?.name ?? filters.label}` });
   }
 
   if (filters.cycle !== undefined) {
