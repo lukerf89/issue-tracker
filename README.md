@@ -253,3 +253,19 @@ that response invalidate it. It is not a workspace-wide edit counter.
 List/search projection now accepts `stateName`, `stateType`, `assigneeHandle`,
 and `revision`, e.g. `--fields stateName,assigneeHandle,revision`. Unassigned
 handles are explicit null; archived actor references remain readable.
+
+### Finding actionable work
+
+`list_issues` and `search` accept `ready`, `stateType`, `parent` (null means no
+parent), `blockedBy`, `blocks`, `repository`, `updatedSince`, inclusive `dueFrom`
+and `dueTo`, and `sort` (`identifier`, `priority`, `updatedAt`). Saved views retain
+these filters. Corresponding CLI flags use kebab-case; `--not-ready` selects the
+complement of readiness. CLI search also accepts the ordinary list filters.
+
+Ready means non-archived backlog/unstarted work with no non-archived blocker in a
+nonterminal state. Completed, canceled, or archived blockers do not prevent
+readiness. Assignment is separate: add `assignee:null` / `--unassigned` to select
+available work. Repository matching follows the existing resolver: active issue
+associations replace project associations; absent active overrides, project
+associations apply. Priority sorts 1–4 then 0, and updatedAt sorts newest first;
+team/number/ID break ties. Search remains relevance-ranked unless sort is explicit.

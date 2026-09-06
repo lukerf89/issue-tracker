@@ -622,6 +622,17 @@ export function createProgram(): Command {
     );
   issue
     .command("list")
+    .option("--state-type <type>", "workflow category")
+    .option("--ready", "only ready backlog/unstarted work")
+    .option("--not-ready", "only work that is not ready")
+    .option("--parent <issue>", "parent issue identifier or ID")
+    .option("--blocked-by <issue>", "issues blocked by this issue")
+    .option("--blocks <issue>", "issues blocking this issue")
+    .option("--repository <repository>", "effective repository ID/name")
+    .option("--updated-since <timestamp>", "inclusive ISO timestamp")
+    .option("--due-from <date>", "inclusive due date YYYY-MM-DD")
+    .option("--due-to <date>", "inclusive due date YYYY-MM-DD")
+    .option("--sort <field>", "identifier, priority, or updatedAt")
     .option("--view <name>", "saved view name")
     .option("--state <state>", "workflow state")
     .option("--assignee <actor>", "assignee id or handle")
@@ -658,6 +669,26 @@ export function createProgram(): Command {
     );
   issue
     .command("search")
+    .option("--state-type <type>", "workflow category")
+    .option("--ready", "only ready backlog/unstarted work")
+    .option("--not-ready", "only work that is not ready")
+    .option("--parent <issue>", "parent issue identifier or ID")
+    .option("--blocked-by <issue>", "issues blocked by this issue")
+    .option("--blocks <issue>", "issues blocking this issue")
+    .option("--repository <repository>", "effective repository ID/name")
+    .option("--updated-since <timestamp>", "inclusive ISO timestamp")
+    .option("--due-from <date>", "inclusive due date YYYY-MM-DD")
+    .option("--due-to <date>", "inclusive due date YYYY-MM-DD")
+    .option("--sort <field>", "identifier, priority, or updatedAt")
+    .option("--state <state>", "workflow state")
+    .option("--assignee <actor>", "assignee ID/handle")
+    .option("--unassigned", "unassigned only")
+    .option("--project <project>", "project ID/name")
+    .option("--no-project", "no project")
+    .option("--cycle <cycle>", "cycle reference")
+    .option("--label <label>", "label")
+    .option("--priority <number>", "priority", parseInteger)
+    .option("--include-archived", "include archived issues")
     .argument("<query>")
     .option("--team <key>", "team key")
     .option("--limit <number>", "maximum number of issues per page", parseInteger)
@@ -949,6 +980,17 @@ export function createProgram(): Command {
   const view = program.command("view").description("manage saved issue views");
   view
     .command("save")
+    .option("--state-type <type>", "workflow category")
+    .option("--ready", "only ready backlog/unstarted work")
+    .option("--not-ready", "only work that is not ready")
+    .option("--parent <issue>", "parent issue identifier or ID")
+    .option("--blocked-by <issue>", "issues blocked by this issue")
+    .option("--blocks <issue>", "issues blocking this issue")
+    .option("--repository <repository>", "effective repository ID/name")
+    .option("--updated-since <timestamp>", "inclusive ISO timestamp")
+    .option("--due-from <date>", "inclusive due date YYYY-MM-DD")
+    .option("--due-to <date>", "inclusive due date YYYY-MM-DD")
+    .option("--sort <field>", "identifier, priority, or updatedAt")
     .argument("<name>")
     .option("--state <state>", "workflow state")
     .option("--assignee <actor>", "assignee id or handle")
@@ -1354,7 +1396,18 @@ function issueListFilters(options: Record<string, unknown>, defaultTeam?: string
   const project = options.project === false ? null : nullableStringOption(options.project);
   const assignee = options.unassigned === true ? null : nullableStringOption(options.assignee);
 
+  if (options.ready && options.notReady) throw new InvalidArgumentError("choose --ready or --not-ready");
   return listIssueFiltersSchema.parse(omitUndefined({
+    stateType: stringOption(options.stateType),
+    ready: options.notReady ? false : booleanOption(options.ready),
+    parent: nullableStringOption(options.parent),
+    blockedBy: stringOption(options.blockedBy),
+    blocks: stringOption(options.blocks),
+    repository: stringOption(options.repository),
+    updatedSince: stringOption(options.updatedSince),
+    dueFrom: stringOption(options.dueFrom),
+    dueTo: stringOption(options.dueTo),
+    sort: stringOption(options.sort),
     state: stringOption(options.state),
     assignee,
     project,
@@ -1435,9 +1488,8 @@ function issueSearchInput(
   defaultTeam?: string
 ): SearchIssuesInput {
   return searchInputSchema.parse(omitUndefined({
-    query,
-    team: stringOption(options.team) ?? defaultTeam,
-    limit: numberOption(options.limit)
+    ...issueListFilters(options, defaultTeam),
+    query
   }));
 }
 
@@ -1447,9 +1499,8 @@ function issueSearchPageInput(
   defaultTeam?: string
 ) {
   return searchPageInputSchema.parse(omitUndefined({
+    ...issueListFilters(options, defaultTeam),
     query,
-    team: stringOption(options.team) ?? defaultTeam,
-    limit: numberOption(options.limit),
     cursor: stringOption(options.cursor),
     fields: fieldsOption(options.fields)
   }));

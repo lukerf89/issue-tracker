@@ -1,5 +1,6 @@
 import { assertIssueRevision, type IssueWriteOptions } from "./issue-revision.js";
-import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { getRepository } from "./repository.js";
+import { and, asc, desc, gte, lte, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 
 import { inTransaction, type ServiceContext, type ServiceTransaction } from "../context.js";
 import { actors, issueDependencies, issueLabels, issues, labels, projects, teams, workflowStates, type Actor, type Attachment, type Issue } from "../db/schema.js";
@@ -53,6 +54,16 @@ export interface CreateIssueInput {
 }
 
 export interface ListIssueFilters {
+  stateType?: "backlog" | "unstarted" | "started" | "completed" | "canceled";
+  ready?: boolean;
+  parent?: string | null;
+  blockedBy?: string;
+  blocks?: string;
+  repository?: string;
+  updatedSince?: string;
+  dueFrom?: string;
+  dueTo?: string;
+  sort?: "identifier" | "priority" | "updatedAt";
   state?: string;
   assignee?: string | null;
   project?: string | null;
@@ -396,7 +407,7 @@ export function listIssues(context: ServiceContext, filters: ListIssueFilters = 
     .from(issues)
     .innerJoin(teams, eq(teams.id, issues.teamId))
     .where(conditions.length ? and(...conditions) : undefined)
-    .orderBy(asc(teams.key), asc(issues.number), asc(issues.id))
+    .orderBy(...issueOrder(filters))
     .limit(filters.limit ?? -1)
     .all()
     .map(({ issue }) => withIssueDetails(context, issue));
@@ -446,7 +457,7 @@ function needsIssueDetails(fields: IssueProjectionField[] | undefined): boolean 
 function paginateIssueRows(
   context: ServiceContext,
   baseConditions: SQL[],
-  options: IssuePageOptions & { limit?: number }
+  options: IssuePageOptions & { limit?: number; sort?: ListIssueFilters["sort"] }
 ): IssuePage {
   const offset = decodeIssueCursor(options.cursor);
   const pageSize = resolvePageSize(options.limit);
@@ -457,7 +468,7 @@ function paginateIssueRows(
     .from(issues)
     .innerJoin(teams, eq(teams.id, issues.teamId))
     .where(baseConditions.length ? and(...baseConditions) : undefined)
-    .orderBy(asc(teams.key), asc(issues.number), asc(issues.id))
+    .orderBy(...issueOrder(options))
     .limit(pageSize + 1)
     .offset(offset)
     .all();
@@ -486,7 +497,7 @@ export function listIssuesPage(
     return { rows: [], nextCursor: null, fields: options.fields };
   }
 
-  return paginateIssueRows(context, conditions, { ...options, limit: filters.limit });
+  return paginateIssueRows(context, conditions, { ...options, limit: filters.limit, sort: filters.sort });
 }
 
 export function searchIssuesPage(
@@ -524,6 +535,32 @@ function issueFilterConditions(
   filters: ListIssueFilters
 ): SQL[] | null {
   const conditions: SQL[] = [];
+
+  if (filters.dueFrom && filters.dueTo && filters.dueFrom > filters.dueTo) throw new AppError(AppErrorCode.VALIDATION_FAILED, "dueFrom must be on or before dueTo.");
+  if (filters.stateType) conditions.push(sql`${issues.stateId} in (select id from workflow_states where type = ${filters.stateType})`);
+  if (filters.parent !== undefined) conditions.push(filters.parent === null ? isNull(issues.parentId) : eq(issues.parentId, getIssueByIdOrIdentifier(context, filters.parent).id));
+  if (filters.blockedBy) conditions.push(sql`${issues.id} in (select blocked_issue_id from issue_dependencies where blocking_issue_id = ${getIssueByIdOrIdentifier(context, filters.blockedBy).id})`);
+  if (filters.blocks) conditions.push(sql`${issues.id} in (select blocking_issue_id from issue_dependencies where blocked_issue_id = ${getIssueByIdOrIdentifier(context, filters.blocks).id})`);
+  if (filters.updatedSince) conditions.push(gte(issues.updatedAt, new Date(filters.updatedSince).toISOString()));
+  if (filters.dueFrom) conditions.push(gte(issues.dueDate, filters.dueFrom));
+  if (filters.dueTo) conditions.push(lte(issues.dueDate, filters.dueTo));
+  if (filters.ready !== undefined) {
+    const ready = sql`(${issues.archivedAt} is null and ${issues.stateId} in (select id from workflow_states where type in ('backlog', 'unstarted')) and not exists (
+      select 1 from issue_dependencies d join issues blocker on blocker.id = d.blocking_issue_id
+      join workflow_states bs on bs.id = blocker.state_id
+      where d.blocked_issue_id = ${issues.id} and blocker.archived_at is null and bs.type not in ('completed', 'canceled')
+    ))`;
+    conditions.push(filters.ready ? ready : sql`not ${ready}`);
+  }
+  if (filters.repository) {
+    const repo = getRepository(context, filters.repository);
+    if (repo.archivedAt) throw new AppError(AppErrorCode.REPOSITORY_ARCHIVED, "Repository is archived.", { repository: filters.repository });
+    // Match the existing resolver: any active issue override replaces project routing.
+    conditions.push(sql`(exists (select 1 from issue_repositories ir where ir.issue_id = ${issues.id} and ir.repository_id = ${repo.id}) or (
+      not exists (select 1 from issue_repositories ir join repositories r on r.id = ir.repository_id where ir.issue_id = ${issues.id} and r.archived_at is null)
+      and exists (select 1 from project_repositories pr where pr.project_id = ${issues.projectId} and pr.repository_id = ${repo.id})
+    ))`);
+  }
 
   if (!filters.includeArchived) {
     conditions.push(isNull(issues.archivedAt));
@@ -1234,10 +1271,12 @@ function orderedSearchResults(
   return context.db
     .select({ issue: issues })
     .from(issues)
+    .innerJoin(teams, eq(teams.id, issues.teamId))
     .where(and(...conditions))
+    .orderBy(...issueOrder(input))
     .all()
-    .map(({ issue }) => ({ issue, meta: metaByIssueId.get(issue.id)! }))
-    .sort((a, b) => a.meta.order - b.meta.order)
+    .map(({ issue }, index) => ({ issue, meta: metaByIssueId.get(issue.id)!, index }))
+    .sort((a, b) => input.sort ? a.index - b.index : a.meta.order - b.meta.order)
     .map(({ issue, meta }) => ({ issue, snippet: meta.snippet }));
 }
 
@@ -1454,4 +1493,11 @@ function withReadableIssueFields<T extends Issue>(context: ServiceContext, issue
   if (fields.includes("assigneeHandle")) extra.assigneeHandle = issue.assigneeId
     ? context.db.query.actors.findFirst({ where: eq(actors.id, issue.assigneeId) }).sync()?.handle ?? null : null;
   return { ...issue, ...extra };
+}
+
+function issueOrder(filters: Pick<ListIssueFilters, "sort">): SQL[] {
+  const tie = [asc(teams.key), asc(issues.number), asc(issues.id)];
+  if (filters.sort === "priority") return [asc(sql`case when ${issues.priority} = 0 then 5 else ${issues.priority} end`), ...tie];
+  if (filters.sort === "updatedAt") return [desc(issues.updatedAt), ...tie];
+  return tie;
 }
