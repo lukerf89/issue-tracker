@@ -1,3 +1,4 @@
+import { assertIssueRevision, type IssueWriteOptions } from "./issue-revision.js";
 import { asc, eq } from "drizzle-orm";
 
 import { inTransaction, type ServiceContext } from "../context.js";
@@ -8,7 +9,7 @@ import { appendActivityInTransaction } from "./activity.js";
 
 export type AttachmentKind = Attachment["kind"];
 
-export interface AddAttachmentInput {
+export interface AddAttachmentInput extends IssueWriteOptions {
   issue: string;
   kind: AttachmentKind;
   title?: string | null;
@@ -28,6 +29,7 @@ export function addAttachment(context: ServiceContext, input: AddAttachmentInput
   assertRequiredFields(input);
 
   return inTransaction(context, (txContext) => {
+    assertIssueRevision(txContext, input.issue, input.expectedRevision);
     const actor = requireActor(txContext);
     const issue = getIssueByIdOrIdentifier(txContext, input.issue);
     const now = txContext.clock.now().toISOString();

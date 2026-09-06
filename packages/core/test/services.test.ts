@@ -2160,6 +2160,7 @@ describe("core services", () => {
       expect(Object.keys(serialized)).toEqual([
         "id",
         "identifier",
+        "revision",
         "teamId",
         "number",
         "title",

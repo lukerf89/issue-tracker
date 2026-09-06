@@ -10,7 +10,7 @@ export function validateIssueAliases(input: Record<string, unknown>, ctx: z.Refi
 
 export function validateIssueUpdate(input: Record<string, unknown>, ctx: z.RefinementCtx) {
   validateIssueAliases(input, ctx);
-  if (!Object.entries(input).some(([key, value]) => key !== "identifier" && value !== undefined && (!Array.isArray(value) || value.length > 0))) {
+  if (!Object.entries(input).some(([key, value]) => !["identifier", "expectedRevision"].includes(key) && value !== undefined && (!Array.isArray(value) || value.length > 0))) {
     ctx.addIssue({ code: "custom", message: "Supply at least one issue field to update." });
   }
 }

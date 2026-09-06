@@ -12,6 +12,8 @@ import {
   addRepositoryInputSchema,
   addComment,
   addCommentInputSchema,
+  claimIssue,
+  claimIssueInputSchema,
   addAttachment,
   archiveIssue,
   archiveRun,
@@ -721,6 +723,7 @@ export function createProgram(): Command {
     );
   issue
     .command("update")
+    .option("--expected-revision <number>", "fail if issue revision changed", parsePositiveInteger)
     .argument("<identifier>")
     .option("--title <title>", "issue title")
     .option("--desc <description>", "issue description")
@@ -756,21 +759,23 @@ export function createProgram(): Command {
     );
   issue
     .command("move")
+    .option("--expected-revision <number>", "fail if issue revision changed", parsePositiveInteger)
     .argument("<identifier>")
     .argument("<state>")
     .option("--json", "print JSON output")
     .action((identifier, state, _options, command) =>
       withContext(command, {}, (cli) => {
-        const input = moveIssueInputSchema.parse({ identifier, state });
+        const input = moveIssueInputSchema.parse({ identifier, state, expectedRevision: numberOption(optionsWithGlobals(command).expectedRevision) });
         printIssue(
           cli.context,
-          moveIssue(cli.context, input.identifier, input.state),
+          moveIssue(cli.context, input.identifier, input.state, input),
           optionsWithGlobals(command)
         );
       })
     );
   issue
     .command("assign")
+    .option("--expected-revision <number>", "fail if issue revision changed", parsePositiveInteger)
     .argument("<identifier>")
     .argument("[actor]")
     .option("--me", "assign to the default actor")
@@ -782,13 +787,14 @@ export function createProgram(): Command {
         const input = issueAssignInput(identifier, actor, options, cli.context.actor?.id);
         printIssue(
           cli.context,
-          assignIssue(cli.context, input.identifier, input.actor),
+          assignIssue(cli.context, input.identifier, input.actor, input),
           options
         );
       })
     );
   issue
     .command("comment")
+    .option("--expected-revision <number>", "fail if issue revision changed", parsePositiveInteger)
     .argument("<identifier>")
     .argument("<body>")
     .option("--parent <comment>", "parent comment id")
@@ -804,6 +810,7 @@ export function createProgram(): Command {
     );
   issue
     .command("link")
+    .option("--expected-revision <number>", "fail if issue revision changed", parsePositiveInteger)
     .argument("<identifier>")
     .argument("[url]")
     .option("--kind <kind>", "attachment kind: link, branch, pr, or commit", "link")
@@ -825,32 +832,43 @@ export function createProgram(): Command {
     );
   issue
     .command("archive")
+    .option("--expected-revision <number>", "fail if issue revision changed", parsePositiveInteger)
     .argument("<identifier>")
     .option("--json", "print JSON output")
     .action((identifier, _options, command) =>
       withContext(command, {}, (cli) => {
-        const input = archiveIssueInputSchema.parse({ identifier });
+        const input = archiveIssueInputSchema.parse({ identifier, expectedRevision: numberOption(optionsWithGlobals(command).expectedRevision) });
         printIssue(
           cli.context,
-          archiveIssue(cli.context, input.identifier),
+          archiveIssue(cli.context, input.identifier, input),
           optionsWithGlobals(command)
         );
       })
     );
   issue
     .command("unarchive")
+    .option("--expected-revision <number>", "fail if issue revision changed", parsePositiveInteger)
     .argument("<identifier>")
     .option("--json", "print JSON output")
     .action((identifier, _options, command) =>
       withContext(command, {}, (cli) => {
-        const input = unarchiveIssueInputSchema.parse({ identifier });
+        const input = unarchiveIssueInputSchema.parse({ identifier, expectedRevision: numberOption(optionsWithGlobals(command).expectedRevision) });
         printIssue(
           cli.context,
-          unarchiveIssue(cli.context, input.identifier),
+          unarchiveIssue(cli.context, input.identifier, input),
           optionsWithGlobals(command)
         );
       })
     );
+
+  issue.command("claim").argument("<identifier>")
+    .option("--expected-revision <number>", "fail if issue revision changed", parsePositiveInteger)
+    .option("--json", "print JSON output")
+    .action((identifier, _options, command) => withContext(command, {}, (cli) => {
+      const options = optionsWithGlobals(command);
+      const input = claimIssueInputSchema.parse({ identifier, expectedRevision: numberOption(options.expectedRevision) });
+      printIssue(cli.context, claimIssue(cli.context, identifier, input), options);
+    }));
 
   const repository = program.command("repo").description("manage registered repositories");
   repository.command("add")
@@ -1462,6 +1480,7 @@ function issueUpdateInput(options: Record<string, unknown>): UpdateIssueInput {
   const dueDate = options.dueDate === false ? null : nullableStringOption(options.dueDate);
 
   return updateIssueInputSchema.parse(omitUndefined({
+    expectedRevision: numberOption(options.expectedRevision),
     title: stringOption(options.title),
     description: stringOption(options.description) ?? stringOption(options.desc),
     priority: numberOption(options.priority),
@@ -1496,6 +1515,7 @@ function issueAssignInput(
   }
 
   return assignIssueInputSchema.parse({
+    expectedRevision: numberOption(options.expectedRevision),
     identifier,
     actor: clearAssignee ? null : useDefaultActor ? defaultActorId : actorArgument
   });
@@ -1507,6 +1527,7 @@ function issueCommentInput(
   options: Record<string, unknown>
 ): AddCommentInput {
   return addCommentInputSchema.parse(omitUndefined({
+    expectedRevision: numberOption(options.expectedRevision),
     issue: identifier,
     body,
     parent: nullableStringOption(options.parent)
@@ -1519,6 +1540,7 @@ function issueLinkInput(
   options: Record<string, unknown>
 ): AddAttachmentInput {
   return linkIssueInputSchema.parse(omitUndefined({
+    expectedRevision: numberOption(options.expectedRevision),
     issue: identifier,
     kind: stringOption(options.kind) ?? "link",
     title: nullableStringOption(options.title),
