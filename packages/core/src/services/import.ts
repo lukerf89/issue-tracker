@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { inTransaction, type ServiceContext, type ServiceTransaction } from "../context.js";
@@ -162,6 +163,7 @@ const cycleSnapshotSchema = z.strictObject({
 });
 
 const issueSnapshotSchema = z.strictObject({
+  revision: z.number().int().positive().optional().default(1),
   id: z.string(),
   identifier: z.string(),
   teamId: z.string(),
@@ -375,6 +377,8 @@ export function importSnapshot(
     if (parsed.runActions.length > 0) txContext.db.insert(runActions).values(parsed.runActions as Array<typeof runActions.$inferInsert>).run();
     if (parsed.supervisorInstances.length > 0) txContext.db.insert(supervisorInstances).values(parsed.supervisorInstances as Array<typeof supervisorInstances.$inferInsert>).run();
 
+    // Restore snapshot revisions after relation triggers run during import.
+    for (const issue of parsed.issues) txContext.db.update(issues).set({ revision: issue.revision }).where(eq(issues.id, issue.id)).run();
     return summarizeSnapshot(parsed);
   });
 }

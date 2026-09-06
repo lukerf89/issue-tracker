@@ -1,4 +1,6 @@
 import {
+  claimIssue,
+  claimIssueInputSchema,
   addAttachment,
   addComment,
   addCommentInputSchema,
@@ -39,6 +41,8 @@ export function registerIssueTools(
   server: McpServer,
   options: Omit<OpenMcpContextOptions, "requireActor">
 ): void {
+  server.registerTool("claim_issue", { title: "Claim issue", description: "Atomically claim active unassigned backlog/unstarted work for the current actor. Claims have no lease; release through assign_issue with actor:null. Conflicts require a fresh read.", inputSchema: claimIssueInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: true }, ({ context }) => jsonResult(serializeIssue(claimIssue(context, input.identifier, input))))));
+
   server.registerTool(
     "list_issues",
     {
@@ -164,7 +168,7 @@ export function registerIssueTools(
     (input) => mcpToolResult(() => {
       const parsed = moveIssueInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeIssue(moveIssue(context, parsed.identifier, parsed.state)))
+        jsonResult(serializeIssue(moveIssue(context, parsed.identifier, parsed.state, parsed)))
       );
     })
   );
@@ -179,7 +183,7 @@ export function registerIssueTools(
     (input) => mcpToolResult(() => {
       const parsed = assignIssueInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeIssue(assignIssue(context, parsed.identifier, parsed.actor)))
+        jsonResult(serializeIssue(assignIssue(context, parsed.identifier, parsed.actor, parsed)))
       );
     })
   );
@@ -194,7 +198,7 @@ export function registerIssueTools(
     (input) => mcpToolResult(() => {
       const parsed = archiveIssueInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeIssue(archiveIssue(context, parsed.identifier)))
+        jsonResult(serializeIssue(archiveIssue(context, parsed.identifier, parsed)))
       );
     })
   );
@@ -209,7 +213,7 @@ export function registerIssueTools(
     (input) => mcpToolResult(() => {
       const parsed = unarchiveIssueInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeIssue(unarchiveIssue(context, parsed.identifier)))
+        jsonResult(serializeIssue(unarchiveIssue(context, parsed.identifier, parsed)))
       );
     })
   );
