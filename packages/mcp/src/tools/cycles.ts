@@ -19,7 +19,7 @@ export function registerCycleTools(
     {
       title: "Create cycle",
       description: "Create a cycle.",
-      inputSchema: createCycleInputSchema.shape
+      inputSchema: createCycleInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = createCycleInputSchema.parse(input);
@@ -34,7 +34,7 @@ export function registerCycleTools(
     {
       title: "List cycles",
       description: "List cycles.",
-      inputSchema: listCyclesInputSchema.shape
+      inputSchema: listCyclesInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = listCyclesInputSchema.parse(input);

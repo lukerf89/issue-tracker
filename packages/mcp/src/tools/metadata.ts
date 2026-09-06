@@ -19,7 +19,7 @@ export function registerMetadataTools(
     {
       title: "Describe tracker metadata",
       description: "Discover teams, workflow states, priorities, labels, projects, and the current actor.",
-      inputSchema: describeTrackerInputSchema.shape
+      inputSchema: describeTrackerInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       describeTrackerInputSchema.parse(input);
@@ -34,7 +34,7 @@ export function registerMetadataTools(
     {
       title: "List workflow states",
       description: "List ordered workflow states for a team id or key.",
-      inputSchema: listStatesInputSchema.shape
+      inputSchema: listStatesInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = listStatesInputSchema.parse(input);
