@@ -12,6 +12,7 @@ import {
   createActor,
   createIssue,
   createSavedView,
+  createTeam,
   init,
   moveIssue,
   openDb,
@@ -197,6 +198,28 @@ describe("LinekeeperApp render", () => {
     } finally { setup.close(); }
   });
 
+  it("keeps the selection when a new row pushes it past the loaded depth", async () => {
+    const setup = initializedContext();
+    try {
+      createTeam(setup.context, { key: "OPS", name: "Operations" });
+      for (let i = 0; i < 99; i++) createIssue(setup.context, { title: `Eng task ${i}` });
+      createIssue(setup.context, { title: "Ops task 0", team: "OPS" });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath }));
+      await tick();
+      // Lists sort by team key, so the single OPS row is last — at index 99 of
+      // the 100 loaded.
+      view.stdin.write("G"); await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("100 loaded");
+      // A new ENG issue sorts ahead of it, shifting it to index 100: one past
+      // the depth that was loaded, but still in the query.
+      for (const input of ["n", "Eng newcomer", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      view.stdin.write("\r"); await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("OPS-1  Ops task 0");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
   it("re-pages only to the depth already loaded when a refresh drops the selected issue", async () => {
     const setup = initializedContext();
     try {
@@ -207,11 +230,11 @@ describe("LinekeeperApp render", () => {
       await tick();
       expect(stripAnsi(view.lastFrame() ?? "")).toContain("100 loaded · more available");
       // Moving the selection out of the view refreshes from page one. The row is
-      // gone for good, so the reload must stop at the depth already on screen
-      // instead of walking every remaining page hunting for it.
+      // gone for good, so the reload stops one page past the depth already on
+      // screen instead of walking every remaining page hunting for it.
       for (const input of ["m", "Done", "\r"]) { await tick(); view.stdin.write(input); }
       await tick();
-      expect(stripAnsi(view.lastFrame() ?? "")).toContain("100 loaded · more available");
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("200 loaded · more available");
       view.unmount();
     } finally { setup.close(); }
   });

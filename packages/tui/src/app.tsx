@@ -104,6 +104,12 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
     while (nextData.issues.length < depth && nextData.nextCursor) {
       nextData = loadMoreLinekeeperData(context, nextData);
     }
+    // The mutation may also have inserted rows ahead of the selection, pushing
+    // it just past the old depth. Look one page further, and only that far.
+    if (depth && selectedIssue && nextData.nextCursor &&
+      !nextData.issues.some(issue => issue.id === selectedIssue.id)) {
+      nextData = loadMoreLinekeeperData(context, nextData);
+    }
     setData(nextData);
     const index = nextData.issues.findIndex(issue => issue.id === selectedIssue?.id);
     dispatchBase({ type: "selectIndex", index: Math.max(0, index) });
