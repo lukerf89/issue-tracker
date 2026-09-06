@@ -38,3 +38,15 @@ it("returns bounded accurate mutation receipts and preserves full reads", async 
     expect(cliCreated).not.toHaveProperty("description");
   } finally { await f.close(); }
 });
+
+it("preserves UUID references accepted by assignment and archival", async () => {
+  const f = await agentFixture();
+  try {
+    const issue = createIssue(f.context, { title: "CI" });
+    for (const [name, args] of [["assign_issue", { actor: null }], ["archive_issue", {}], ["unarchive_issue", {}]] as const) {
+      const result = await f.call(name, { identifier: issue.id, ...args, response: "compact" });
+      expect(result.error).toBe(false);
+      expect(result.data.identifier).toBe(issue.identifier);
+    }
+  } finally { await f.close(); }
+});
