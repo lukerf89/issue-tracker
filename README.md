@@ -238,3 +238,18 @@ field names, never their potentially large contents; use an explicit issue read
 for values. Scalar no-ops and idempotent create replays return `changed: false`.
 Before/after comparison and mutation run in one transaction. Full responses
 retain descriptions, relations, and the normal comment paging behavior.
+
+### Scoped discovery
+
+Use `describe({team:"ENG", sections:["teams","priorities"], compact:true})`
+(or `tracker describe --team ENG --sections teams,priorities --compact --json`).
+Omitted sections default to the legacy complete metadata response. `compact`
+returns project ID/name/status only; project descriptions remain available in
+full mode. Team scope applies to teams/states; labels and projects are global
+in this data model. `metadataRevision` is SHA-256 of the selected response
+content: cache by the normalized request and revision; only changes visible in
+that response invalidate it. It is not a workspace-wide edit counter.
+
+List/search projection now accepts `stateName`, `stateType`, `assigneeHandle`,
+and `revision`, e.g. `--fields stateName,assigneeHandle,revision`. Unassigned
+handles are explicit null; archived actor references remain readable.

@@ -155,6 +155,7 @@ const ISSUE_SUMMARY_KEYS = [
 // Canonical ordering for projected extras so JSON output is byte-stable
 // (base summary keys first, then any requested extras in this fixed order).
 const ISSUE_PROJECTION_KEY_ORDER = [
+  "stateName", "stateType", "assigneeHandle", "revision",
   "id",
   "teamId",
   "number",
@@ -184,6 +185,9 @@ export function serializeIssueSummary(
   snippet?: string
 ) {
   const full = serializeIssue(issue) as Record<string, unknown>;
+  for (const key of ["stateName", "stateType", "assigneeHandle"]) {
+    if (key in issue) full[key] = (issue as unknown as Record<string, unknown>)[key];
+  }
   const summary: Record<string, unknown> = {};
 
   for (const key of ISSUE_SUMMARY_KEYS) {
