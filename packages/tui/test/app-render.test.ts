@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   addComment,
   applyMigrations,
+  archiveIssue,
   createActor,
   createIssue,
   createSavedView,
@@ -285,6 +286,64 @@ describe("LinekeeperApp render", () => {
       expect(frame).toContain("label:Test Label");
       expect(frame).toContain("Labeled task");
       expect(frame).not.toContain("Plain task");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
+  it("scopes the status picker to the active team however the key was spelled", async () => {
+    const setup = initializedContext();
+    try {
+      createTeam(setup.context, { key: "OPS", name: "Operations" });
+      createIssue(setup.context, { title: "Eng task" });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath }));
+      // Core canonicalizes team=eng to ENG, but the filter keeps what was typed.
+      for (const input of [":", "team=eng", "\r", "f", "Status", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      const frame = stripAnsi(view.lastFrame() ?? "");
+      expect(frame).toContain("(ENG)");
+      expect(frame).not.toContain("(OPS)");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
+  it("switches archive scope from the picker", async () => {
+    const setup = initializedContext();
+    try {
+      createIssue(setup.context, { title: "Live task" });
+      const gone = createIssue(setup.context, { title: "Filed task" });
+      archiveIssue(setup.context, gone.identifier);
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath }));
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).not.toContain("Filed task");
+      for (const input of ["f", "Archive scope", "\r", "Include archived", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      const included = stripAnsi(view.lastFrame() ?? "");
+      expect(included).toContain("Filed task");
+      expect(included).toContain("including archived");
+      for (const input of ["f", "Archive scope", "\r", "Non-archived only", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).not.toContain("Filed task");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
+  it("clears a populated filter set from the picker", async () => {
+    const setup = initializedContext();
+    try {
+      createIssue(setup.context, { title: "Urgent task", priority: 1 });
+      createIssue(setup.context, { title: "Low task", priority: 4 });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath }));
+      for (const input of [":", "priority=1", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      const filtered = stripAnsi(view.lastFrame() ?? "");
+      expect(filtered).toContain("priority:Urgent");
+      expect(filtered).not.toContain("Low task");
+      for (const input of ["f", "Clear all filters", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      const cleared = stripAnsi(view.lastFrame() ?? "");
+      expect(cleared).not.toContain("priority:Urgent");
+      expect(cleared).toContain("Low task");
+      expect(cleared).toContain("Urgent task");
       view.unmount();
     } finally { setup.close(); }
   });

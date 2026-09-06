@@ -1,4 +1,4 @@
-import type { ListIssueFilters, ServiceContext } from "@issue-tracker/core";
+import { getTeamByKey, type ListIssueFilters, type ServiceContext, type Team } from "@issue-tracker/core";
 import type { LinekeeperData } from "./data.js";
 import { priorityLabel } from "./format.js";
 
@@ -18,7 +18,7 @@ export const filterFields: PickerOption[] = [
 
 export function filterValues(field: keyof ListIssueFilters, data: LinekeeperData, context: ServiceContext): PickerOption[] {
   const remove: PickerOption = { id: "remove", label: field === "team" ? "All teams" : "Remove this filter" };
-  const team = data.teams.find(t => t.key === data.filters.team || t.id === data.filters.team);
+  const team = activeTeam(data, context);
   switch (field) {
     case "state": return [remove, ...data.states.filter(s => !team || s.teamId === team.id).map(s => ({ id: s.id, value: s.id, label: `${s.name} (${data.teams.find(t => t.id === s.teamId)?.key ?? ""})` }))];
     case "assignee": return [remove, ...(context.actor?.type === "human" ? [{ id: "me", value: context.actor.id, label: "Me" }] : []), { id: "unassigned", value: null, label: "Unassigned" }, ...data.actors.map(a => ({ id: a.id, value: a.id, label: `${a.name} (@${a.handle})` }))];
@@ -37,4 +37,16 @@ export function filterValues(field: keyof ListIssueFilters, data: LinekeeperData
 export function searchPickerOptions(options: PickerOption[], query: string): PickerOption[] {
   const needle = query.trim().toLocaleLowerCase();
   return options.filter(option => `${option.label} ${option.description ?? ""}`.toLocaleLowerCase().includes(needle));
+}
+
+// The team filter holds whatever the user or a saved view supplied — an id, or
+// a key in any case. Core canonicalizes keys (team=eng resolves to ENG), so ask
+// core rather than comparing the raw value against team.key: a mismatch would
+// silently offer every team's states under a single-team scope.
+function activeTeam(data: LinekeeperData, context: ServiceContext): Team | null {
+  const ref = data.filters.team;
+  if (!ref) return null;
+  const byId = data.teams.find(team => team.id === ref);
+  if (byId) return byId;
+  try { return getTeamByKey(context, ref); } catch { return null; }
 }
