@@ -1,3 +1,5 @@
+import { eq, or } from "drizzle-orm";
+import { issues } from "../db/schema.js";
 import { z } from "zod";
 import { inTransaction, type ServiceContext } from "../context.js";
 import { serializeIssue } from "../serialize.js";
@@ -17,7 +19,8 @@ export type IssueWithReceipt = IssueWithDetails & { alreadyExisted?: boolean; mu
 /** Capture before/after under the same write transaction, including idempotent creates. */
 export function withIssueMutationReceipt<T extends IssueWithReceipt>(context: ServiceContext, identifier: string | null, work: (context: ServiceContext) => T): T {
   return inTransaction(context, (tx) => {
-    const before = identifier === null ? null : serializeIssue(getIssue(tx, identifier));
+    const row = identifier === null ? null : tx.db.query.issues.findFirst({ where: or(eq(issues.id, identifier), eq(issues.identifier, identifier)) }).sync();
+    const before = identifier === null ? null : serializeIssue(getIssue(tx, row?.identifier ?? identifier));
     const result = work(tx);
     const after = serializeIssue(result);
     const ignored = new Set(["updatedAt", "revision"]);
