@@ -407,6 +407,31 @@ describe("LinekeeperApp render", () => {
     } finally { setup.close(); }
   });
 
+  it("keeps an explicitly chosen All issues across a restart", async () => {
+    const setup = initializedContext();
+    try {
+      createTeam(setup.context, { key: "OPS", name: "Operations" });
+      createIssue(setup.context, { title: "Eng task" });
+      createIssue(setup.context, { title: "Ops task", team: "OPS" });
+      const props = { context: setup.context, dbPath: setup.dbPath, defaultTeam: "ENG" };
+      const view = render(createElement(LinekeeperApp, props));
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).not.toContain("Ops task");
+      for (const input of ["v", "All issues", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("Ops task");
+      view.unmount();
+      // Choosing All issues is a real selection: reopening must not silently
+      // narrow back to the default team.
+      const restored = render(createElement(LinekeeperApp, props));
+      await tick();
+      const frame = stripAnsi(restored.lastFrame() ?? "");
+      expect(frame).toContain("| all teams |");
+      expect(frame).toContain("Ops task");
+      restored.unmount();
+    } finally { setup.close(); }
+  });
+
   it("selects a saved view named save independently of the save action", async () => {
     const setup = initializedContext();
     try {

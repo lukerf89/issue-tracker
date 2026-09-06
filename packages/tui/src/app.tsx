@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { Fragment, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 
-import { builtinIssueViews, createSavedView, createSavedViewInputSchema, createNodeEngineCatalogRuntime, createNodeRepositoryInspector, loadEngineCatalog, previewRun, requestRunStop, resolveEngineCatalogPath, resolveRunPermission, respondToRunInput, startRun, parseIssueFilterText, tokenizeSearchQuery, type IssueWithDetails, type ListIssueFilters, type ServiceContext } from "@issue-tracker/core";
+import { builtinIssueViews, createSavedView, createSavedViewInputSchema, setLastSelectedView, createNodeEngineCatalogRuntime, createNodeRepositoryInspector, loadEngineCatalog, previewRun, requestRunStop, resolveEngineCatalogPath, resolveRunPermission, respondToRunInput, startRun, parseIssueFilterText, tokenizeSearchQuery, type IssueWithDetails, type ListIssueFilters, type ServiceContext } from "@issue-tracker/core";
 
 import {
   commandFromMode,
@@ -13,7 +13,6 @@ import {
   effectiveLoadOptions,
   loadLinekeeperData,
   loadMoreLinekeeperData,
-  rememberLinekeeperView,
   restoreLinekeeperData,
   removeFilterKey,
   type LinekeeperCommand,
@@ -167,7 +166,7 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
           try {
             const name = option.id ? option.id.slice(5) : null;
             reloadAndCommit(name ? { view: name } : {});
-            rememberLinekeeperView(context, name);
+            setLastSelectedView(context, name);
             setPicker(null);
             dispatchBase({ type: "setStatus", message: `Loaded ${option.label}; search and overrides reset.` });
           } catch (error) { dispatchBase({ type: "setStatus", message: error instanceof Error ? error.message : String(error) }); }
@@ -303,7 +302,7 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
         const filters = { ...data.filters };
         createSavedView(context, createSavedViewInputSchema.parse({ name: command.input, filters }));
         reloadAndCommit({ view: command.input });
-        rememberLinekeeperView(context, command.input);
+        setLastSelectedView(context, command.input);
         dispatchBase({ type: "setStatus", message: `Saved view ${command.input}.` });
       } else if (command.kind === "search") {
         const nextOptions = { ...effectiveLoadOptions(data), search: command.input || null };

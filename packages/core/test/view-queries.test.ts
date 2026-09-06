@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { applyMigrations, archiveIssue, createActor, createIssue, createSavedView, init, listIssuesPageWithView, listIssuesWithView, moveIssue, openDb, resolveSavedView, updateIssue, type ServiceContext } from "../src/index.js";
+import { applyMigrations, archiveIssue, createActor, createIssue, createSavedView, getLastSelectedView, init, listIssuesPageWithView, listIssuesWithView, moveIssue, openDb, resolveSavedView, setLastSelectedView, updateIssue, type ServiceContext } from "../src/index.js";
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "view-queries-"));
@@ -65,6 +65,26 @@ describe("built-in and saved query semantics", () => {
       expect(listIssuesPageWithView(context, { view: "Cursor queue", filters: { limit: 1 }, cursor: page.nextCursor! }).rows.map(row => row.issue.id)).toEqual([first.id]);
       expect(() => createSavedView(context, { name: "Bad", filters: { unsupported: true } as never })).toThrow();
       expect(() => createSavedView(context, { name: "builtin:recent", filters: {} })).toThrow("reserved");
+    } finally { close(); }
+  });
+
+  it("remembers a selected view, an explicit no-view, and nothing at all", () => {
+    const { context, close } = fixture();
+    try {
+      // Never selected: absent, not "no view" — a frontend still applies its
+      // own default scope.
+      expect(getLastSelectedView(context)).toBeUndefined();
+      createSavedView(context, { name: "Cursor queue", filters: { priority: 1 } });
+      setLastSelectedView(context, "Cursor queue");
+      expect(getLastSelectedView(context)).toBe("Cursor queue");
+      setLastSelectedView(context, "builtin:recent");
+      expect(getLastSelectedView(context)).toBe("builtin:recent");
+      // Choosing "all issues" is a selection and must be distinguishable from
+      // never having chosen.
+      setLastSelectedView(context, null);
+      expect(getLastSelectedView(context)).toBeNull();
+      expect(() => setLastSelectedView(context, "Nonexistent")).toThrow("was not found");
+      expect(getLastSelectedView(context)).toBeNull();
     } finally { close(); }
   });
 });

@@ -11,6 +11,7 @@ import {
   createLabel,
   createSavedView,
   deleteSavedView,
+  setLastSelectedView,
   createTeam,
   init,
   listActivitySince,
@@ -26,7 +27,6 @@ import {
   executeLinekeeperCommand,
   loadLinekeeperData,
   loadMoreLinekeeperData,
-  rememberLinekeeperView,
   restoreLinekeeperData,
   parseFilterInput,
   removeFilterKey
@@ -111,7 +111,7 @@ describe("Linekeeper core-facing handlers", () => {
     try {
       createIssue(first.context, { title: "Cursor work" });
       createSavedView(first.context, { name: "My query", filters: { query: "cursor", sort: "updatedAt", priority: 0 } });
-      rememberLinekeeperView(first.context, "My query");
+      setLastSelectedView(first.context, "My query");
       const restored = restoreLinekeeperData(first.context);
       expect(restored.data.search).toBe("cursor");
       expect(restored.data.filters.sort).toBe("updatedAt");

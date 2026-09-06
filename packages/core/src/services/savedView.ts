@@ -3,7 +3,7 @@ import { asc, eq } from "drizzle-orm";
 import { inTransaction, type ServiceContext } from "../context.js";
 import { savedViews, type SavedView } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
-import { whoami } from "./config.js";
+import { getConfig, setConfig, whoami } from "./config.js";
 import { uuid } from "../ids.js";
 import { listIssueFiltersSchema } from "../schemas/issue.js";
 import { listIssues, listIssuesPage, type IssuePage, type IssuePageOptions, type IssueWithDetails, type ListIssueFilters } from "./issue.js";
@@ -207,3 +207,29 @@ export const builtinIssueViews: ReadonlyArray<{ name: string; title: string; des
   { name: "builtin:all-open", title: "All open", description: "All assignees; backlog, unstarted, started, blocked; non-archived; all teams", filters: { stateTypes: openStateTypes } },
   { name: "builtin:recent", title: "Recently updated", description: "All non-archived issues; newest update first; all teams; no time cutoff", filters: { sort: "updatedAt" } }
 ];
+
+// Which view a frontend last selected, so a restart can restore it. The key and
+// the validate-on-write rule live here, not in an adapter, so every frontend
+// stores and restores the selection identically.
+const lastSelectedViewKey = "ui.last_selected_view";
+
+/**
+ * Remember the selected view by name, or null for an explicit "no view at all".
+ * Throws if the name resolves to neither a saved nor a built-in view.
+ */
+export function setLastSelectedView(context: ServiceContext, name: string | null): void {
+  if (name !== null) resolveSavedView(context, name);
+  setConfig(context, lastSelectedViewKey, name ?? "");
+}
+
+/**
+ * The remembered selection: a view name, null when "no view" was chosen
+ * deliberately, or undefined when nothing has ever been selected. The last two
+ * differ — an explicit "no view" must survive a restart rather than falling
+ * back to a frontend's default scope.
+ */
+export function getLastSelectedView(context: ServiceContext): string | null | undefined {
+  const stored = getConfig(context, lastSelectedViewKey);
+  if (stored === null) return undefined;
+  return stored === "" ? null : stored;
+}

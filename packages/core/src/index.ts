@@ -152,6 +152,8 @@ export {
   listSavedViews,
   resolveIssueListFilters,
   builtinIssueViews,
+  getLastSelectedView,
+  setLastSelectedView,
   resolveSavedView,
   type CreateSavedViewInput,
   type DeleteSavedViewInput,

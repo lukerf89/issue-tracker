@@ -13,8 +13,7 @@ import {
   resolveIssueListFilters,
   resolveSavedView,
   getSupervisorHealth,
-  getConfig,
-  setConfig,
+  getLastSelectedView,
   listProfiles,
   listRepositories,
   listRuns,
@@ -171,18 +170,16 @@ export function loadLinekeeperData(
 }
 
 
-const lastViewKey = "tui.last_view";
-
-export function rememberLinekeeperView(context: ServiceContext, view: string | null): void {
-  if (view) resolveSavedView(context, view);
-  setConfig(context, lastViewKey, view ?? "");
-}
-
+// Core owns which view was last selected and how it is stored; this only turns
+// that selection into the options the list is loaded with. undefined means
+// nothing was ever selected, so the frontend's default team scope applies;
+// null means "All issues" was chosen deliberately and must survive a restart.
 export function restoreLinekeeperData(context: ServiceContext, defaultTeam?: string): {
   data: LinekeeperData; options: LinekeeperLoadOptions; message: string | null;
 } {
-  const view = getConfig(context, lastViewKey);
-  const options: LinekeeperLoadOptions = view ? { view } : { team: defaultTeam };
+  const view = getLastSelectedView(context);
+  const options: LinekeeperLoadOptions =
+    view === undefined ? { team: defaultTeam } : view === null ? {} : { view };
   try { return { data: loadLinekeeperData(context, options), options, message: view ? `Restored view ${view}.` : null }; }
   catch (error) {
     if (!view) throw error;
