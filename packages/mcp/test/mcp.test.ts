@@ -978,7 +978,7 @@ describe("MCP server", () => {
       ) as { issues: Array<{ identifier: string }>; nextCursor: string | null };
 
       expect(first.issues).toHaveLength(50);
-      expect(first.nextCursor).toBe("50");
+      expect(first.nextCursor).toMatch(/^it1\./);
       expect(second.issues.map((issue) => issue.identifier)).toEqual(["ENG-51"]);
       expect(second.nextCursor).toBeNull();
       expect([...first.issues, ...second.issues].map((issue) => issue.identifier)).toEqual(

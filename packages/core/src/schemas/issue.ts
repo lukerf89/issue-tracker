@@ -14,6 +14,7 @@ import { ISSUE_PROJECTABLE_FIELDS } from "../services/issue.js";
 import {
   dateOnlyStringSchema,
   cursorSchema,
+  issueCursorSchema,
   optionalNullableDateOnlyStringSchema,
   nonEmptyStringSchema,
   optionalIntegerSchema,
@@ -88,7 +89,7 @@ export const searchInputSchema = listIssueFiltersSchema.safeExtend({
 export const issueProjectionFieldSchema = z.enum(ISSUE_PROJECTABLE_FIELDS);
 
 export const issuePageOptionsSchema = listIssueFiltersSchema.safeExtend({
-  cursor: cursorSchema.optional(),
+  cursor: issueCursorSchema.optional(),
   fields: z.array(issueProjectionFieldSchema).optional()
 });
 

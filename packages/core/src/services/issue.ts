@@ -1,3 +1,4 @@
+import { assertCursorSnapshot, decodePageCursor, encodePageCursor, fingerprint, queryFingerprint } from "./issue-cursor.js";
 import { assertIssueRevision, type IssueWriteOptions } from "./issue-revision.js";
 import { getRepository } from "./repository.js";
 import { and, asc, desc, gte, lte, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
@@ -457,65 +458,82 @@ function needsIssueDetails(fields: IssueProjectionField[] | undefined): boolean 
 function paginateIssueRows(
   context: ServiceContext,
   baseConditions: SQL[],
-  options: IssuePageOptions & { limit?: number; sort?: ListIssueFilters["sort"] }
+  options: IssuePageOptions & { limit?: number; sort?: ListIssueFilters["sort"]; filters: ListIssueFilters }
 ): IssuePage {
-  const offset = decodeIssueCursor(options.cursor);
+  const teamKeys = context.db.select({ id: teams.id, key: teams.key }).from(teams).orderBy(asc(teams.id)).all();
+  const query = queryFingerprint({ ...options.filters, teamKeys });
+  const { legacyOffset, cursor } = decodePageCursor(options.cursor, "list", query);
+  const snapshot = options.sort && options.sort !== "identifier"
+    ? fingerprint(context.db.select({ id: issues.id, revision: issues.revision }).from(issues).where(and(...baseConditions)).orderBy(asc(issues.id)).all()) : null;
+  assertCursorSnapshot(cursor, snapshot);
+  const conditions = [...baseConditions];
+  if (cursor?.key) {
+    const [team, number, id] = cursor.key;
+    const tie = sql`(${teams.key}, ${issues.number}, ${issues.id}) > (${team}, ${number}, ${id})`;
+    if (options.sort === "priority") {
+      const priority = sql`case when ${issues.priority} = 0 then 5 else ${issues.priority} end`;
+      conditions.push(sql`(${priority} > ${cursor.value} or (${priority} = ${cursor.value} and ${tie}))`);
+    } else if (options.sort === "updatedAt") conditions.push(sql`(${issues.updatedAt} < ${cursor.value} or (${issues.updatedAt} = ${cursor.value} and ${tie}))`);
+    else conditions.push(tie);
+  }
   const pageSize = resolvePageSize(options.limit);
   const detailed = needsIssueDetails(options.fields);
 
   const rows = context.db
-    .select({ issue: issues })
+    .select({ issue: issues, teamKey: teams.key })
     .from(issues)
     .innerJoin(teams, eq(teams.id, issues.teamId))
-    .where(baseConditions.length ? and(...baseConditions) : undefined)
+    .where(conditions.length ? and(...conditions) : undefined)
     .orderBy(...issueOrder(options))
     .limit(pageSize + 1)
-    .offset(offset)
+    .offset(legacyOffset)
     .all();
 
   const hasMore = rows.length > pageSize;
   const pageRows = hasMore ? rows.slice(0, pageSize) : rows;
 
+  const last = pageRows.at(-1);
   return {
     rows: pageRows.map(({ issue }) => ({
       issue: withReadableIssueFields(context, detailed ? withIssueDetails(context, issue) : issue, options.fields),
       fields: options.fields
     })),
-    nextCursor: hasMore ? String(offset + pageSize) : null,
+    nextCursor: hasMore && last ? encodePageCursor({ version: 1, kind: "list", query,
+      key: [last.teamKey, last.issue.number, last.issue.id], offset: 0, snapshot,
+      value: options.sort === "priority" ? (last.issue.priority || 5) : options.sort === "updatedAt" ? last.issue.updatedAt : null
+    }) : null,
     fields: options.fields
   };
 }
 
-export function listIssuesPage(
+function listIssuesPageSnapshot(
   context: ServiceContext,
   filters: ListIssueFilters = {},
   options: IssuePageOptions = {}
 ): IssuePage {
   const conditions = issueFilterConditions(context, filters);
 
-  if (conditions === null) {
-    return { rows: [], nextCursor: null, fields: options.fields };
-  }
-
-  return paginateIssueRows(context, conditions, { ...options, limit: filters.limit, sort: filters.sort });
+  return paginateIssueRows(context, conditions ?? [sql`0`], { ...options, limit: filters.limit, sort: filters.sort, filters });
 }
 
-export function searchIssuesPage(
+function searchIssuesPageSnapshot(
   context: ServiceContext,
   input: SearchIssuesInput,
   options: IssuePageOptions = {}
 ): IssuePage {
   const results = orderedSearchResults(context, input);
 
-  if (results === null) {
-    return { rows: [], nextCursor: null, fields: options.fields };
-  }
+  const matches = results ?? [];
 
-  const offset = decodeIssueCursor(options.cursor);
+  const query = queryFingerprint(input);
+  const { legacyOffset, cursor } = decodePageCursor(options.cursor, "search", query);
+  const snapshot = fingerprint(matches.map(({ issue, snippet }) => [issue.id, issue.revision, snippet]));
+  assertCursorSnapshot(cursor, snapshot);
+  const offset = cursor?.offset ?? legacyOffset;
   const pageSize = resolvePageSize(input.limit);
   const detailed = needsIssueDetails(options.fields);
 
-  const window = results.slice(offset, offset + pageSize + 1);
+  const window = matches.slice(offset, offset + pageSize + 1);
   const hasMore = window.length > pageSize;
   const pageResults = hasMore ? window.slice(0, pageSize) : window;
 
@@ -525,7 +543,7 @@ export function searchIssuesPage(
       fields: options.fields,
       snippet
     })),
-    nextCursor: hasMore ? String(offset + pageSize) : null,
+    nextCursor: hasMore ? encodePageCursor({ version: 1, kind: "search", query, key: null, value: null, offset: offset + pageSize, snapshot }) : null,
     fields: options.fields
   };
 }
@@ -1500,4 +1518,12 @@ function issueOrder(filters: Pick<ListIssueFilters, "sort">): SQL[] {
   if (filters.sort === "priority") return [asc(sql`case when ${issues.priority} = 0 then 5 else ${issues.priority} end`), ...tie];
   if (filters.sort === "updatedAt") return [desc(issues.updatedAt), ...tie];
   return tie;
+}
+
+export function listIssuesPage(context: ServiceContext, filters: ListIssueFilters = {}, options: IssuePageOptions = {}): IssuePage {
+  return context.db.transaction((db) => listIssuesPageSnapshot({ ...context, db }, filters, options));
+}
+
+export function searchIssuesPage(context: ServiceContext, input: SearchIssuesInput, options: IssuePageOptions = {}): IssuePage {
+  return context.db.transaction((db) => searchIssuesPageSnapshot({ ...context, db }, input, options));
 }
