@@ -129,6 +129,7 @@ interface SerializedMilestone {
 }
 
 interface SerializedIssue {
+  revision: number;
   id: string;
   identifier: string;
   teamId: string;
@@ -354,6 +355,7 @@ function serializeIssueRow(issue: Issue): SerializedIssue {
     completedAt: toIsoOrNull(issue.completedAt),
     canceledAt: toIsoOrNull(issue.canceledAt),
     archivedAt: toIsoOrNull(issue.archivedAt),
+    revision: issue.revision,
     idempotencyKey: issue.idempotencyKey ?? null
   };
 }

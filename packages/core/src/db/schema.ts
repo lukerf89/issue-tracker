@@ -111,6 +111,7 @@ export const issues = sqliteTable(
   "issues",
   {
     id: text("id").primaryKey(),
+    revision: integer("revision").notNull().default(1),
     identifier: text("identifier").notNull().unique("issues_identifier_unique"),
     teamId: text("team_id")
       .notNull()

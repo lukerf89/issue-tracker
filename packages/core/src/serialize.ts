@@ -117,6 +117,7 @@ export function serializeIssue(
   return {
     id: issue.id,
     identifier: issue.identifier,
+    revision: issue.revision,
     teamId: issue.teamId,
     number: issue.number,
     title: issue.title,

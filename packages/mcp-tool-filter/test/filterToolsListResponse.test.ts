@@ -20,6 +20,7 @@ const tempDirs: string[] = [];
 // If this list and ORCHESTRATION_TOOL_NAME_SET together stop covering every
 // tool the live server registers, the drift-guard test below fails.
 const EXPECTED_RETAINED_TOOL_NAMES = [
+  "claim_issue",
   "whoami",
   "get_current_actor",
   "create_actor",

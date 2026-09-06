@@ -86,6 +86,7 @@ export const searchPageInputSchema = issuePageOptionsSchema.extend({
 });
 
 export const updateIssueInputSchema = z.strictObject({
+  expectedRevision: z.number().int().positive().optional(),
   title: nonEmptyStringSchema.optional(),
   description: z.string().nullable().optional(),
   priority: optionalPrioritySchema,
@@ -113,19 +114,25 @@ export const updateIssueToolInputSchema = updateIssueInputSchema.safeExtend({
 });
 
 export const moveIssueInputSchema = z.strictObject({
+  expectedRevision: z.number().int().positive().optional(),
   identifier: nonEmptyStringSchema,
   state: nonEmptyStringSchema
 });
 
 export const assignIssueInputSchema = z.strictObject({
+  expectedRevision: z.number().int().positive().optional(),
   identifier: nonEmptyStringSchema,
   actor: nonEmptyStringSchema.nullable()
 }) satisfies z.ZodType<AssignIssueInput>;
 
 export const archiveIssueInputSchema = z.strictObject({
+  expectedRevision: z.number().int().positive().optional(),
   identifier: nonEmptyStringSchema
 }) satisfies z.ZodType<ArchiveIssueInput>;
 
 export const unarchiveIssueInputSchema = z.strictObject({
+  expectedRevision: z.number().int().positive().optional(),
   identifier: nonEmptyStringSchema
 }) satisfies z.ZodType<UnarchiveIssueInput>;
+
+export const claimIssueInputSchema = archiveIssueInputSchema;
