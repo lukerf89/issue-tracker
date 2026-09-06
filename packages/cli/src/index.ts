@@ -14,6 +14,8 @@ import {
   addCommentInputSchema,
   claimIssue,
   claimIssueInputSchema,
+  issueResponseSchema,
+  withIssueMutationReceipt,
   addAttachment,
   archiveIssue,
   archiveRun,
@@ -571,6 +573,7 @@ export function createProgram(): Command {
   const issue = program.command("issue").description("manage issues");
   issue
     .command("create")
+    .option("--response <mode>", "JSON mutation response: full (default) or compact", (value) => issueResponseSchema.parse(value))
     .argument("[title]")
     .option("--title <title>", "issue title")
     .option("--desc <description>", "issue description")
@@ -596,11 +599,11 @@ export function createProgram(): Command {
         const options = optionsWithGlobals(command);
         const template = stringOption(options.template);
         if (template) {
-          const created = createIssueFromTemplate(
-            cli.context,
+          const created = withIssueMutationReceipt(cli.context, null, (tx) => createIssueFromTemplate(
+            tx,
             template,
             issueCreateTemplateOverrides(title, options)
-          );
+          ));
           printIssue(
             cli.context,
             created,
@@ -609,7 +612,7 @@ export function createProgram(): Command {
           );
           return;
         }
-        const created = createIssue(cli.context, issueCreateInput(title, options, cli.defaultTeam));
+        const created = withIssueMutationReceipt(cli.context, null, (tx) => createIssue(tx, issueCreateInput(title, options, cli.defaultTeam)));
         printIssue(cli.context, created, options, { alreadyExisted: created.alreadyExisted });
       })
     );
@@ -708,6 +711,7 @@ export function createProgram(): Command {
     );
   issue
     .command("update")
+    .option("--response <mode>", "JSON mutation response: full (default) or compact", (value) => issueResponseSchema.parse(value))
     .option("--expected-revision <number>", "fail if issue revision changed", parsePositiveInteger)
     .argument("<identifier>")
     .option("--title <title>", "issue title")
@@ -737,13 +741,14 @@ export function createProgram(): Command {
         const options = optionsWithGlobals(command);
         printIssue(
           cli.context,
-          updateIssue(cli.context, identifier, issueUpdateInput(options)),
+          withIssueMutationReceipt(cli.context, identifier, (tx) => updateIssue(tx, identifier, issueUpdateInput(options))),
           options
         );
       })
     );
   issue
     .command("move")
+    .option("--response <mode>", "JSON mutation response: full (default) or compact", (value) => issueResponseSchema.parse(value))
     .option("--expected-revision <number>", "fail if issue revision changed", parsePositiveInteger)
     .argument("<identifier>")
     .argument("<state>")
@@ -753,13 +758,14 @@ export function createProgram(): Command {
         const input = moveIssueInputSchema.parse({ identifier, state, expectedRevision: numberOption(optionsWithGlobals(command).expectedRevision) });
         printIssue(
           cli.context,
-          moveIssue(cli.context, input.identifier, input.state, input),
+          withIssueMutationReceipt(cli.context, input.identifier, (tx) => moveIssue(tx, input.identifier, input.state, input)),
           optionsWithGlobals(command)
         );
       })
     );
   issue
     .command("assign")
+    .option("--response <mode>", "JSON mutation response: full (default) or compact", (value) => issueResponseSchema.parse(value))
     .option("--expected-revision <number>", "fail if issue revision changed", parsePositiveInteger)
     .argument("<identifier>")
     .argument("[actor]")
@@ -772,7 +778,7 @@ export function createProgram(): Command {
         const input = issueAssignInput(identifier, actor, options, cli.context.actor?.id);
         printIssue(
           cli.context,
-          assignIssue(cli.context, input.identifier, input.actor, input),
+          withIssueMutationReceipt(cli.context, input.identifier, (tx) => assignIssue(tx, input.identifier, input.actor, input)),
           options
         );
       })
@@ -817,6 +823,7 @@ export function createProgram(): Command {
     );
   issue
     .command("archive")
+    .option("--response <mode>", "JSON mutation response: full (default) or compact", (value) => issueResponseSchema.parse(value))
     .option("--expected-revision <number>", "fail if issue revision changed", parsePositiveInteger)
     .argument("<identifier>")
     .option("--json", "print JSON output")
@@ -825,13 +832,14 @@ export function createProgram(): Command {
         const input = archiveIssueInputSchema.parse({ identifier, expectedRevision: numberOption(optionsWithGlobals(command).expectedRevision) });
         printIssue(
           cli.context,
-          archiveIssue(cli.context, input.identifier, input),
+          withIssueMutationReceipt(cli.context, input.identifier, (tx) => archiveIssue(tx, input.identifier, input)),
           optionsWithGlobals(command)
         );
       })
     );
   issue
     .command("unarchive")
+    .option("--response <mode>", "JSON mutation response: full (default) or compact", (value) => issueResponseSchema.parse(value))
     .option("--expected-revision <number>", "fail if issue revision changed", parsePositiveInteger)
     .argument("<identifier>")
     .option("--json", "print JSON output")
@@ -840,7 +848,7 @@ export function createProgram(): Command {
         const input = unarchiveIssueInputSchema.parse({ identifier, expectedRevision: numberOption(optionsWithGlobals(command).expectedRevision) });
         printIssue(
           cli.context,
-          unarchiveIssue(cli.context, input.identifier, input),
+          withIssueMutationReceipt(cli.context, input.identifier, (tx) => unarchiveIssue(tx, input.identifier, input)),
           optionsWithGlobals(command)
         );
       })
