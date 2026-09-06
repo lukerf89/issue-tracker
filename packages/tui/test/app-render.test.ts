@@ -142,6 +142,22 @@ describe("LinekeeperApp render", () => {
     } finally { setup.close(); }
   });
 
+  it("says so when clearing the view also drops the team scope", async () => {
+    const setup = initializedContext();
+    try {
+      createIssue(setup.context, { title: "Cursor task" });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath, defaultTeam: "ENG" }));
+      for (const input of ["v", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      const frame = stripAnsi(view.lastFrame() ?? "");
+      // Clearing the view unscopes the query entirely, default team included;
+      // the status line has to admit that, not just say the view is gone.
+      expect(frame).toContain("| all teams |");
+      expect(frame).toContain("View cleared; search, filters and team scope reset.");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
   it("treats team=all as a whole token rather than a substring", async () => {
     const setup = initializedContext();
     try {

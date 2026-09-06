@@ -226,7 +226,9 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
         reloadAndCommit(nextOptions);
         dispatchBase({
           type: "setStatus",
-          message: command.input ? `Loaded view ${command.input}; search and overrides reset.` : "View cleared."
+          message: command.input
+            ? `Loaded view ${command.input}; search and overrides reset.`
+            : "View cleared; search, filters and team scope reset."
         });
       } else if (command.kind === "filter") {
         const filters = command.input ? parseFilterInput(command.input) : {};
