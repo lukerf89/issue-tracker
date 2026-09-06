@@ -1,3 +1,6 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { resolve } from "node:path";
 import { expect, it } from "vitest";
 import { addAttachment, addComment, archiveIssue, assignIssue, createActor, createIssue, createLabel, getIssue, listActivity, openDb, claimIssue, updateIssue } from "@issue-tracker/core";
 import { agentFixture } from "./agent-fixture.js";
@@ -53,5 +56,19 @@ it("invalidates revisions for labels, both dependency endpoints, comments and at
     expect(getIssue(f.context, blocker.identifier).revision).toBeGreaterThan(blocker.revision);
     archiveIssue(f.context, issue.identifier);
     expect((await f.call("claim_issue", { identifier: issue.identifier })).error).toBe(true);
+  } finally { await f.close(); }
+});
+
+it("allows exactly one of two simultaneous CLI processes to claim an issue", async () => {
+  const f = await agentFixture();
+  try {
+    createIssue(f.context, { title: "Concurrent CI claim" });
+    const run = promisify(execFile);
+    const args = [resolve("packages/cli/dist/index.js"), "--db", f.dbPath, "issue", "claim", "ENG-1", "--json"];
+    const results = await Promise.allSettled([run(process.execPath, args), run(process.execPath, args)]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected");
+    expect(String(rejected?.status === "rejected" ? rejected.reason.stderr : "")).toContain("ISSUE_ALREADY_CLAIMED");
+    expect(listActivity(f.context, { issue: "ENG-1" }).filter((entry) => entry.action === "assigned")).toHaveLength(1);
   } finally { await f.close(); }
 });
