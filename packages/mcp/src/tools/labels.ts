@@ -23,7 +23,7 @@ export function registerLabelTools(
     {
       title: "Create label",
       description: "Create a label.",
-      inputSchema: createLabelInputSchema.shape
+      inputSchema: createLabelInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = createLabelInputSchema.parse(input);
@@ -38,7 +38,7 @@ export function registerLabelTools(
     {
       title: "List labels",
       description: "List labels.",
-      inputSchema: listLabelsInputSchema.shape
+      inputSchema: listLabelsInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = listLabelsInputSchema.parse(input);
@@ -53,7 +53,7 @@ export function registerLabelTools(
     {
       title: "Archive label",
       description: "Archive a label without deleting it.",
-      inputSchema: archiveLabelInputSchema.shape
+      inputSchema: archiveLabelInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = archiveLabelInputSchema.parse(input);
@@ -68,7 +68,7 @@ export function registerLabelTools(
     {
       title: "Unarchive label",
       description: "Restore an archived label.",
-      inputSchema: unarchiveLabelInputSchema.shape
+      inputSchema: unarchiveLabelInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = unarchiveLabelInputSchema.parse(input);

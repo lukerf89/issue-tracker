@@ -27,7 +27,7 @@ export function registerProjectTools(
     {
       title: "List projects",
       description: "List projects.",
-      inputSchema: listProjectsInputSchema.shape
+      inputSchema: listProjectsInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = listProjectsInputSchema.parse(input);
@@ -42,7 +42,7 @@ export function registerProjectTools(
     {
       title: "Get project",
       description: "Read one project by id or name.",
-      inputSchema: getProjectInputSchema.shape
+      inputSchema: getProjectInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = getProjectInputSchema.parse(input);
@@ -57,7 +57,7 @@ export function registerProjectTools(
     {
       title: "Create project",
       description: "Create a project.",
-      inputSchema: createProjectInputSchema.shape
+      inputSchema: createProjectInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = createProjectInputSchema.parse(input);
@@ -72,7 +72,7 @@ export function registerProjectTools(
     {
       title: "Update project",
       description: "Update project fields.",
-      inputSchema: updateProjectToolInputSchema.shape
+      inputSchema: updateProjectToolInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const { project, ...update } = updateProjectToolInputSchema.parse(input);
@@ -87,7 +87,7 @@ export function registerProjectTools(
     {
       title: "Archive project",
       description: "Archive a project without deleting it.",
-      inputSchema: archiveProjectInputSchema.shape
+      inputSchema: archiveProjectInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = archiveProjectInputSchema.parse(input);
@@ -102,7 +102,7 @@ export function registerProjectTools(
     {
       title: "Unarchive project",
       description: "Restore an archived project.",
-      inputSchema: unarchiveProjectInputSchema.shape
+      inputSchema: unarchiveProjectInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = unarchiveProjectInputSchema.parse(input);

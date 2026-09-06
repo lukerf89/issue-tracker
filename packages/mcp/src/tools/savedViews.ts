@@ -28,7 +28,7 @@ export function registerSavedViewTools(
     {
       title: "Create saved view",
       description: "Save a named issue filter preset.",
-      inputSchema: createSavedViewInputSchema.shape
+      inputSchema: createSavedViewInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = createSavedViewInputSchema.parse(input);
@@ -43,7 +43,7 @@ export function registerSavedViewTools(
     {
       title: "List saved views",
       description: "List named issue filter presets.",
-      inputSchema: listSavedViewsInputSchema.shape
+      inputSchema: listSavedViewsInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       listSavedViewsInputSchema.parse(input);
@@ -58,7 +58,7 @@ export function registerSavedViewTools(
     {
       title: "Delete saved view",
       description: "Delete a named issue filter preset.",
-      inputSchema: deleteSavedViewInputSchema.shape
+      inputSchema: deleteSavedViewInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = deleteSavedViewInputSchema.parse(input);

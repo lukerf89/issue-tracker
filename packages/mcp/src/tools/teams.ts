@@ -23,7 +23,7 @@ export function registerTeamTools(
     {
       title: "Create team",
       description: "Create a team with default workflow states.",
-      inputSchema: createTeamInputSchema.shape
+      inputSchema: createTeamInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = createTeamInputSchema.parse(input);
@@ -38,7 +38,7 @@ export function registerTeamTools(
     {
       title: "List teams",
       description: "List teams.",
-      inputSchema: listTeamsInputSchema.shape
+      inputSchema: listTeamsInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = listTeamsInputSchema.parse(input);
@@ -53,7 +53,7 @@ export function registerTeamTools(
     {
       title: "Archive team",
       description: "Archive a team without deleting it.",
-      inputSchema: archiveTeamInputSchema.shape
+      inputSchema: archiveTeamInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = archiveTeamInputSchema.parse(input);
@@ -68,7 +68,7 @@ export function registerTeamTools(
     {
       title: "Unarchive team",
       description: "Restore an archived team.",
-      inputSchema: unarchiveTeamInputSchema.shape
+      inputSchema: unarchiveTeamInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = unarchiveTeamInputSchema.parse(input);
