@@ -152,13 +152,13 @@ describe("LinekeeperApp render", () => {
     try {
       createIssue(setup.context, { title: "Cursor task" });
       const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath, defaultTeam: "ENG" }));
-      for (const input of ["v", "\r"]) { await tick(); view.stdin.write(input); }
+      for (const input of ["v", "All issues", "\r"]) { await tick(); view.stdin.write(input); }
       await tick();
       const frame = stripAnsi(view.lastFrame() ?? "");
       // Clearing the view unscopes the query entirely, default team included;
-      // the status line has to admit that, not just say the view is gone.
+      // the picker row has to say so rather than just naming the view.
       expect(frame).toContain("| all teams |");
-      expect(frame).toContain("View cleared; search, filters and team scope reset.");
+      expect(frame).toContain("Loaded All issues; search and overrides reset.");
       view.unmount();
     } finally { setup.close(); }
   });
@@ -365,6 +365,88 @@ describe("LinekeeperApp render", () => {
     } finally { setup.close(); }
   });
 
+  it("saves and reopens search/filter/sort and restores the selected view", async () => {
+    const setup = initializedContext();
+    try {
+      createIssue(setup.context, { title: "Cursor urgent", priority: 1 });
+      createIssue(setup.context, { title: "Other work", priority: 1 });
+      const props = { context: setup.context, dbPath: setup.dbPath };
+      const view = render(createElement(LinekeeperApp, props));
+      for (const input of ["v", "Recently updated", "\r", "/", "cursor", "\r", ":", "priority=1", "\r", "V", "Cursor queue", "\r"]) {
+        await tick(); view.stdin.write(input);
+      }
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("Saved view Cursor queue");
+      expect(stripAnsi(view.lastFrame() ?? "")).not.toContain("Modified");
+      view.unmount();
+      const restored = render(createElement(LinekeeperApp, props));
+      await tick();
+      const frame = stripAnsi(restored.lastFrame() ?? "");
+      expect(frame).toContain("Cursor queue");
+      expect(frame).toContain("/cursor");
+      expect(frame).toContain("sort:newest update");
+      expect(frame).toContain("priority:Urgent");
+      expect(frame).not.toContain("Other work");
+      restored.unmount();
+    } finally { setup.close(); }
+  });
+
+  it("documents every command key in the help overlay", async () => {
+    const setup = initializedContext();
+    try {
+      createIssue(setup.context, { title: "Cursor task" });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath }));
+      await tick();
+      view.stdin.write("?"); await tick();
+      const frame = stripAnsi(view.lastFrame() ?? "");
+      for (const entry of ["/ search", "f filter", "v views", "V save view", "n new", "m move",
+        "p priority", "a assign", "l labels", "c comment", "s sub-issue", "b link"]) {
+        expect(frame).toContain(entry);
+      }
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
+  it("keeps an explicitly chosen All issues across a restart", async () => {
+    const setup = initializedContext();
+    try {
+      createTeam(setup.context, { key: "OPS", name: "Operations" });
+      createIssue(setup.context, { title: "Eng task" });
+      createIssue(setup.context, { title: "Ops task", team: "OPS" });
+      const props = { context: setup.context, dbPath: setup.dbPath, defaultTeam: "ENG" };
+      const view = render(createElement(LinekeeperApp, props));
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).not.toContain("Ops task");
+      for (const input of ["v", "All issues", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("Ops task");
+      view.unmount();
+      // Choosing All issues is a real selection: reopening must not silently
+      // narrow back to the default team.
+      const restored = render(createElement(LinekeeperApp, props));
+      await tick();
+      const frame = stripAnsi(restored.lastFrame() ?? "");
+      expect(frame).toContain("| all teams |");
+      expect(frame).toContain("Ops task");
+      restored.unmount();
+    } finally { setup.close(); }
+  });
+
+  it("selects a saved view named save independently of the save action", async () => {
+    const setup = initializedContext();
+    try {
+      createIssue(setup.context, { title: "Urgent task", priority: 1 });
+      createIssue(setup.context, { title: "Other task", priority: 4 });
+      createSavedView(setup.context, { name: "save", filters: { priority: 1 } });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath }));
+      for (const input of ["v", "save", "\u001b[B", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("Loaded save");
+      expect(stripAnsi(view.lastFrame() ?? "")).not.toContain("Other task");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
   it("renders a highlighted bm25 excerpt line under each search result", async () => {
     const setup = initializedContext();
 
@@ -455,7 +537,7 @@ describe("LinekeeperApp render", () => {
     }
   });
 
-  it("shows an error status instead of crashing when a submitted view is missing", async () => {
+  it("shows no matches and can cancel a missing view search", async () => {
     const setup = initializedContext();
 
     try {
@@ -482,9 +564,9 @@ describe("LinekeeperApp render", () => {
 
       const frame = stripAnsi(view.lastFrame() ?? "");
 
-      expect(frame).toContain("Saved view Missing view was not found.");
-      expect(frame).toContain("ENG-1");
-      expect(frame).toContain("Keep current issue visible");
+      expect(frame).toContain("No matches.");
+      view.stdin.write("\u001b"); await tick(100);
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("Keep current issue visible");
 
       view.unmount();
     } finally {

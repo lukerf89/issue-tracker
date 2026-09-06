@@ -3,6 +3,7 @@ import { asc, eq } from "drizzle-orm";
 import { inTransaction, type ServiceContext } from "../context.js";
 import { savedViews, type SavedView } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
+import { getConfig, setConfig, whoami } from "./config.js";
 import { uuid } from "../ids.js";
 import { listIssueFiltersSchema } from "../schemas/issue.js";
 import { listIssues, listIssuesPage, type IssuePage, type IssuePageOptions, type IssueWithDetails, type ListIssueFilters } from "./issue.js";
@@ -34,6 +35,8 @@ export function createSavedView(
   context: ServiceContext,
   input: CreateSavedViewInput
 ): SavedViewWithFilters {
+  if (input.name.startsWith("builtin:")) throw new AppError(AppErrorCode.VALIDATION_FAILED, "The builtin: prefix is reserved.");
+  const validatedFilters = listIssueFiltersSchema.strict().parse(input.filters);
   return inTransaction(context, (txContext) => {
     const existing = findSavedViewByName(txContext, input.name);
 
@@ -49,7 +52,7 @@ export function createSavedView(
     const row = {
       id: uuid(),
       name: input.name,
-      filters: listIssueFiltersSchema.parse(input.filters),
+      filters: validatedFilters,
       description: input.description ?? null,
       createdAt: now,
       updatedAt: now
@@ -82,6 +85,18 @@ export function resolveSavedView(
   context: ServiceContext,
   name: string
 ): ListIssueFilters {
+  const builtin = builtinIssueViews.find(view => view.name === name);
+  if (builtin) {
+    if (name === "builtin:my-open") {
+      // "My" is the workspace's configured human, not whoever is calling. An
+      // agent session (tracker mcp --agent) must resolve the same rows the CLI
+      // does, so fall back to whoami rather than rejecting the agent.
+      const actor = context.actor?.type === "human" ? context.actor : whoami(context);
+      if (actor.type !== "human") throw new AppError(AppErrorCode.VALIDATION_FAILED, "My open issues requires a configured human actor.");
+      return { ...builtin.filters, assignee: actor.id };
+    }
+    return listIssueFiltersSchema.parse(builtin.filters);
+  }
   return getSavedViewByName(context, name).filters;
 }
 
@@ -160,7 +175,7 @@ function savedViewWithParsedFilters(view: SavedView): SavedViewWithFilters {
 
 function parseStoredFilters(filters: unknown): ListIssueFilters {
   const parsed = typeof filters === "string" ? JSON.parse(filters) as unknown : filters;
-  return listIssueFiltersSchema.parse(parsed);
+  return listIssueFiltersSchema.strict().parse(parsed);
 }
 
 function mergeIssueListFilters(
@@ -184,4 +199,40 @@ function notFound(idOrName: string): never {
     `Saved view ${idOrName} was not found.`,
     { savedView: idOrName }
   );
+}
+
+
+/** Open includes backlog, unstarted, started, and blocked; excludes completed/canceled. */
+const openStateTypes: NonNullable<ListIssueFilters["stateTypes"]> = ["backlog", "unstarted", "started", "blocked"];
+export const builtinIssueViews: ReadonlyArray<{ name: string; title: string; description: string; filters: ListIssueFilters }> = [
+  { name: "builtin:my-open", title: "My open issues", description: "Current human; backlog, unstarted, started, blocked; non-archived; all teams", filters: { stateTypes: openStateTypes } },
+  { name: "builtin:unassigned", title: "Unassigned", description: "Unassigned; all workflow states; non-archived; all teams", filters: { assignee: null } },
+  { name: "builtin:all-open", title: "All open", description: "All assignees; backlog, unstarted, started, blocked; non-archived; all teams", filters: { stateTypes: openStateTypes } },
+  { name: "builtin:recent", title: "Recently updated", description: "All non-archived issues; newest update first; all teams; no time cutoff", filters: { sort: "updatedAt" } }
+];
+
+// Which view a frontend last selected, so a restart can restore it. The key and
+// the validate-on-write rule live here, not in an adapter, so every frontend
+// stores and restores the selection identically.
+const lastSelectedViewKey = "ui.last_selected_view";
+
+/**
+ * Remember the selected view by name, or null for an explicit "no view at all".
+ * Throws if the name resolves to neither a saved nor a built-in view.
+ */
+export function setLastSelectedView(context: ServiceContext, name: string | null): void {
+  if (name !== null) resolveSavedView(context, name);
+  setConfig(context, lastSelectedViewKey, name ?? "");
+}
+
+/**
+ * The remembered selection: a view name, null when "no view" was chosen
+ * deliberately, or undefined when nothing has ever been selected. The last two
+ * differ — an explicit "no view" must survive a restart rather than falling
+ * back to a frontend's default scope.
+ */
+export function getLastSelectedView(context: ServiceContext): string | null | undefined {
+  const stored = getConfig(context, lastSelectedViewKey);
+  if (stored === null) return undefined;
+  return stored === "" ? null : stored;
 }

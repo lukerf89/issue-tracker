@@ -13,6 +13,7 @@ import {
   resolveIssueListFilters,
   resolveSavedView,
   getSupervisorHealth,
+  getLastSelectedView,
   listProfiles,
   listRepositories,
   listRuns,
@@ -93,7 +94,7 @@ export type LinekeeperCoreCommand =
   | { kind: "link"; input: AddAttachmentInput };
 
 export interface LinekeeperReadCommand {
-  kind: "search" | "filter" | "view" | "runResponse";
+  kind: "search" | "filter" | "view" | "saveView" | "runResponse";
   input: string;
 }
 
@@ -118,11 +119,11 @@ export function loadLinekeeperData(
     filters: explicit
   });
   if (options.team === null) delete filters.team;
-  const search = cleanInput(options.search);
+  const search = options.search === undefined ? cleanInput(filters.query) : cleanInput(options.search);
+  if (search) filters.query = search; else delete filters.query;
   const base = view ? resolveSavedView(context, view) : {};
-  const modifiedView = !!view && (search !== null ||
-    Object.keys({ ...base, ...filters }).some(key =>
-      base[key as keyof ListIssueFilters] !== filters[key as keyof ListIssueFilters]));
+  const modifiedView = !!view && (Object.keys({ ...base, ...filters }).some(key =>
+      JSON.stringify(base[key as keyof ListIssueFilters]) !== JSON.stringify(filters[key as keyof ListIssueFilters])));
   const queryFilters = { ...filters, limit: options.limit ?? filters.limit ?? 100 };
   const page = search
     ? searchIssuesPage(context, searchInputSchema.parse({ ...queryFilters, query: search }),
@@ -169,6 +170,25 @@ export function loadLinekeeperData(
 }
 
 
+// Core owns which view was last selected and how it is stored; this only turns
+// that selection into the options the list is loaded with. undefined means
+// nothing was ever selected, so the frontend's default team scope applies;
+// null means "All issues" was chosen deliberately and must survive a restart.
+export function restoreLinekeeperData(context: ServiceContext, defaultTeam?: string): {
+  data: LinekeeperData; options: LinekeeperLoadOptions; message: string | null;
+} {
+  const view = getLastSelectedView(context);
+  const options: LinekeeperLoadOptions =
+    view === undefined ? { team: defaultTeam } : view === null ? {} : { view };
+  try { return { data: loadLinekeeperData(context, options), options, message: view ? `Restored view ${view}.` : null }; }
+  catch (error) {
+    if (!view) throw error;
+    const fallback = { team: defaultTeam };
+    return { data: loadLinekeeperData(context, fallback), options: fallback,
+      message: `Could not restore view ${view}: ${error instanceof Error ? error.message : String(error)}. Showing default scope.` };
+  }
+}
+
 // Fetch before replacing the usable list; callers can show an error and retry.
 export function loadMoreLinekeeperData(
   context: ServiceContext,
@@ -203,6 +223,7 @@ export function commandFromMode(
     case "search":
     case "filter":
     case "view":
+    case "saveView":
     case "runResponse":
       return { kind: mode.kind, input };
     case "new":

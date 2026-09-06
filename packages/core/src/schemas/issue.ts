@@ -58,6 +58,9 @@ export const createIssueInputSchema = z.object({
 }) satisfies z.ZodType<CreateIssueInput>;
 
 export const listIssueFiltersSchema = z.object({
+  query: nonEmptyStringSchema.optional(),
+  sort: z.enum(["identifier", "updatedAt"]).optional(),
+  stateTypes: z.array(z.enum(["backlog", "unstarted", "started", "blocked", "completed", "canceled"])).optional(),
   state: nonEmptyStringSchema.optional(),
   assignee: optionalNullableStringSchema,
   project: optionalNullableStringSchema,

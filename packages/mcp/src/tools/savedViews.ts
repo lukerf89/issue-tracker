@@ -1,5 +1,6 @@
 import {
   createSavedView,
+  builtinIssueViews,
   createSavedViewInputSchema,
   deleteSavedView,
   deleteSavedViewInputSchema,
@@ -16,6 +17,12 @@ export function registerSavedViewTools(
   server: McpServer,
   options: Omit<OpenMcpContextOptions, "requireActor">
 ): void {
+  server.registerTool("list_builtin_views", {
+    title: "List built-in views",
+    description: "Built-in view references, query semantics and filter definitions; use a reference with list_issues.",
+    inputSchema: listSavedViewsInputSchema.shape
+  }, () => mcpToolResult(() => jsonResult(builtinIssueViews)));
+
   server.registerTool(
     "create_saved_view",
     {
