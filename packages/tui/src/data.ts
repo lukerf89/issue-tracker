@@ -8,6 +8,8 @@ import {
   listActors,
   listCycles,
   listIssuesWithView,
+  resolveIssueListFilters,
+  resolveSavedView,
   getSupervisorHealth,
   listProfiles,
   listRepositories,
@@ -43,7 +45,9 @@ import {
 import type { LinekeeperCommandMode } from "./state.js";
 
 export interface LinekeeperLoadOptions {
-  team?: string;
+  team?: string | null;
+  // Once edited, filters contain the complete effective query, including inherited values.
+  materialized?: boolean;
   view?: string | null;
   search?: string | null;
   filters?: ListIssueFilters;
@@ -65,6 +69,7 @@ export interface LinekeeperData {
   activity: ActivityFeedEvent[];
   activeTeamKey: string | null;
   activeView: string | null;
+  modifiedView: boolean;
   search: string | null;
   filters: ListIssueFilters;
   runs: ReturnType<typeof listRuns>;
@@ -99,13 +104,22 @@ export function loadLinekeeperData(
   context: ServiceContext,
   options: LinekeeperLoadOptions = {}
 ): LinekeeperData {
-  const filters = listIssueFiltersSchema.parse(omitUndefined({
-    ...(options.filters ?? {}),
-    team: options.team ?? options.filters?.team,
-    limit: options.limit ?? options.filters?.limit ?? 100
-  }));
-  const search = cleanInput(options.search);
   const view = cleanInput(options.view);
+  const explicit = listIssueFiltersSchema.parse(omitUndefined({
+    ...(options.filters ?? {}),
+    team: options.team === null ? undefined : options.filters?.team ?? options.team
+  }));
+  const filters = resolveIssueListFilters(context, {
+    view: options.materialized ? undefined : view ?? undefined,
+    filters: explicit
+  });
+  if (options.team === null) delete filters.team;
+  const search = cleanInput(options.search);
+  const base = view ? resolveSavedView(context, view) : {};
+  const modifiedView = !!view && (search !== null ||
+    Object.keys({ ...base, ...filters }).some(key =>
+      base[key as keyof ListIssueFilters] !== filters[key as keyof ListIssueFilters]));
+  const queryFilters = { ...filters, limit: options.limit ?? filters.limit ?? 100 };
   let issues: IssueWithDetails[];
   const snippets = new Map<string, string>();
   if (search) {
@@ -114,7 +128,7 @@ export function loadLinekeeperData(
     // matching the plain-list path. Pagination itself is out of scope here.
     const page = searchIssuesPage(
       context,
-      searchInputSchema.parse({ ...filters, query: search }),
+      searchInputSchema.parse({ ...queryFilters, query: search }),
       { fields: ["labels"] }
     );
     issues = page.rows.map((row) => row.issue as IssueWithDetails);
@@ -125,8 +139,7 @@ export function loadLinekeeperData(
     issues = listIssuesWithView(
       context,
       listIssuesWithViewInputSchema.parse({
-        view: view ?? undefined,
-        filters
+        filters: queryFilters
       })
     );
   }
@@ -153,6 +166,7 @@ export function loadLinekeeperData(
     activity,
     activeTeamKey: filters.team ?? null,
     activeView: view,
+    modifiedView,
     search,
     filters
     ,runs: listRuns(context)
@@ -160,6 +174,12 @@ export function loadLinekeeperData(
     ,profiles: listProfiles(context)
     ,supervisor: getSupervisorHealth(context)
   };
+}
+
+
+// A view is resolved on selection; subsequent edits operate on the visible query.
+export function effectiveLoadOptions(data: LinekeeperData): LinekeeperLoadOptions {
+  return { view: data.activeView, search: data.search, filters: data.filters, materialized: true };
 }
 
 export function commandFromMode(
@@ -332,7 +352,7 @@ export function parseFilterInput(input: string): ListIssueFilters {
     if (key === "assignee") filters.assignee = normalizeHandle(value);
     if (key === "project") filters.project = value;
     if (key === "label") filters.label = value;
-    if (key === "team") filters.team = value;
+    if (key === "team" && value !== "all") filters.team = value;
     if (key === "cycle") filters.cycle = /^\d+$/.test(value) ? Number.parseInt(value, 10) : value;
     if (key === "priority") filters.priority = Number.parseInt(value, 10);
   }
