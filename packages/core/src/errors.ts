@@ -1,6 +1,7 @@
 import { inspect } from "node:util";
 
 export const AppErrorCode = {
+  ISSUE_CURSOR_STALE: "ISSUE_CURSOR_STALE",
   ISSUE_CONFLICT: "ISSUE_CONFLICT",
   ISSUE_ALREADY_CLAIMED: "ISSUE_ALREADY_CLAIMED",
   ISSUE_NOT_FOUND: "ISSUE_NOT_FOUND",

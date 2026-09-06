@@ -6,7 +6,7 @@ import type {
   ListIssuesWithViewInput,
   ResolveSavedViewInput
 } from "../services/savedView.js";
-import { nonEmptyStringSchema, optionalNullableStringSchema, cursorSchema } from "./common.js";
+import { nonEmptyStringSchema, optionalNullableStringSchema, issueCursorSchema } from "./common.js";
 import { issuePageOptionsSchema, issueProjectionFieldSchema, listIssueFiltersSchema } from "./issue.js";
 
 export const createSavedViewInputSchema = z.object({
@@ -37,7 +37,7 @@ export const listIssuesWithViewToolInputSchema = listIssueFiltersSchema.safeExte
 export const listIssuesPageWithViewInputSchema = z.object({
   view: nonEmptyStringSchema.optional(),
   filters: listIssueFiltersSchema.optional(),
-  cursor: cursorSchema.optional(),
+  cursor: issueCursorSchema.optional(),
   fields: z.array(issueProjectionFieldSchema).optional()
 });
 
