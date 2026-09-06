@@ -24,3 +24,5 @@ export const optionalNullableDateOnlyStringSchema = dateOnlyStringSchema.nullabl
 export const includeArchivedSchema = z.object({
   includeArchived: z.boolean().optional()
 });
+
+export const issueCursorSchema = z.union([cursorSchema, z.string().regex(/^it1\.[A-Za-z0-9_-]+$/).max(4096)]);
