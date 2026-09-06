@@ -24,7 +24,7 @@ export function registerTemplateTools(
     {
       title: "Create template",
       description: "Create a named issue creation template.",
-      inputSchema: createTemplateInputSchema.shape
+      inputSchema: createTemplateInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = createTemplateInputSchema.parse(input);
@@ -39,7 +39,7 @@ export function registerTemplateTools(
     {
       title: "List templates",
       description: "List named issue creation templates.",
-      inputSchema: listTemplatesInputSchema.shape
+      inputSchema: listTemplatesInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       listTemplatesInputSchema.parse(input);
@@ -54,7 +54,7 @@ export function registerTemplateTools(
     {
       title: "Delete template",
       description: "Delete a named issue creation template.",
-      inputSchema: deleteTemplateInputSchema.shape
+      inputSchema: deleteTemplateInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = deleteTemplateInputSchema.parse(input);
@@ -69,7 +69,7 @@ export function registerTemplateTools(
     {
       title: "Create issue from template",
       description: "Create an issue from a named template with optional overrides.",
-      inputSchema: createIssueFromTemplateInputSchema.shape
+      inputSchema: createIssueFromTemplateInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = createIssueFromTemplateInputSchema.parse(input);

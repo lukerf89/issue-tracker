@@ -28,7 +28,7 @@ export const deleteTemplateInputSchema = z.object({
 }) satisfies z.ZodType<DeleteTemplateInput>;
 
 export const createIssueFromTemplateOverridesSchema =
-  createIssueInputSchema.partial() satisfies z.ZodType<CreateIssueFromTemplateOverrides>;
+  z.strictObject(createIssueInputSchema.shape).partial() satisfies z.ZodType<CreateIssueFromTemplateOverrides>;
 
 export const createIssueFromTemplateInputSchema = z.object({
   name: nonEmptyStringSchema,
