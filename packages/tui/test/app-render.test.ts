@@ -272,6 +272,23 @@ describe("LinekeeperApp render", () => {
     } finally { setup.close(); }
   });
 
+  it("applies a picked label so matching rows survive and others drop out", async () => {
+    const setup = initializedContext();
+    try {
+      createLabel(setup.context, { name: "Test Label" });
+      createIssue(setup.context, { title: "Labeled task", labels: ["Test Label"] });
+      createIssue(setup.context, { title: "Plain task" });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath, defaultTeam: "ENG" }));
+      for (const input of ["f", "Label", "\r", "Test Label", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      const frame = stripAnsi(view.lastFrame() ?? "");
+      expect(frame).toContain("label:Test Label");
+      expect(frame).toContain("Labeled task");
+      expect(frame).not.toContain("Plain task");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
   it("cancels picker edits and supports arrow selection", async () => {
     const setup = initializedContext();
     try {

@@ -23,7 +23,9 @@ export function filterValues(field: keyof ListIssueFilters, data: LinekeeperData
     case "state": return [remove, ...data.states.filter(s => !team || s.teamId === team.id).map(s => ({ id: s.id, value: s.id, label: `${s.name} (${data.teams.find(t => t.id === s.teamId)?.key ?? ""})` }))];
     case "assignee": return [remove, ...(context.actor?.type === "human" ? [{ id: "me", value: context.actor.id, label: "Me" }] : []), { id: "unassigned", value: null, label: "Unassigned" }, ...data.actors.map(a => ({ id: a.id, value: a.id, label: `${a.name} (@${a.handle})` }))];
     case "project": return [remove, { id: "none", value: null, label: "No project" }, ...data.projects.map(p => ({ id: p.id, value: p.id, label: p.name }))];
-    case "label": return [remove, ...data.labels.map(l => ({ id: l.id, value: l.id, label: l.name }))];
+    // Core matches labels by name (issueIdsForLabelName), unlike the id-or-name
+    // lookups behind state/assignee/project/cycle — so send the name, not the id.
+    case "label": return [remove, ...data.labels.map(l => ({ id: l.id, value: l.name, label: l.name }))];
     case "priority": return [remove, ...[0, 1, 2, 3, 4].map(p => ({ id: String(p), value: p, label: priorityLabel(p) }))];
     case "cycle": return [remove, ...data.cycles.map(c => ({ id: c.id, value: c.id, label: `${c.name ?? "Cycle"} #${c.number} (${data.teams.find(t => t.id === c.teamId)?.key ?? ""})` }))];
     case "team": return [remove, ...data.teams.map(t => ({ id: t.id, value: t.key, label: `${t.name} (${t.key})` }))];
