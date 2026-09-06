@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { applyMigrations, archiveIssue, createActor, createIssue, createSavedView, getLastSelectedView, init, listIssuesPageWithView, listIssuesWithView, moveIssue, openDb, resolveSavedView, setLastSelectedView, updateIssue, type ServiceContext } from "../src/index.js";
+import { applyMigrations, archiveIssue, createActor, createIssue, createSavedView, getLastSelectedView, init, listIssuesPageWithView, listIssuesWithView, moveIssue, openDb, resolveSavedView, setConfig, setLastSelectedView, updateIssue, type ServiceContext } from "../src/index.js";
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "view-queries-"));
@@ -31,10 +31,19 @@ describe("built-in and saved query semantics", () => {
       updateIssue(context, unassigned.identifier, { description: "Updated later" });
       expect(ids("builtin:recent")).toEqual([unassigned.id, mine.id, done.id]);
       expect(listIssuesPageWithView(context, { view: "builtin:recent", filters: { query: "cursor", limit: 1 } }).rows[0]?.issue.id).toBe(unassigned.id);
-      context.actor = createActor(context, { name: "Build Agent", handle: "build", type: "agent" });
-      expect(() => resolveSavedView(context, "builtin:my-open")).toThrow("current human actor");
+      // An agent session resolves the configured human's issues, not its own:
+      // the CLI and an agent-authenticated MCP session must see the same rows.
+      const human = context.actor!;
+      const agent = createActor(context, { name: "Build Agent", handle: "build", type: "agent" });
+      createIssue(context, { title: "Cursor agent-owned", assignee: agent.id });
+      context.actor = agent;
+      expect(ids("builtin:my-open")).toEqual([mine.id]);
+      expect(resolveSavedView(context, "builtin:my-open").assignee).toBe(human.id);
       context.actor = null;
       expect(ids("builtin:my-open")).toEqual([mine.id]);
+      // With no human configured at all there is nobody for "my" to mean.
+      setConfig(context, "default_actor", agent.id);
+      expect(() => resolveSavedView(context, "builtin:my-open")).toThrow("configured human actor");
     } finally { close(); }
   });
 

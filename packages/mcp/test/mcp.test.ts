@@ -674,9 +674,15 @@ describe("MCP server", () => {
       const result = await callJsonTool(client, "list_issues", { view: "Cursor queue" });
       expect(result).toMatchObject({ issues: [{ identifier: "ENG-1" }], nextCursor: null });
       expect(result).toEqual(JSON.parse(tracker(dbPath, ["issue", "list", "--view", "Cursor queue", "--json"])));
-      expect(await callJsonTool(client, "list_issues", { view: "builtin:my-open" })).toEqual(
-        JSON.parse(tracker(dbPath, ["issue", "list", "--view", "builtin:my-open", "--json"]))
-      );
+      const myOpen = JSON.parse(tracker(dbPath, ["issue", "list", "--view", "builtin:my-open", "--json"]));
+      expect(await callJsonTool(client, "list_issues", { view: "builtin:my-open" })).toEqual(myOpen);
+      // The documented agent path (tracker mcp --agent) puts an agent in the
+      // context; "my open" still means the configured human, as it does on the
+      // CLI, rather than rejecting the caller.
+      const agentClient = await connectClient(dbPath, { handle: "build", type: "agent" });
+      try {
+        expect(await callJsonTool(agentClient, "list_issues", { view: "builtin:my-open" })).toEqual(myOpen);
+      } finally { await agentClient.close(); }
       expect(await callJsonTool(client, "list_builtin_views", {})).toEqual(
         JSON.parse(tracker(dbPath, ["view", "builtins", "--json"]))
       );

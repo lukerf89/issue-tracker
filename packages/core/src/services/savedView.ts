@@ -88,8 +88,11 @@ export function resolveSavedView(
   const builtin = builtinIssueViews.find(view => view.name === name);
   if (builtin) {
     if (name === "builtin:my-open") {
-      const actor = context.actor ?? whoami(context);
-      if (actor.type !== "human") throw new AppError(AppErrorCode.VALIDATION_FAILED, "My open issues requires a current human actor.");
+      // "My" is the workspace's configured human, not whoever is calling. An
+      // agent session (tracker mcp --agent) must resolve the same rows the CLI
+      // does, so fall back to whoami rather than rejecting the agent.
+      const actor = context.actor?.type === "human" ? context.actor : whoami(context);
+      if (actor.type !== "human") throw new AppError(AppErrorCode.VALIDATION_FAILED, "My open issues requires a configured human actor.");
       return { ...builtin.filters, assignee: actor.id };
     }
     return listIssueFiltersSchema.parse(builtin.filters);
