@@ -21,6 +21,7 @@ export function registerTeamTools(
   server.registerTool(
     "create_team",
     {
+      _meta: { "issue-tracker/groups": ["admin"] },
       title: "Create team",
       description: "Create a team with default workflow states.",
       inputSchema: createTeamInputSchema.strict()
@@ -36,6 +37,7 @@ export function registerTeamTools(
   server.registerTool(
     "list_teams",
     {
+      _meta: { "issue-tracker/groups": ["admin"] },
       title: "List teams",
       description: "List teams.",
       inputSchema: listTeamsInputSchema.strict()
@@ -51,6 +53,7 @@ export function registerTeamTools(
   server.registerTool(
     "archive_team",
     {
+      _meta: { "issue-tracker/groups": ["admin"] },
       title: "Archive team",
       description: "Archive a team without deleting it.",
       inputSchema: archiveTeamInputSchema.strict()
@@ -66,6 +69,7 @@ export function registerTeamTools(
   server.registerTool(
     "unarchive_team",
     {
+      _meta: { "issue-tracker/groups": ["admin"] },
       title: "Unarchive team",
       description: "Restore an archived team.",
       inputSchema: unarchiveTeamInputSchema.strict()

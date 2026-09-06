@@ -17,6 +17,7 @@ export function registerCycleTools(
   server.registerTool(
     "create_cycle",
     {
+      _meta: { "issue-tracker/groups": ["admin"] },
       title: "Create cycle",
       description: "Create a cycle.",
       inputSchema: createCycleInputSchema.strict()
@@ -32,6 +33,7 @@ export function registerCycleTools(
   server.registerTool(
     "list_cycles",
     {
+      _meta: { "issue-tracker/groups": ["admin"] },
       title: "List cycles",
       description: "List cycles.",
       inputSchema: listCyclesInputSchema.strict()

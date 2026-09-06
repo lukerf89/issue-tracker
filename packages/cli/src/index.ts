@@ -17,6 +17,7 @@ import {
   issueResponseSchema,
   withIssueMutationReceipt,
   getIssueResponse, getIssuesResponse, readIssueSection, getIssuesInputSchema, readIssueSectionInputSchema,
+  toolProfileSchema,
   addAttachment,
   archiveIssue,
   archiveRun,
@@ -1196,11 +1197,13 @@ export function createProgram(): Command {
 
   program
     .command("mcp")
+    .option("--tool-profile <profile>", "advertise coding, orchestration, admin, or full tools (not access control)", (value) => toolProfileSchema.parse(value), "full")
     .description("run the MCP server on stdio")
     .option("--agent <handle>", "agent actor handle")
     .action((_options, command) => {
       const options = optionsWithGlobals(command);
       return runStdioServer({
+        toolProfile: toolProfileSchema.parse(options.toolProfile),
         dbPath: resolveDbPath(options),
         actor: options.agent
           ? {

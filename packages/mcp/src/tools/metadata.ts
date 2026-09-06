@@ -17,6 +17,7 @@ export function registerMetadataTools(
   server.registerTool(
     "describe",
     {
+      _meta: { "issue-tracker/groups": ["coding"] },
       title: "Describe tracker metadata",
       description: "Discover teams, workflow states, priorities, labels, projects, and the current actor.",
       inputSchema: describeTrackerInputSchema.strict()
@@ -32,6 +33,7 @@ export function registerMetadataTools(
   server.registerTool(
     "list_states",
     {
+      _meta: { "issue-tracker/groups": ["admin"] },
       title: "List workflow states",
       description: "List ordered workflow states for a team id or key.",
       inputSchema: listStatesInputSchema.strict()

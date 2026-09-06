@@ -21,6 +21,7 @@ export function registerLabelTools(
   server.registerTool(
     "create_label",
     {
+      _meta: { "issue-tracker/groups": ["admin"] },
       title: "Create label",
       description: "Create a label.",
       inputSchema: createLabelInputSchema.strict()
@@ -36,6 +37,7 @@ export function registerLabelTools(
   server.registerTool(
     "list_labels",
     {
+      _meta: { "issue-tracker/groups": ["admin"] },
       title: "List labels",
       description: "List labels.",
       inputSchema: listLabelsInputSchema.strict()
@@ -51,6 +53,7 @@ export function registerLabelTools(
   server.registerTool(
     "archive_label",
     {
+      _meta: { "issue-tracker/groups": ["admin"] },
       title: "Archive label",
       description: "Archive a label without deleting it.",
       inputSchema: archiveLabelInputSchema.strict()
@@ -66,6 +69,7 @@ export function registerLabelTools(
   server.registerTool(
     "unarchive_label",
     {
+      _meta: { "issue-tracker/groups": ["admin"] },
       title: "Unarchive label",
       description: "Restore an archived label.",
       inputSchema: unarchiveLabelInputSchema.strict()

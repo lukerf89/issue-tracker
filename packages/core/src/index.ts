@@ -459,3 +459,5 @@ export { withIssueMutationReceipt, serializeIssueMutation, issueResponseSchema, 
 
 export { getIssueResponse, getIssuesResponse, readIssueSection } from "./services/issue-read.js";
 export { getIssuesInputSchema, readIssueSectionInputSchema } from "./schemas/issue-read.js";
+
+export { toolProfileSchema, type ToolProfile } from "./schemas/tool-profile.js";

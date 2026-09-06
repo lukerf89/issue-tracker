@@ -22,6 +22,7 @@ export function registerTemplateTools(
   server.registerTool(
     "create_template",
     {
+      _meta: { "issue-tracker/groups": ["admin"] },
       title: "Create template",
       description: "Create a named issue creation template.",
       inputSchema: createTemplateInputSchema.strict()
@@ -37,6 +38,7 @@ export function registerTemplateTools(
   server.registerTool(
     "list_templates",
     {
+      _meta: { "issue-tracker/groups": ["coding"] },
       title: "List templates",
       description: "List named issue creation templates.",
       inputSchema: listTemplatesInputSchema.strict()
@@ -52,6 +54,7 @@ export function registerTemplateTools(
   server.registerTool(
     "delete_template",
     {
+      _meta: { "issue-tracker/groups": ["admin"] },
       title: "Delete template",
       description: "Delete a named issue creation template.",
       inputSchema: deleteTemplateInputSchema.strict()
@@ -67,6 +70,7 @@ export function registerTemplateTools(
   server.registerTool(
     "create_issue_from_template",
     {
+      _meta: { "issue-tracker/groups": ["admin"] },
       title: "Create issue from template",
       description: "Create an issue from a named template with optional overrides.",
       inputSchema: createIssueFromTemplateInputSchema.strict()
