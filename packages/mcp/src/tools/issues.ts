@@ -4,6 +4,7 @@ import {
   issueResponseSchema,
   serializeIssueMutation,
   withIssueMutationReceipt,
+  getIssueResponse, getIssuesResponse, readIssueSection, getIssuesInputSchema, readIssueSectionInputSchema,
   addAttachment,
   addComment,
   addCommentInputSchema,
@@ -13,7 +14,6 @@ import {
   assignIssueInputSchema,
   createIssue,
   createIssueInputSchema,
-  getIssue,
   getIssueInputSchema,
   listActivity,
   listActivityInputSchema,
@@ -44,6 +44,9 @@ export function registerIssueTools(
   server: McpServer,
   options: Omit<OpenMcpContextOptions, "requireActor">
 ): void {
+  server.registerTool("get_issues", { title: "Read selected issues", description: "Read up to ten known issues under a total JSON byte budget. Omitted fields remain retrievable with read_issue_section.", inputSchema: getIssuesInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: false }, ({ context }) => jsonResult(getIssuesResponse(context, input)))));
+  server.registerTool("read_issue_section", { title: "Read issue section", description: "Page a string or collection independently. Follow nextCursor; retrieve oversized values through omittedPaths. Pass snapshot to reject changed source content.", inputSchema: readIssueSectionInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: false }, ({ context }) => jsonResult(readIssueSection(context, input)))));
+
   server.registerTool("claim_issue", { title: "Claim issue", description: "Atomically claim active unassigned backlog/unstarted work for the current actor. Claims have no lease; release through assign_issue with actor:null. Conflicts require a fresh read.", inputSchema: claimIssueInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: true }, ({ context }) => jsonResult(serializeIssue(claimIssue(context, input.identifier, input))))));
 
   server.registerTool(
@@ -100,13 +103,13 @@ export function registerIssueTools(
     "get_issue",
     {
       title: "Get issue",
-      description: "Read one issue by identifier. Comments default to the latest 10; use comments: 'all' for full fidelity or commentCursor/commentLimit to page oldest to newest.",
+      description: "Read one issue by identifier. Use fields/maxBytes for bounded selection with explicit omissions. For independently paged complete comments use read_issue_section path:[comments]. Legacy comments default to the latest 10; use comments: 'all' for full fidelity or commentCursor/commentLimit to page oldest to newest.",
       inputSchema: getIssueInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = getIssueInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(serializeIssue(getIssue(context, parsed.identifier, parsed)))
+        jsonResult(getIssueResponse(context, parsed))
       );
     })
   );
