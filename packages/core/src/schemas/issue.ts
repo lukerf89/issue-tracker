@@ -12,6 +12,7 @@ import type {
 } from "../services/issue.js";
 import { ISSUE_PROJECTABLE_FIELDS } from "../services/issue.js";
 import {
+  dateOnlyStringSchema,
   cursorSchema,
   optionalNullableDateOnlyStringSchema,
   nonEmptyStringSchema,
@@ -59,6 +60,16 @@ export const createIssueInputSchema = z.strictObject({
 }).superRefine(validateIssueAliases) satisfies z.ZodType<CreateIssueInput>;
 
 export const listIssueFiltersSchema = z.strictObject({
+  stateType: z.enum(["backlog", "unstarted", "started", "completed", "canceled"]).optional(),
+  ready: z.boolean().optional().describe("Active backlog/unstarted issue with no active nonterminal blockers; assignment is a separate filter."),
+  parent: optionalNullableStringSchema,
+  blockedBy: nonEmptyStringSchema.optional(),
+  blocks: nonEmptyStringSchema.optional(),
+  repository: nonEmptyStringSchema.optional().describe("Effective repository ID/name; issue overrides replace project routing."),
+  updatedSince: z.iso.datetime({ offset: true }).optional(),
+  dueFrom: dateOnlyStringSchema.optional(),
+  dueTo: dateOnlyStringSchema.optional(),
+  sort: z.enum(["identifier", "priority", "updatedAt"]).optional().describe("Lists default to identifier; search defaults to relevance. Priority 0 sorts last; updatedAt sorts newest first."),
   state: nonEmptyStringSchema.optional(),
   assignee: optionalNullableStringSchema,
   project: optionalNullableStringSchema,
@@ -68,20 +79,20 @@ export const listIssueFiltersSchema = z.strictObject({
   cycle: cycleRefSchema.optional(),
   limit: z.number().int().min(1).max(250).optional().describe("Page size: 1–250; default 50 for paginated reads."),
   includeArchived: z.boolean().optional()
-}) satisfies z.ZodType<ListIssueFilters>;
+}).refine((input) => !input.dueFrom || !input.dueTo || input.dueFrom <= input.dueTo, { path: ["dueTo"], message: "dueTo must be on or after dueFrom." }) satisfies z.ZodType<ListIssueFilters>;
 
-export const searchInputSchema = listIssueFiltersSchema.extend({
+export const searchInputSchema = listIssueFiltersSchema.safeExtend({
   query: nonEmptyStringSchema.describe("Free text: alphanumeric tokens are ANDed prefix matches; FTS operators are literal text.")
 }) satisfies z.ZodType<SearchIssuesInput>;
 
 export const issueProjectionFieldSchema = z.enum(ISSUE_PROJECTABLE_FIELDS);
 
-export const issuePageOptionsSchema = listIssueFiltersSchema.extend({
+export const issuePageOptionsSchema = listIssueFiltersSchema.safeExtend({
   cursor: cursorSchema.optional(),
   fields: z.array(issueProjectionFieldSchema).optional()
 });
 
-export const searchPageInputSchema = issuePageOptionsSchema.extend({
+export const searchPageInputSchema = issuePageOptionsSchema.safeExtend({
   query: nonEmptyStringSchema.describe("Free text: alphanumeric tokens are ANDed prefix matches; FTS operators are literal text.")
 });
 

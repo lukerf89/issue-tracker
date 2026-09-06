@@ -30,7 +30,7 @@ export const listIssuesWithViewInputSchema = z.object({
   filters: listIssueFiltersSchema.optional()
 }) satisfies z.ZodType<ListIssuesWithViewInput>;
 
-export const listIssuesWithViewToolInputSchema = listIssueFiltersSchema.extend({
+export const listIssuesWithViewToolInputSchema = listIssueFiltersSchema.safeExtend({
   view: nonEmptyStringSchema.optional()
 });
 
@@ -41,6 +41,6 @@ export const listIssuesPageWithViewInputSchema = z.object({
   fields: z.array(issueProjectionFieldSchema).optional()
 });
 
-export const listIssuesPageWithViewToolInputSchema = issuePageOptionsSchema.extend({
+export const listIssuesPageWithViewToolInputSchema = issuePageOptionsSchema.safeExtend({
   view: nonEmptyStringSchema.optional()
 });
