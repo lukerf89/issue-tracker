@@ -12,6 +12,7 @@ import {
   createActor,
   createIssue,
   createSavedView,
+  createTeam,
   init,
   moveIssue,
   openDb,
@@ -75,7 +76,7 @@ describe("LinekeeperApp render", () => {
       const listFrame = stripAnsi(view.lastFrame() ?? "");
 
       expect(listFrame).toContain("Linekeeper");
-      expect(listFrame).toContain("Linekeeper | ENG | Issues | 3 issues");
+      expect(listFrame).toContain("Linekeeper | ENG | Issues | 3 loaded");
       expect(listFrame).toContain("up/down move | enter open");
       expect(listFrame).toContain("Issues");
       expect(listFrame).toContain("ENG-1");
@@ -173,6 +174,67 @@ describe("LinekeeperApp render", () => {
       for (const input of ["f", "team=all", "\r"]) { await tick(); view.stdin.write(input); }
       await tick();
       expect(stripAnsi(view.lastFrame() ?? "")).toContain("| all teams |");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
+  it("loads beyond 100 on navigation, goes backward, and resets for a new query", async () => {
+    const setup = initializedContext();
+    try {
+      for (let i = 0; i < 105; i++) createIssue(setup.context, { title: `Cursor task ${i}` });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath }));
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("100 loaded · more available");
+      view.stdin.write("G"); await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("105 loaded · end of results");
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("ENG-105");
+      view.stdin.write("k"); await tick();
+      view.stdin.write("\r"); await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("ENG-104  Cursor task 103");
+      view.stdin.write("\u001b"); await tick();
+      for (const input of ["/", "absent", "\r"]) { view.stdin.write(input); await tick(); }
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("0 loaded · end of results");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
+  it("keeps the selection when a new row pushes it past the loaded depth", async () => {
+    const setup = initializedContext();
+    try {
+      createTeam(setup.context, { key: "OPS", name: "Operations" });
+      for (let i = 0; i < 99; i++) createIssue(setup.context, { title: `Eng task ${i}` });
+      createIssue(setup.context, { title: "Ops task 0", team: "OPS" });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath }));
+      await tick();
+      // Lists sort by team key, so the single OPS row is last — at index 99 of
+      // the 100 loaded.
+      view.stdin.write("G"); await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("100 loaded");
+      // A new ENG issue sorts ahead of it, shifting it to index 100: one past
+      // the depth that was loaded, but still in the query.
+      for (const input of ["n", "Eng newcomer", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      view.stdin.write("\r"); await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("OPS-1  Ops task 0");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
+  it("re-pages only to the depth already loaded when a refresh drops the selected issue", async () => {
+    const setup = initializedContext();
+    try {
+      for (let i = 0; i < 205; i++) createIssue(setup.context, { title: `Cursor task ${i}` });
+      createSavedView(setup.context, { name: "Todo queue", filters: { state: "Todo" } });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath }));
+      for (const input of ["v", "Todo queue", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("100 loaded · more available");
+      // Moving the selection out of the view refreshes from page one. The row is
+      // gone for good, so the reload stops one page past the depth already on
+      // screen instead of walking every remaining page hunting for it.
+      for (const input of ["m", "Done", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("200 loaded · more available");
       view.unmount();
     } finally { setup.close(); }
   });

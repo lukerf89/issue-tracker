@@ -12,6 +12,7 @@ import {
   executeLinekeeperCommand,
   effectiveLoadOptions,
   loadLinekeeperData,
+  loadMoreLinekeeperData,
   parseFilterInput,
   removeFilterKey,
   type LinekeeperCommand,
@@ -94,10 +95,38 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
   const bodyCapacity = Math.max(3, rows - (2 + chipLines + 2 + activityLines + 1));
 
   function reload(nextOptions: LinekeeperLoadOptions = loadOptions): LinekeeperData {
-    const nextData = loadLinekeeperData(context, nextOptions);
+    let nextData = loadLinekeeperData(context, nextOptions);
+    // Refreshing in place (after a mutation) starts back at page one, so re-page
+    // up to the depth already on screen and no further: a mutation can drop the
+    // selected issue out of the query entirely, and hunting for it would walk
+    // every remaining page of the result set.
+    const depth = nextOptions === loadOptions ? data.issues.length : 0;
+    while (nextData.issues.length < depth && nextData.nextCursor) {
+      nextData = loadMoreLinekeeperData(context, nextData);
+    }
+    // The mutation may also have inserted rows ahead of the selection, pushing
+    // it just past the old depth. Look one page further, and only that far.
+    if (depth && selectedIssue && nextData.nextCursor &&
+      !nextData.issues.some(issue => issue.id === selectedIssue.id)) {
+      nextData = loadMoreLinekeeperData(context, nextData);
+    }
     setData(nextData);
-    dispatchBase({ type: "clampSelection" });
+    const index = nextData.issues.findIndex(issue => issue.id === selectedIssue?.id);
+    dispatchBase({ type: "selectIndex", index: Math.max(0, index) });
     return nextData;
+  }
+
+  function navigateSelection(target: number): void {
+    try {
+      let next = data;
+      while (target >= next.issues.length && next.nextCursor) {
+        next = loadMoreLinekeeperData(context, next);
+      }
+      setData(next);
+      dispatchBase({ type: "selectIndex", index: Math.max(0, Math.min(target, next.issues.length - 1)) });
+    } catch (error) {
+      dispatchBase({ type: "setStatus", message: `Could not load more issues: ${error instanceof Error ? error.message : String(error)}. Retry navigation.` });
+    }
   }
 
   useInput((input, key) => {
@@ -162,10 +191,12 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
         // Page by the number of visible list rows, not raw lines: in search mode
         // each result is two lines, so a full page is ~half as many issues.
         const step = Math.max(1, Math.floor((bodyCapacity - 1) / (data.search ? 2 : 1)));
-        dispatchBase({ type: "moveSelection", delta: action.delta * step });
+        navigateSelection(uiState.selectedIndex + action.delta * step);
       }
       return;
     }
+    if (action.type === "moveSelection") { navigateSelection(uiState.selectedIndex + action.delta); return; }
+    if (action.type === "selectBottom") { navigateSelection(Number.POSITIVE_INFINITY); return; }
     if (action.type === "removeChip") {
       const chip = chips[action.index];
       // No chip at that number: leave it a silent no-op, as digits were before.
@@ -265,6 +296,7 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
   function reloadAndCommit(nextOptions: LinekeeperLoadOptions): LinekeeperData {
     const nextData = reload(nextOptions);
     setLoadOptions(nextOptions);
+    dispatchBase({ type: "selectTop" });
     return nextData;
   }
 
@@ -319,7 +351,7 @@ function Header({ data }: { data: LinekeeperData }) {
     <Box flexDirection="column" paddingX={1}>
       <Text wrap="truncate">
         <Text bold>Linekeeper</Text>
-        <Text color="gray"> | {teamLabel} | {viewLabel} | {count} issues | {data.filters.includeArchived ? "including archived" : "non-archived"}</Text>
+        <Text color="gray"> | {teamLabel} | {viewLabel} | {count} loaded{data.nextCursor ? " · more available" : " · end of results"} | {data.filters.includeArchived ? "including archived" : "non-archived"}</Text>
       </Text>
       <Text color="gray" wrap="truncate">
         up/down move | enter open | r run | x stop | F fleet | supervisor {data.supervisor.healthy ? "online" : "offline: start tracker-agentd"} | ? help | q quit
