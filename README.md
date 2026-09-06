@@ -227,3 +227,14 @@ unassigned backlog/unstarted work to the current actor. A second claim conflicts
 including a replay by the same actor; there is no lease or automatic expiry.
 Release ownership through ordinary assignment with a null actor. Claims do not
 change workflow state or guarantee dependencies are satisfied.
+
+### Compact mutation receipts
+
+Issue create/update/move/assign/archive/unarchive accept `response: "compact"`
+(CLI: `--response compact --json`). The default remains `full` for compatibility.
+Compact JSON contains `identifier`, `changed`, sorted `changedFields`, `revision`,
+`updatedAt`, and `alreadyExisted` (null for non-create operations). It reports
+field names, never their potentially large contents; use an explicit issue read
+for values. Scalar no-ops and idempotent create replays return `changed: false`.
+Before/after comparison and mutation run in one transaction. Full responses
+retain descriptions, relations, and the normal comment paging behavior.

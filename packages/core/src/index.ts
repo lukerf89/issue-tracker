@@ -454,3 +454,5 @@ export type {
 export { claimIssue } from "./services/issue.js";
 export { claimIssueInputSchema } from "./schemas/issue.js";
 export { assertIssueRevision, type IssueWriteOptions } from "./services/issue-revision.js";
+
+export { withIssueMutationReceipt, serializeIssueMutation, issueResponseSchema, type IssueWithReceipt } from "./services/issue-receipt.js";

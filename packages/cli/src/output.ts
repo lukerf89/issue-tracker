@@ -1,4 +1,6 @@
 import {
+  serializeIssueMutation,
+  type IssueWithReceipt,
   AppErrorCode,
   errorEnvelope,
   getActor,
@@ -36,6 +38,7 @@ import pc from "picocolors";
 
 export interface OutputOptions {
   json?: boolean;
+  response?: string;
 }
 
 export interface IssueListRow {
@@ -282,7 +285,7 @@ export function printIssue(
 ): void {
   if (options.json) {
     printJson(
-      meta?.alreadyExisted === undefined
+      options.response ? serializeIssueMutation(issue as IssueWithReceipt, options.response) : meta?.alreadyExisted === undefined
         ? serializeIssue(issue)
         : { ...serializeIssue(issue), alreadyExisted: meta.alreadyExisted }
     );
