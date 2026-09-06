@@ -284,3 +284,32 @@ snapshot. Invalid/cross-query/cross-tool cursors return `VALIDATION_FAILED`.
 Legacy numeric offsets are temporarily accepted as input for compatibility (with
 their original weaker semantics); every new continuation is opaque. Comment
 cursors retain their separate existing contract.
+
+### Bounded issue details
+
+`get_issue({identifier:"ENG-1", fields:["title","description"], maxBytes:4096})`
+returns a selection envelope: `data`, `omittedFields`, `snapshot`, and the
+`read_issue_section` retrieval tool. The budget is serialized UTF-8 JSON bytes,
+not tokens (1–64 KiB, default 16 KiB). Omitted fields are never silently discarded.
+Legacy get_issue without fields/maxBytes retains its existing full response and
+comment options. Do not combine bounded selection with legacy comment options.
+
+`get_issues` reads 1–10 identifiers with a **total** budget (8–64 KiB, default
+16 KiB), shared evenly. Unknown issues fail the batch. CLI equivalents:
+`issue view ENG-1 --fields title,description --max-bytes 4096 --json` and
+`issue read-many ENG-1 ENG-2 --fields title,description --json`.
+
+Read omitted content with `read_issue_section({identifier:"ENG-1",
+path:["description"], snapshot:"...", maxBytes:4096})`. Follow `nextCursor` and
+concatenate string `value` chunks exactly; Unicode characters are not split.
+Arrays (comments, children, attachments, dependencies) page independently with
+`limit` and a byte budget. Oversized array entries are null placeholders with
+explicit `omittedPaths`; read each indicated path (e.g. `["comments",0]`, then
+`["comments",0,"body"]`) to recover its content. Objects omit oversized fields
+with the same path mechanism. Comments in this section API include the complete
+history, so older comments are reachable without guessing a legacy offset.
+CLI: `issue read-section ENG-1 --path comments.0.body --max-bytes 4096 --json`.
+Pass the selection's snapshot to require consistent content. Section cursors bind
+path and source snapshot; changed data returns ISSUE_CURSOR_STALE and requires a
+fresh selection. Budgets bound output, not database hydration; selective loading
+optimization remains separate work.

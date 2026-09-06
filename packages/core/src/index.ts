@@ -456,3 +456,6 @@ export { claimIssueInputSchema } from "./schemas/issue.js";
 export { assertIssueRevision, type IssueWriteOptions } from "./services/issue-revision.js";
 
 export { withIssueMutationReceipt, serializeIssueMutation, issueResponseSchema, type IssueWithReceipt } from "./services/issue-receipt.js";
+
+export { getIssueResponse, getIssuesResponse, readIssueSection } from "./services/issue-read.js";
+export { getIssuesInputSchema, readIssueSectionInputSchema } from "./schemas/issue-read.js";

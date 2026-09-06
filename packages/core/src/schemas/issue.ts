@@ -1,3 +1,4 @@
+import { detailFieldSchema, detailBudgetSchema } from "./issue-read.js";
 import { z } from "zod";
 import { validateIssueAliases, validateIssueUpdate } from "./issue-validation.js";
 
@@ -27,11 +28,13 @@ const optionalPrioritySchema = prioritySchema.optional();
 const optionalNullableCycleRefSchema = cycleRefSchema.nullable().optional();
 
 export const getIssueInputSchema = z.strictObject({
+  fields: z.array(detailFieldSchema).optional(),
+  maxBytes: detailBudgetSchema.optional(),
   identifier: nonEmptyStringSchema,
   comments: z.enum(["none", "latest", "all"]).optional(),
   commentCursor: cursorSchema.optional(),
   commentLimit: z.number().int().positive().max(100).optional()
-});
+}).refine((input) => !(input.fields !== undefined || input.maxBytes !== undefined) || (input.comments === undefined && input.commentCursor === undefined && input.commentLimit === undefined), { message: "Bounded reads use independent section paging; omit legacy comment options." });
 
 export const createIssueInputSchema = z.strictObject({
   title: nonEmptyStringSchema,
