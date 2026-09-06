@@ -197,6 +197,25 @@ describe("LinekeeperApp render", () => {
     } finally { setup.close(); }
   });
 
+  it("re-pages only to the depth already loaded when a refresh drops the selected issue", async () => {
+    const setup = initializedContext();
+    try {
+      for (let i = 0; i < 205; i++) createIssue(setup.context, { title: `Cursor task ${i}` });
+      createSavedView(setup.context, { name: "Todo queue", filters: { state: "Todo" } });
+      const view = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath }));
+      for (const input of ["v", "Todo queue", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("100 loaded · more available");
+      // Moving the selection out of the view refreshes from page one. The row is
+      // gone for good, so the reload must stop at the depth already on screen
+      // instead of walking every remaining page hunting for it.
+      for (const input of ["m", "Done", "\r"]) { await tick(); view.stdin.write(input); }
+      await tick();
+      expect(stripAnsi(view.lastFrame() ?? "")).toContain("100 loaded · more available");
+      view.unmount();
+    } finally { setup.close(); }
+  });
+
   it("renders a highlighted bm25 excerpt line under each search result", async () => {
     const setup = initializedContext();
 

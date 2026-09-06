@@ -96,8 +96,12 @@ export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppPro
 
   function reload(nextOptions: LinekeeperLoadOptions = loadOptions): LinekeeperData {
     let nextData = loadLinekeeperData(context, nextOptions);
-    while (nextOptions === loadOptions && selectedIssue && nextData.nextCursor &&
-      !nextData.issues.some(issue => issue.id === selectedIssue.id)) {
+    // Refreshing in place (after a mutation) starts back at page one, so re-page
+    // up to the depth already on screen and no further: a mutation can drop the
+    // selected issue out of the query entirely, and hunting for it would walk
+    // every remaining page of the result set.
+    const depth = nextOptions === loadOptions ? data.issues.length : 0;
+    while (nextData.issues.length < depth && nextData.nextCursor) {
       nextData = loadMoreLinekeeperData(context, nextData);
     }
     setData(nextData);
