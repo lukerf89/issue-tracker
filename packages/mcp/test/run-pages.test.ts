@@ -82,6 +82,28 @@ it("pages run summaries, views and records identically over MCP and the CLI", as
   } finally { rmSync(root, { recursive: true, force: true }); await f.close(); }
 });
 
+it("returns compact retry responses identically over MCP and the CLI", async () => {
+  const f = await agentFixture();
+  const root = mkdtempSync(join(tmpdir(), "tracker-run-pages-"));
+  try {
+    const { terminal } = seed(f.context, root);
+    const cli = (args: string[]) => JSON.parse(f.cli([...args, "--json"]));
+    const client = (f.context.db as unknown as { $client: { prepare(sql: string): { run(...values: unknown[]): unknown } } }).$client;
+    const retryProject = createProject(f.context, { name: "Fictional Retries" });
+    const block = client.prepare("UPDATE agent_runs SET issue_id = ?, state = 'blocked', completed_at = NULL, outcome = NULL WHERE id = ?");
+    block.run(createIssue(f.context, { title: "Retry fictional build", projectId: retryProject.id }).id, terminal[2]);
+    block.run(createIssue(f.context, { title: "Retry fictional deploy", projectId: retryProject.id }).id, terminal[3]);
+    const retried = await f.call("retry_run", { run: terminal[2], view: "summary" });
+    expect(retried.error).toBe(false);
+    expect(retried.data).toMatchObject({ id: terminal[2], state: "running" });
+    expect(retried.data).not.toHaveProperty("resolvedConfiguration");
+    expect(cli(["run", "view", terminal[2]!, "--view", "summary"])).toEqual(retried.data);
+    const cliRetried = cli(["run", "retry", terminal[3]!, "--view", "summary"]);
+    expect(cliRetried).not.toHaveProperty("resolvedConfiguration");
+    expect((await f.call("get_run", { run: terminal[3], view: "summary" })).data).toEqual(cliRetried);
+  } finally { rmSync(root, { recursive: true, force: true }); await f.close(); }
+});
+
 it("returns identical error envelopes for bad cursors, unknown runs and invalid collections", async () => {
   const f = await agentFixture();
   const root = mkdtempSync(join(tmpdir(), "tracker-run-pages-"));
