@@ -20,6 +20,7 @@ const CODING_TOOLS = [
   "get_issue",
   "get_issues",
   "link_issue",
+  "list_activity_feed",
   "list_builtin_views",
   "list_issues",
   "list_saved_views",

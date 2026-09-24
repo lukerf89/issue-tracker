@@ -1,5 +1,5 @@
 import type { Activity, Actor, Attachment, Comment, Cycle, Issue, Label, Project, Team, WorkflowState } from "./db/schema.js";
-import type { ActivityFeedEvent } from "./services/activity.js";
+import type { ActivityFeed, ActivityFeedEvent, ActivityPage } from "./services/activity.js";
 import type { SavedViewWithFilters } from "./services/savedView.js";
 import type { TemplateWithLabels } from "./services/template.js";
 
@@ -275,6 +275,23 @@ export function serializeActivityEvent(entry: ActivityFeedEvent) {
     cursor: entry.cursor,
     issueIdentifier: entry.issueIdentifier,
     ...serializeActivity(entry)
+  };
+}
+
+export function serializeActivityFeed(feed: ActivityFeed) {
+  return {
+    events: feed.events.map(serializeActivityEvent),
+    cursor: feed.cursor,
+    hasMore: feed.hasMore
+  };
+}
+
+export function serializeActivityPage(page: ActivityPage) {
+  return {
+    issue: { id: page.issue.id, identifier: page.issue.identifier },
+    entries: page.entries.map((entry) => ({ cursor: entry.cursor, ...serializeActivity(entry) })),
+    cursor: page.cursor,
+    hasMore: page.hasMore
   };
 }
 

@@ -76,6 +76,8 @@ import {
   listActivityInputSchema,
   listActivitySince,
   listActivitySinceInputSchema,
+  listActivityPageInputSchema,
+  listIssueActivityPage,
   listActors,
   listActorsInputSchema,
   linkIssueInputSchema,
@@ -183,6 +185,8 @@ import {
   printActors,
   printActivity,
   printActivityEvents,
+  printActivityFeed,
+  printActivityPage,
   printAttachment,
   printComment,
   printCycle,
@@ -771,11 +775,27 @@ export function createProgram(): Command {
   issue
     .command("history")
     .argument("<identifier>")
+    .option("--after <cursor>", "activity cursor to page after")
+    .option("--limit <number>", "maximum entries per page (default 50, max 500)", parseInteger)
+    .option("--full", "print the complete legacy history (no paging)")
     .option("--json", "print JSON output")
     .action((identifier, _options, command) =>
       withContext(command, { requireActor: false }, (cli) => {
-        const input = listActivityInputSchema.parse({ issue: identifier });
-        printActivity(listActivity(cli.context, input), optionsWithGlobals(command));
+        const options = optionsWithGlobals(command);
+        const input = listActivityPageInputSchema.parse(omitUndefined({
+          issue: identifier,
+          after: stringOption(options.after),
+          limit: numberOption(options.limit),
+          full: booleanOption(options.full)
+        }));
+        if (input.full === true) {
+          printActivity(
+            listActivity(cli.context, listActivityInputSchema.parse({ issue: input.issue })),
+            options
+          );
+          return;
+        }
+        printActivityPage(listIssueActivityPage(cli.context, input), options);
       })
     );
   issue
@@ -1134,6 +1154,23 @@ export function createProgram(): Command {
     );
 
   program
+    .command("activity")
+    .description("print one bounded page of the incremental activity feed")
+    .option("--since <cursor>", "activity cursor to start after")
+    .option("--team <key>", "team key or id")
+    .option("--assignee <actor>", "assignee id or handle")
+    .option("--issue <identifier>", "issue id or identifier")
+    .option("--project <project>", "project id or name")
+    .option("--limit <number>", "maximum events (default 100, max 500)", parseInteger)
+    .option("--json", "print JSON output")
+    .action((_options, command) =>
+      withContext(command, { requireActor: false }, (cli) => {
+        const options = optionsWithGlobals(command);
+        printActivityFeed(listActivitySince(cli.context, activitySinceInput(options)));
+      })
+    );
+
+  program
     .command("watch")
     .description("print activity feed events as JSONL")
     .option("--since <cursor>", "activity cursor to start after")
@@ -1141,6 +1178,8 @@ export function createProgram(): Command {
     .option("--interval <ms>", "poll interval in milliseconds", parsePositiveInteger)
     .option("--team <key>", "team key or id")
     .option("--assignee <actor>", "assignee id or handle")
+    .option("--issue <identifier>", "issue id or identifier")
+    .option("--project <project>", "project id or name")
     .option("--limit <number>", "maximum events per poll", parsePositiveInteger)
     .option("--json", "emit JSONL output")
     .action((_options, command) =>
@@ -1668,6 +1707,8 @@ function activitySinceInput(options: Record<string, unknown>): ListActivitySince
     cursor: stringOption(options.since),
     team: stringOption(options.team),
     assignee: stringOption(options.assignee),
+    issue: stringOption(options.issue),
+    project: stringOption(options.project),
     limit: numberOption(options.limit)
   }));
 }

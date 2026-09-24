@@ -33,6 +33,7 @@ const EXPECTED_RETAINED_TOOL_NAMES = [
   "search",
   "get_issue",
   "list_activity",
+  "list_activity_feed",
   "create_issue",
   "update_issue",
   "move_issue",

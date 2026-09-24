@@ -74,6 +74,8 @@ export {
 export {
   serializeActivity,
   serializeActivityEvent,
+  serializeActivityFeed,
+  serializeActivityPage,
   serializeActor,
   serializeAttachment,
   serializeAttachmentMutation,
@@ -93,6 +95,10 @@ export {
   appendActivity,
   listActivity,
   listActivitySince,
+  listIssueActivityPage,
+  type ActivityPage,
+  type ActivityPageEntry,
+  type ListActivityPageInput,
   type ActivityFeed,
   type ActivityFeedEvent,
   type ActivityFeedIssue,
@@ -365,7 +371,9 @@ export {
 export { requestRunCleanup, assertContained } from "./services/run-cleanup.js";
 export { getRunMetrics } from "./services/run-metrics.js";
 export {
+  activityLimitSchema,
   listActivityInputSchema,
+  listActivityPageInputSchema,
   listActivitySinceInputSchema,
 } from "./schemas/activity.js";
 export {

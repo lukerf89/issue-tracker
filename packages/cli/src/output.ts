@@ -8,6 +8,8 @@ import {
   serializeActor,
   serializeActivity,
   serializeActivityEvent,
+  serializeActivityFeed,
+  serializeActivityPage,
   serializeAttachmentMutation,
   serializeCommentMutation,
   serializeCycle,
@@ -19,7 +21,9 @@ import {
   serializeTeam,
   serializeTemplate,
   type Actor,
+  type ActivityFeed,
   type ActivityFeedEvent,
+  type ActivityPage,
   type ActivityWithActor,
   type AddAttachmentResult,
   type AddCommentResult,
@@ -196,6 +200,34 @@ export function printActivity(
       ].filter(Boolean).join("  ") + "\n"
     );
   }
+}
+
+export function printActivityPage(page: ActivityPage, options: OutputOptions): void {
+  const serialized = serializeActivityPage(page);
+
+  if (options.json) {
+    printJson(serialized);
+    return;
+  }
+
+  for (const entry of serialized.entries) {
+    process.stdout.write(
+      [
+        entry.createdAt,
+        pc.bold(`@${entry.actor.handle}`),
+        entry.action,
+        formatActivityData(entry.data)
+      ].filter(Boolean).join("  ") + "\n"
+    );
+  }
+
+  if (serialized.hasMore) {
+    process.stdout.write(pc.dim(`next: ${serialized.cursor}`) + "\n");
+  }
+}
+
+export function printActivityFeed(feed: ActivityFeed): void {
+  printJson(serializeActivityFeed(feed));
 }
 
 export function printActivityEvents(entries: ActivityFeedEvent[]): void {
