@@ -304,6 +304,47 @@ describe("run launch freezes the work context", () => {
     } finally { f.close(); }
   });
 
+  it("fails preview with a run-specific, actionable error when the minimum exceeds the fixed snapshot budget", () => {
+    const f = setup();
+    try {
+      const criteria = Array.from({ length: 200 }, (_, n) => `Criterion ${n}: ` + "fictional requirement ".repeat(5));
+      updateIssue(f.context, "ENG-1", { description: "## Done when\n" + criteria.map((item) => `- ${item.trim()}`).join("\n") });
+      const error = captureError(() => previewRun(f.context, { issue: "ENG-1" }, f.runtime));
+      expect(error.code).toBe("RUN_WORK_CONTEXT_TOO_LARGE");
+      expect(error.message).toMatch(/^Issue ENG-1 work context needs \d+ bytes; the run snapshot budget is 16384\. Shorten the acceptance criteria or split the issue\.$/);
+      expect(error.message).not.toMatch(/increase maxBytes/);
+      const details = error.details as { identifier: string; minimumBytes: number; maxBytes: number };
+      expect(details).toMatchObject({ identifier: "ENG-1", maxBytes: 16384 });
+      expect(details.minimumBytes).toBeGreaterThan(16384);
+      expect(captureError(() => f.launch()).code).toBe("RUN_WORK_CONTEXT_TOO_LARGE");
+      // The live read keeps its own maxBytes-oriented error, since that caller can raise the budget.
+      expect(captureError(() => getWorkContext(f.context, { identifier: "ENG-1" }))).toMatchObject({ code: "VALIDATION_FAILED", message: expect.stringMatching(/increase maxBytes/) });
+    } finally { f.close(); }
+  });
+
+  it("reports comments and decisions added after launch as snapshot staleness", () => {
+    const f = setup();
+    try {
+      f.tick();
+      const first = addComment(f.context, { issue: "ENG-1", body: "Progress note before launch" });
+      const run = f.launch();
+      const stored = getWorkContext(f.context, { identifier: "ENG-1", run: run.id });
+      expect(stored.staleness).toEqual({ stale: false, changes: [], omittedChangeCount: 0 });
+      const before = stored.context.sourceRevisions.comments;
+      expect(before).toMatchObject({ count: 1, decisionCount: 0, latestCommentId: first.id });
+
+      f.tick();
+      const decision = addComment(f.context, { issue: "ENG-1", body: "Decision: switch to fictional runners" });
+      const after = getWorkContext(f.context, { identifier: "ENG-1", run: run.id });
+      expect(after.context).toEqual(stored.context);
+      expect(after.staleness!.stale).toBe(true);
+      expect(after.staleness!.changes).toEqual([{
+        kind: "comments", before,
+        after: { count: 2, decisionCount: 1, latestCommentId: decision.id, latestCreatedAt: decision.createdAt }
+      }, { kind: "issue", identifier: "ENG-1", change: "changed", before: stored.context.sourceRevisions.issue.revision, after: expect.any(Number) }]);
+    } finally { f.close(); }
+  });
+
   it("raises RUN_PREVIEW_STALE when a comment lands between preview and start", () => {
     const f = setup();
     try {

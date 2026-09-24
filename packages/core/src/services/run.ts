@@ -17,7 +17,7 @@ import { getProfile } from "./profile.js";
 import { engineHealthFingerprint, engineHealthProblem, getEngineHealth } from "./engine-health.js";
 import { resolveIssueRepositories, type RepositoryInspector } from "./repository.js";
 import { stableHash } from "./stable-hash.js";
-import { buildWorkContext, RUN_WORK_CONTEXT_MAX_BYTES } from "./work-context.js";
+import { buildWorkContext, RUN_WORK_CONTEXT_MAX_BYTES, WorkContextMinimumExceededError } from "./work-context.js";
 
 const TERMINAL_STATES = new Set<RunState>(["succeeded", "partial", "failed", "canceled", "crashed"]);
 const TRANSITIONS: Record<RunState, readonly RunState[]> = {
@@ -38,6 +38,23 @@ export interface RunResolutionRuntime {
   engineHealthTtlMs?: number;
 }
 
+/**
+ * The run snapshot has a fixed budget and no caller-supplied maxBytes, so "increase maxBytes" is not
+ * actionable here: an issue whose mandatory minimum cannot fit fails with a run-specific error.
+ */
+function buildRunWorkContext(context: ServiceContext, identifier: string) {
+  try {
+    return buildWorkContext(context, identifier, RUN_WORK_CONTEXT_MAX_BYTES);
+  } catch (error) {
+    if (!(error instanceof WorkContextMinimumExceededError)) throw error;
+    throw new AppError(
+      AppErrorCode.RUN_WORK_CONTEXT_TOO_LARGE,
+      `Issue ${error.identifier} work context needs ${error.minimumBytes} bytes; the run snapshot budget is ${error.maxBytes}. Shorten the acceptance criteria or split the issue.`,
+      { identifier: error.identifier, minimumBytes: error.minimumBytes, maxBytes: error.maxBytes }
+    );
+  }
+}
+
 export function previewRun(context: ServiceContext, input: PreviewRunInput, runtime: RunResolutionRuntime) {
   // Phase A: every database read happens in one read transaction, so the issue, routing, run
   // ordinal, engine health and the frozen work context describe the same source state.
@@ -56,7 +73,7 @@ export function previewRun(context: ServiceContext, input: PreviewRunInput, runt
         if (definition) engineHealth.set(engineName, getEngineHealth(tx, engineName, engineHealthFingerprint(engineName, definition)));
       }
     }
-    const workContext = buildWorkContext(tx, issue.identifier, RUN_WORK_CONTEXT_MAX_BYTES);
+    const workContext = buildRunWorkContext(tx, issue.identifier);
     return { issue, profile, repositories, priorRunCount, engineHealth, workContext };
   });
   // Phase B: filesystem inspection and snapshot assembly, outside the database transaction.

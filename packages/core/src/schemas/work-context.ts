@@ -38,6 +38,14 @@ const provenanceSchema = z.strictObject({
 const sectionBase = { provenance: provenanceSchema, retrieval: workContextRetrievalSchema, truncated: z.boolean() };
 const stateSchema = z.strictObject({ name: z.string(), type: stateTypeSchema });
 const revisionRefSchema = z.strictObject({ identifier: z.string().min(1), revision: z.number().int().positive() });
+// Comments are append-only and never bump issue.revision, so the comment history gets its own
+// watermark: a new comment (decision or not) always changes count and latestCommentId.
+export const workContextCommentWatermarkSchema = z.strictObject({
+  count: z.number().int().nonnegative(),
+  decisionCount: z.number().int().nonnegative(),
+  latestCommentId: z.string().min(1).nullable(),
+  latestCreatedAt: z.string().datetime({ offset: true }).nullable()
+});
 
 export const workContextRoutingEntrySchema = z.strictObject({
   repositoryId: z.string().min(1),
@@ -62,6 +70,7 @@ export const workContextSchema = z.strictObject({
     issue: revisionRefSchema,
     parent: revisionRefSchema.nullable(),
     blockers: z.array(revisionRefSchema),
+    comments: workContextCommentWatermarkSchema,
     repositories: z.strictObject({
       routingFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
       source: routingSourceSchema,
@@ -134,6 +143,11 @@ export const workContextChangeSchema = z.discriminatedUnion("kind", [
     change: z.enum(["added", "removed", "changed"]),
     before: workContextRoutingEntrySchema.nullable(),
     after: workContextRoutingEntrySchema.nullable()
+  }),
+  z.strictObject({
+    kind: z.literal("comments"),
+    before: workContextCommentWatermarkSchema,
+    after: workContextCommentWatermarkSchema
   }),
   z.strictObject({
     kind: z.literal("routing"),

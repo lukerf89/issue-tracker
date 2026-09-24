@@ -11,6 +11,13 @@ import { fitStringPrefix, jsonBytes } from "./json-budget.js";
 import { repositoryRoutingForIssue, repositoryRoutingStatus, type RepositoryRoutingCandidate, type RepositoryRoutingSource } from "./repository.js";
 import { stableHash, stableStringify } from "./stable-hash.js";
 
+/** Raised when even the mandatory minimum of a work context cannot fit the requested budget. */
+export class WorkContextMinimumExceededError extends AppError {
+  constructor(readonly identifier: string, readonly minimumBytes: number, readonly maxBytes: number) {
+    super(AppErrorCode.VALIDATION_FAILED, "Work context minimum (acceptance criteria and source revisions) exceeds maxBytes; increase maxBytes.", { minimumBytes, maxBytes });
+  }
+}
+
 /** Fixed budget of the work context frozen into a run snapshot at preview time. */
 export const RUN_WORK_CONTEXT_MAX_BYTES = 16384;
 
@@ -39,6 +46,7 @@ interface WorkSources {
   routing: { source: RepositoryRoutingSource; status: "resolved" | "ambiguous" | "missing"; primaryRepositoryId: string | null; candidates: RepositoryRoutingCandidate[] };
   decisions: CommentSource[];
   recentComments: CommentSource[];
+  latestComment: CommentSource | null;
 }
 
 /** Parses "Done when" / "Acceptance criteria" list blocks from Markdown, ignoring fenced code. */
@@ -100,7 +108,8 @@ function loadSources(context: ServiceContext, identifier: string): WorkSources {
     blockers,
     routing: repositoryRoutingForIssue(context, issue),
     decisions: history.filter((comment) => DECISION_PATTERN.test(comment.body)),
-    recentComments: history.filter((comment) => !DECISION_PATTERN.test(comment.body))
+    recentComments: history.filter((comment) => !DECISION_PATTERN.test(comment.body)),
+    latestComment: history[0] ?? null
   };
 }
 
@@ -114,6 +123,12 @@ function sourceRevisionsOf(sources: WorkSources): WorkContext["sourceRevisions"]
     issue: { identifier: sources.issue.identifier, revision: sources.issue.revision },
     parent: sources.parent ? { identifier: sources.parent.issue.identifier, revision: sources.parent.issue.revision } : null,
     blockers: sources.blockers.map(({ issue }) => ({ identifier: issue.identifier, revision: issue.revision })).sort((left, right) => compareIdentifiers(left.identifier, right.identifier)),
+    comments: {
+      count: sources.decisions.length + sources.recentComments.length,
+      decisionCount: sources.decisions.length,
+      latestCommentId: sources.latestComment?.id ?? null,
+      latestCreatedAt: sources.latestComment?.createdAt ?? null
+    },
     repositories: { routingFingerprint: stableHash({ source: sources.routing.source, entries }), source: sources.routing.source, entries }
   };
 }
@@ -247,7 +262,7 @@ export function buildWorkContext(context: ServiceContext, identifier: string, ma
   const fits = (candidate: Fill) => size(candidate) <= maxBytes;
   const minimumBytes = size(fill);
   if (minimumBytes > maxBytes) {
-    throw new AppError(AppErrorCode.VALIDATION_FAILED, "Work context minimum (acceptance criteria and source revisions) exceeds maxBytes; increase maxBytes.", { minimumBytes, maxBytes });
+    throw new WorkContextMinimumExceededError(sources.issue.identifier, minimumBytes, maxBytes);
   }
   const description = sources.issue.description;
   if (description) fill.descriptionEnd = fitStringPrefix(description, 0, (slice) => fits({ ...fill, descriptionEnd: slice.length }));
@@ -308,6 +323,7 @@ export function workContextStaleness(stored: WorkContext["sourceRevisions"], cur
     else if (after !== before) changes.push({ kind: "blocker", identifier, change: "changed", before, after });
   }
   for (const [identifier, after] of currentBlockers) if (!storedBlockers.has(identifier)) changes.push({ kind: "blocker", identifier, change: "added", before: null, after });
+  if (stableStringify(stored.comments) !== stableStringify(current.comments)) changes.push({ kind: "comments", before: stored.comments, after: current.comments });
   const storedRouting = stored.repositories, currentRouting = current.repositories;
   if (storedRouting.routingFingerprint !== currentRouting.routingFingerprint) {
     const before = { source: storedRouting.source, status: repositoryRoutingStatus(storedRouting.source, storedRouting.entries) };
