@@ -145,7 +145,7 @@ export function registerIssueTools(
     (input) => mcpToolResult(() => {
       const parsed = listActivityPageInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: false, tool: "list_activity" }, ({ context }) =>
-        toolResult("list_activity", 
+        toolResult("list_activity",
           parsed.full === true
             ? listActivity(context, { issue: parsed.issue }).map(serializeActivity)
             : serializeActivityPage(listIssueActivityPage(context, parsed))
