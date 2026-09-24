@@ -1,11 +1,11 @@
-import { getIssue, listStatesForTeam } from "@issue-tracker/core";
+import { AppError, AppErrorCode, getIssue, listStatesForTeam } from "@issue-tracker/core";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { afterAll, expect, it } from "vitest";
 
 import { BUDGETS } from "./budgets.js";
 import { contractFixture, type ContractFixture } from "./contract-fixture.js";
 import { Recorder, type CallRecord } from "./recorder.js";
-import { readComplete, walkPages, walkSection, type ToolCaller } from "./traversal.js";
+import { cursorGuard, readComplete, walkPages, walkSection, type ToolCaller } from "./traversal.js";
 
 /**
  * LF-145: end-to-end fictional agent workloads on a heavy fixture. Every phase runs on its own
@@ -23,6 +23,12 @@ const OPEN = ["backlog", "unstarted", "started", "blocked"] as const;
 const CLAIMABLE = ["backlog", "unstarted"] as const;
 const number = (identifier: string) => Number(identifier.split("-")[1]);
 const ascending = (identifiers: string[]) => [...identifiers].sort((a, b) => number(a) - number(b));
+
+/** `find` that fails with a description of what was sought instead of dereferencing undefined. */
+function required<T>(value: T | undefined, what: string): T {
+  if (value === undefined) throw new Error(`workload fixture has no ${what}`);
+  return value;
+}
 
 function withinCall(label: string, metrics: CallRecord, budget: Budget) {
   expect(metrics.textBytes, `${label} textBytes`).toBeLessThanOrEqual(budget.textBytes);
@@ -60,10 +66,75 @@ function records(f: ContractFixture) {
   const rows = [];
   for (let n = 1; ; n += 1) {
     let issue;
-    try { issue = getIssue(f.context, `ENG-${n}`); } catch { if (n > last) break; throw new Error(`ENG-${n} missing`); }
+    try {
+      issue = getIssue(f.context, `ENG-${n}`);
+    } catch (error) {
+      // Only "no such issue" ends the scan; anything else is a real failure and propagates.
+      if (!(error instanceof AppError && error.code === AppErrorCode.ISSUE_NOT_FOUND)) throw error;
+      if (n > last) break;
+      throw new Error(`ENG-${n} missing (last seeded is ENG-${last})`, { cause: error });
+    }
     rows.push({ identifier: issue.identifier, title: issue.title, stateType: types.get(issue.stateId)!, assigneeId: issue.assigneeId, priority: issue.priority, archived: issue.archivedAt !== null });
   }
   return rows;
+}
+
+type Omission = { section: string; unit: "items" | "characters"; omittedCount: number };
+type CommentItem = { id: string; body: string };
+
+/**
+ * Independent omission check for a work context: from the complete content, work out what each
+ * section actually left out, and require omissions to report exactly that many items/characters.
+ * Decisions and recent comments are both drawn from the issue's comments, so they are checked
+ * together (which comment is a "decision" is core's rule; which comments are missing is not).
+ * Repository routing has no read_issue_section path and is not checked here.
+ */
+function expectOmissionsAccountForCuts(
+  payload: {
+    sections: {
+      task: { description: string | null };
+      blockers: { items: Array<{ identifier: string }> };
+      parent: { item: { identifier: string } | null };
+      decisions: { items: CommentItem[] };
+      recentComments: { items: CommentItem[] };
+    };
+    omissions: Omission[];
+  },
+  full: { body: string; comments: CommentItem[]; blockedBy: Array<{ identifier: string }>; parent: { identifier: string } | null }
+) {
+  const reported = (sections: string[], unit: Omission["unit"]) => payload.omissions
+    .filter((omission) => sections.includes(omission.section) && omission.unit === unit)
+    .reduce((total, omission) => total + omission.omittedCount, 0);
+  const { task, blockers, parent, decisions, recentComments } = payload.sections;
+
+  // Task body: the context carries a prefix of the full description.
+  const shown = task.description ?? "";
+  expect(full.body.startsWith(shown), "task.description is a prefix of the full body").toBe(true);
+  const bodyCut = full.body.length - shown.length;
+  expect(reported(["task"], "characters"), "task characters omitted").toBe(bodyCut);
+
+  // Comments: whole comments left out, and characters cut from the bodies of included ones.
+  const byId = new Map(full.comments.map((comment) => [comment.id, comment.body]));
+  const included = [...decisions.items, ...recentComments.items];
+  let commentCharsCut = 0;
+  for (const item of included) {
+    const body = byId.get(item.id);
+    expect(body, `comment ${item.id} exists`).toBeDefined();
+    expect(body!.startsWith(item.body), `comment ${item.id} body is a prefix`).toBe(true);
+    commentCharsCut += body!.length - item.body.length;
+  }
+  const commentsCut = full.comments.length - new Set(included.map((item) => item.id)).size;
+  expect(reported(["decisions", "recentComments"], "items"), "comments omitted").toBe(commentsCut);
+  expect(reported(["decisions", "recentComments"], "characters"), "comment characters omitted").toBe(commentCharsCut);
+
+  // Blockers and parent.
+  const blockersShown = new Set(blockers.items.map((item) => item.identifier));
+  expect(reported(["blockers"], "items"), "blockers omitted").toBe(full.blockedBy.filter((edge) => !blockersShown.has(edge.identifier)).length);
+  expect(reported(["parent"], "items"), "parent omitted").toBe(full.parent !== null && parent.item === null ? 1 : 0);
+
+  // The fixture must actually exercise cuts, or the checks above prove nothing.
+  expect(bodyCut).toBeGreaterThan(0);
+  expect(commentsCut + commentCharsCut).toBeGreaterThan(0);
 }
 
 const caller = (call: ReturnType<Recorder["agent"]>["call"]): ToolCaller => call;
@@ -87,10 +158,7 @@ it("discovery: identity, tracker description, and full vs coding catalogs", asyn
     for (const name of ["list_issues", "search", "get_work_context", "read_issue_section", "claim_issue", "update_issue", "comment_on_issue", "link_issue", "get_issue"]) {
       expect(codingNames, name).toContain(name);
     }
-    expect(codingTools.tools.length).toBeLessThanOrEqual(BUDGETS.catalog.coding.tools);
-    expect(codingTools.metrics.textBytes).toBeLessThanOrEqual(BUDGETS.catalog.coding.bytes);
-    expect(full.tools.length).toBeLessThanOrEqual(BUDGETS.catalog.full.tools);
-    expect(full.metrics.textBytes).toBeLessThanOrEqual(BUDGETS.catalog.full.bytes);
+    // Catalog count/byte ceilings are gated once, in tool-catalog-size.test.ts.
   });
 });
 
@@ -130,19 +198,22 @@ it("requirements retrieval: bounded work context with explicit omissions, then t
     expect(Buffer.byteLength(JSON.stringify(payload))).toBeLessThanOrEqual(payload.budget.maxBytes);
     // The acceptance criteria are complete even though the body is not.
     expect(payload.sections.acceptanceCriteria).toMatchObject({ found: true, truncated: false, items: requirements.doneWhen });
-    // Nothing is cut silently: every truncated section is reported with a retrieval path.
-    const omitted = new Set(payload.omissions.map((omission: { section: string }) => omission.section));
-    const truncated = Object.entries(payload.sections).filter(([, section]) => (section as { truncated: boolean }).truncated).map(([name]) => name);
-    expect(truncated).toEqual(expect.arrayContaining(["task"]));
-    for (const name of truncated) expect(omitted, name).toContain(name);
     for (const omission of payload.omissions) expect(omission.retrieval.mcp.tool).toMatch(/^(read_issue_section|get_issue|get_work_context)$/);
     withinCall("get_work_context default", context.metrics, BUDGETS.calls.workContextDefault);
 
     // Complete-content path: bounded pages rebuild the body and every comment byte-for-byte.
     const call = caller(agent.call);
-    expect(await readComplete(call, requirements.identifier, ["description"])).toBe(requirements.body);
-    const comments = await readComplete(call, requirements.identifier, ["comments"]) as Array<{ body: string }>;
+    const fullBody = await readComplete(call, requirements.identifier, ["description"]) as string;
+    expect(fullBody).toBe(requirements.body);
+    const comments = await readComplete(call, requirements.identifier, ["comments"]) as Array<{ id: string; body: string }>;
     expect(comments.map((comment) => comment.body)).toEqual(requirements.comments);
+
+    // Nothing is cut silently. What the context left out is computed from the complete content
+    // (not from the context's own truncated flags, which core derives from omissions), and every
+    // cut must be reported in omissions with its exact count.
+    const blockedBy = await readComplete(call, requirements.identifier, ["blockedBy"]) as Array<{ identifier: string }>;
+    const parent = await readComplete(call, requirements.identifier, ["parent"]) as { identifier: string } | null;
+    expectOmissionsAccountForCuts(payload, { body: fullBody, comments, blockedBy, parent });
 
     // Every relationship edge of the hub, paged to completion.
     const identifiers = (entries: unknown[]) => entries.map((entry) => (entry as { identifier: string }).identifier);
@@ -159,7 +230,7 @@ it("requirements retrieval: bounded work context with explicit omissions, then t
 
 it("claim: the first claim wins and a second agent gets an explicit conflict", async () => {
   await phase("claim", async (f, agent) => {
-    const target = records(f).find((row) => !row.archived && row.assigneeId === null && row.stateType === "unstarted")!.identifier;
+    const target = required(records(f).find((row) => !row.archived && row.assigneeId === null && row.stateType === "unstarted"), "unassigned unstarted issue").identifier;
     const claimed = await agent.call("claim_issue", { identifier: target });
     expect(claimed.isError).toBe(false);
     expect(claimed.data.assigneeId).toBe((await agent.call("whoami", {})).data.id);
@@ -173,7 +244,7 @@ it("claim: the first claim wins and a second agent gets an explicit conflict", a
 it("update, comment, and link each land in the activity trail", async () => {
   await phase("update", async (f, agent) => {
     const { requirements } = f.workload!;
-    const target = records(f).find((row) => !row.archived && row.assigneeId === null && row.stateType === "backlog")!.identifier;
+    const target = required(records(f).find((row) => !row.archived && row.assigneeId === null && row.stateType === "backlog"), "unassigned backlog issue").identifier;
     await agent.call("claim_issue", { identifier: target });
     const latest = async () => (await agent.call("list_activity", { issue: target })).data.entries.at(-1);
 
@@ -199,7 +270,7 @@ it("update, comment, and link each land in the activity trail", async () => {
 
 it("recovery after interruption: find claimed work again and resume only on a fresh revision", async () => {
   await phase("recovery", async (f) => {
-    const target = records(f).find((row) => !row.archived && row.assigneeId === null && row.stateType === "unstarted")!.identifier;
+    const target = required(records(f).find((row) => !row.archived && row.assigneeId === null && row.stateType === "unstarted"), "unassigned unstarted issue").identifier;
     const first: Client = await f.connect({ handle: "fictional-agent" });
     const before = recorder.agent(f, first, "recovery");
     expect((await before.call("claim_issue", { identifier: target })).isError).toBe(false);
@@ -227,12 +298,16 @@ it("recovery after interruption: find claimed work again and resume only on a fr
     // Catching up on a run's event log after the interruption: bounded pages, no gaps, no repeats.
     const sequences: number[] = [];
     const steps: number[] = [];
+    const guard = cursorGuard("list_run_events");
     for (let after = 0; ;) {
       const page = await resumed.call("list_run_events", { run: f.seed.run, after, limit: 20 });
+      expect(page.data.error, JSON.stringify(page.data.error)).toBeUndefined();
       const events = page.data.events as Array<{ sequence: number; type: string; data: { step?: number } }>;
       if (events.length === 0) break;
       sequences.push(...events.map((event) => event.sequence));
       steps.push(...events.filter((event) => event.type === "fictional.progress").map((event) => event.data.step!));
+      if (!(page.data.nextCursor > after)) throw new Error(`list_run_events: nextCursor ${JSON.stringify(page.data.nextCursor)} did not advance past ${after}`);
+      guard(page.data.nextCursor);
       after = page.data.nextCursor;
     }
     expect(sequences).toEqual(Array.from({ length: sequences.length }, (_, index) => index + 1));
@@ -266,8 +341,7 @@ it("concurrent mutations during traversal: every traversal completes correctly o
     const byPriority = await agent.call("list_issues", { sort: "priority", limit: 10 });
     const prioritySeen = byPriority.data.issues.map((row: { identifier: string }) => row.identifier) as string[];
     const keyRow = byPriority.data.issues.at(-1) as { identifier: string; priority: number };
-    const mover = live().find((row) => !prioritySeen.includes(row.identifier) && number(row.identifier) < number(keyRow.identifier) && row.priority !== keyRow.priority)!;
-    expect(mover).toBeDefined();
+    const mover = required(live().find((row) => !prioritySeen.includes(row.identifier) && number(row.identifier) < number(keyRow.identifier) && row.priority !== keyRow.priority), "unseen row that can move across the priority key");
     expect((await mutate("update_issue", { identifier: mover.identifier, priority: keyRow.priority, response: "compact" })).isError).toBe(false);
     const stalePriority = await walkPages(call, "list_issues", { sort: "priority", limit: 10 }, { cursor: byPriority.data.nextCursor });
     expect(stalePriority.staleAt?.error.code).toBe("ISSUE_CURSOR_STALE");
@@ -275,7 +349,7 @@ it("concurrent mutations during traversal: every traversal completes correctly o
 
     const byUpdated = await agent.call("list_issues", { sort: "updatedAt", limit: 10 });
     const updatedSeen = byUpdated.data.issues.map((row: { identifier: string }) => row.identifier) as string[];
-    const touched = live().find((row) => !updatedSeen.includes(row.identifier))!;
+    const touched = required(live().find((row) => !updatedSeen.includes(row.identifier)), "live row not on the first updatedAt page");
     expect((await mutate("update_issue", { identifier: touched.identifier, title: "Fictional touched mid-walk", response: "compact" })).isError).toBe(false);
     const staleUpdated = await walkPages(call, "list_issues", { sort: "updatedAt", limit: 10 }, { cursor: byUpdated.data.nextCursor });
     expect(staleUpdated.staleAt?.error.code).toBe("ISSUE_CURSOR_STALE");
@@ -286,7 +360,7 @@ it("concurrent mutations during traversal: every traversal completes correctly o
     const workload = () => live().filter((row) => row.title.includes("workload")).map((row) => row.identifier);
     const searched = await agent.call("search", { query: "workload", limit: 5 });
     const searchSeen = searched.data.issues.map((row: { identifier: string }) => row.identifier) as string[];
-    const boosted = workload().find((identifier) => !searchSeen.includes(identifier))!;
+    const boosted = required(workload().find((identifier) => !searchSeen.includes(identifier)), "workload issue not on the first search page");
     expect((await mutate("update_issue", { identifier: boosted, description: "workload workload workload", response: "compact" })).isError).toBe(false);
     const staleSearch = await walkPages(call, "search", { query: "workload", limit: 5 }, { cursor: searched.data.nextCursor });
     expect(staleSearch.staleAt?.error.code).toBe("ISSUE_CURSOR_STALE");
@@ -296,11 +370,12 @@ it("concurrent mutations during traversal: every traversal completes correctly o
     const againSeen = again.data.issues.map((row: { identifier: string }) => row.identifier) as string[];
     const joined = (await mutate("create_issue", { title: "Fictional workload late arrival", response: "compact" })).data.identifier as string;
     const continued = await walkPages(call, "search", { query: "workload", limit: 5 }, { cursor: again.data.nextCursor });
-    if (continued.staleAt) {
-      await reconcile(call, "search", { query: "workload", limit: 25 }, againSeen, workload());
-    } else {
-      expect([...againSeen, ...continued.identifiers].sort()).toEqual([...workload()].sort());
-    }
+    // Either outcome is contract-acceptable: an explicit ISSUE_CURSOR_STALE, or a walk that completes
+    // with the new member included. The current behaviour (stale) is pinned so that a change to it is
+    // noticed and revisited deliberately; if it changes, assert the complete-walk branch instead:
+    //   expect([...againSeen, ...continued.identifiers].sort()).toEqual([...workload()].sort());
+    expect(continued.staleAt?.error.code).toBe("ISSUE_CURSOR_STALE");
+    await reconcile(call, "search", { query: "workload", limit: 25 }, againSeen, workload());
     expect(workload()).toContain(joined);
   });
 });

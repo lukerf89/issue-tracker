@@ -93,6 +93,13 @@ export async function contractFixture(options: ContractFixtureOptions = {}) {
   const raw = openDb(dbPath).$client;
   installAuditTriggers(raw);
 
+  /** A client not created by connect() has no counter; measuring it would silently read 0. */
+  const wireCounter = (client: Client) => {
+    const counter = wireBytes.get(client);
+    if (!counter) throw new Error("jsonRpcBytes: client was not registered via the fixture's connect(); its JSON-RPC bytes are not counted");
+    return counter;
+  };
+
   const call = async (client: Client, name: string, args: Record<string, unknown>): Promise<ToolCall> => {
     const result = await client.callTool({ name, arguments: args });
     const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
@@ -117,8 +124,8 @@ export async function contractFixture(options: ContractFixtureOptions = {}) {
     connect: async (actor: { handle: string; type?: "agent" | "human" }, connectOptions: { toolProfile?: ToolProfile } = {}) =>
       (await connect(actor, connectOptions)).client,
     /** Server-to-client JSON-RPC bytes this client has received since connecting (or the last reset). */
-    jsonRpcBytes: (client: Client) => wireBytes.get(client)?.bytes ?? 0,
-    resetJsonRpcBytes: (client: Client) => { const counter = wireBytes.get(client); if (counter) counter.bytes = 0; },
+    jsonRpcBytes: (client: Client) => wireCounter(client).bytes,
+    resetJsonRpcBytes: (client: Client) => { wireCounter(client).bytes = 0; },
     /** Every table's content (order-insensitive), excluding FTS internals and test bookkeeping. */
     snapshot(): Snapshot {
       const snapshot: Snapshot = {};
