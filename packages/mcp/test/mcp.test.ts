@@ -1051,40 +1051,8 @@ describe("MCP server", () => {
     }
   });
 
-  it("returns byte-identical search JSON to CLI issue search --json", async () => {
-    const dbPath = initializedDbPath();
-    createSearchFixtures(dbPath);
-    const client = await connectClient(dbPath, { handle: "search-agent" });
-
-    try {
-      const filter = { query: "login", team: "ENG", limit: 2 };
-      const searchedEnvelope = (await callJsonTool(client, "search", filter)) as unknown as {
-        issues: Array<Record<string, unknown>>;
-        nextCursor: string | null;
-      };
-      const searched = searchedEnvelope.issues;
-      const cliOutput = tracker(dbPath, [
-        "issue",
-        "search",
-        filter.query,
-        "--team",
-        filter.team,
-        "--limit",
-        String(filter.limit),
-        "--json"
-      ]);
-
-      expect(searched.map((issue) => issue.identifier)).toEqual(["ENG-1", "ENG-2"]);
-      expect(`${JSON.stringify(searchedEnvelope)}\n`).toBe(cliOutput);
-
-      const all = ((await callJsonTool(client, "search", {
-        query: "LOGIN"
-      })) as unknown as { issues: Array<Record<string, unknown>> }).issues;
-      expect(all.map((issue) => issue.identifier)).toEqual(["OPS-1", "ENG-1", "ENG-2"]);
-    } finally {
-      await client.close();
-    }
-  });
+  // CLI `issue search --json` ↔ MCP `search` byte-identity lives in agent-queries.test.ts,
+  // which checks it for every ListIssueFilters key (LF-141).
 
   it("auto-creates unknown MCP agent handles but never auto-creates humans", async () => {
     const dbPath = initializedDbPath();
@@ -1756,33 +1724,6 @@ function createListFilterFixtures(dbPath: string): void {
     moveIssue(setup.context, "ENG-3", "In Progress");
     moveIssue(setup.context, "ENG-4", "In Progress");
     archiveIssue(setup.context, "ENG-2");
-  } finally {
-    setup.close();
-  }
-}
-
-function createSearchFixtures(dbPath: string): void {
-  const setup = openContext(dbPath);
-
-  try {
-    setup.context.actor = whoami(setup.context);
-    createTeam(setup.context, { key: "OPS", name: "Operations" });
-    createIssue(setup.context, {
-      title: "Fix Login Redirect",
-      description: "OAuth callback fails"
-    });
-    createIssue(setup.context, {
-      title: "Refresh setup guide",
-      description: "Mention login redirect setup"
-    });
-    createIssue(setup.context, {
-      title: "Login operations runbook",
-      team: "OPS"
-    });
-    createIssue(setup.context, {
-      title: "Archived login cleanup"
-    });
-    archiveIssue(setup.context, "ENG-3");
   } finally {
     setup.close();
   }

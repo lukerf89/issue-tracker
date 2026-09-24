@@ -2063,6 +2063,67 @@ describe("tracker CLI", () => {
   });
 });
 
+describe("issue filter flag registration (LF-141)", () => {
+  const pairs: Array<[string[], string[], string]> = [
+    [["--assignee", "someone"], ["--unassigned"], "choose --assignee or --unassigned"],
+    [["--project", "Platform"], ["--no-project"], "choose --project or --no-project"],
+    [["--parent", "ENG-1"], ["--no-parent"], "choose --parent or --no-parent"],
+    [["--ready"], ["--not-ready"], "choose --ready or --not-ready"]
+  ];
+  const commands: Array<{ name: string; prefix: string[] }> = [
+    { name: "issue list", prefix: ["issue", "list"] },
+    { name: "issue search", prefix: ["issue", "search", "ci"] },
+    { name: "view save", prefix: ["view", "save", "Conflicted view"] }
+  ];
+
+  for (const { name, prefix } of commands) {
+    it(`rejects every flag/null-alias pair on ${name} in both argument orders`, async () => {
+      const dbPath = tempDbPath();
+      expect((await tracker(dbPath, ["init"])).status).toBe(0);
+      expect((await tracker(dbPath, ["issue", "create", "Set up CI"])).status).toBe(0);
+      expect((await tracker(dbPath, ["project", "create", "Platform"])).status).toBe(0);
+
+      for (const [value, alias, message] of pairs) {
+        for (const args of [[...value, ...alias], [...alias, ...value]]) {
+          const result = await tracker(dbPath, [...prefix, ...args, "--json"]);
+          expect(result.status, `${name} ${args.join(" ")}`).not.toBe(0);
+          expect(result.stdout).toBe("");
+          expect(JSON.parse(result.stderr)).toEqual({ error: { code: "VALIDATION_FAILED", message } });
+        }
+        // Each alias alone is still accepted, so the rejection is about the pair.
+        const single = await tracker(dbPath, [...prefix, ...alias, "--json"]);
+        expect(single.status, `${name} ${alias.join(" ")}`).toBe(0);
+        if (prefix[0] === "view") {
+          expect((await tracker(dbPath, ["view", "delete", "Conflicted view", "--json"])).status).toBe(0);
+        }
+      }
+
+      expect(JSON.parse((await tracker(dbPath, ["view", "list", "--json"])).stdout)).toEqual([]);
+    });
+  }
+
+  it("registers exactly each command's filter subset", () => {
+    const program = createProgram();
+    const longFlags = (path: string[]) => {
+      let command = program;
+      for (const segment of path) command = command.commands.find((child) => child.name() === segment)!;
+      return command.options.map((option) => option.long).sort();
+    };
+    const filters = [
+      "--assignee", "--blocked-by", "--blocks", "--cycle", "--due-from", "--due-to", "--include-archived",
+      "--label", "--no-parent", "--no-project", "--not-ready", "--parent", "--priority", "--project", "--ready",
+      "--repository", "--sort", "--state", "--state-types", "--team", "--unassigned", "--updated-since"
+    ];
+    expect(longFlags(["issue", "list"])).toEqual(
+      [...filters, "--limit", "--view", "--query", "--cursor", "--fields", "--json"].sort()
+    );
+    expect(longFlags(["issue", "search"])).toEqual([...filters, "--limit", "--cursor", "--fields", "--json"].sort());
+    expect(longFlags(["view", "save"])).toEqual(
+      [...filters, "--query", "--desc", "--description", "--json"].sort()
+    );
+  });
+});
+
 function tempDbPath(): string {
   const tempDir = mkdtempSync(join(tmpdir(), "issue-tracker-cli-"));
   tempDirs.push(tempDir);

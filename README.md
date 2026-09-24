@@ -52,7 +52,7 @@ The key rule is simple: if a rule changes issue behavior, it belongs in `package
 - Append-only activity log and JSONL activity watch.
 - Archive and unarchive for issues, teams, projects, and labels.
 - Saved issue views and reusable issue templates.
-- Case-insensitive LIKE search over issue title and description.
+- Full-text (SQLite FTS5) search over issue identifier, title, and description: alphanumeric tokens are ANDed as prefix matches, FTS operators are treated as literal text, and results are ranked by bm25 relevance with a snippet unless `sort` is given.
 - Rich issue filtering by state, assignee, project, cycle, label, team, priority, archived status, and saved view.
 - Safe SQLite backup plus JSON export and import.
 
@@ -99,7 +99,7 @@ DB=/tmp/issue-tracker-demo/tracker.db
 tracker --db "$DB" init
 tracker --db "$DB" project create "Platform Foundations" --status planned
 tracker --db "$DB" issue create --title "Set up CI" --project "Platform Foundations" --priority 2
-tracker --db "$DB" issue list --json
+tracker --db "$DB" issue list --limit 25 --json
 tracker --db "$DB" issue move ENG-1 "In Progress"
 tracker --db "$DB" issue view ENG-1 --json
 ```
@@ -110,10 +110,38 @@ The CLI also reads `ISSUE_TRACKER_DB`, so you can export it once:
 
 ```sh
 export ISSUE_TRACKER_DB=/tmp/issue-tracker-demo/tracker.db
-tracker issue search ci --json
+tracker issue search ci --limit 10 --json
 tracker issue comment ENG-1 "CI setup is ready to review."
 tracker issue link ENG-1 --kind branch --repo /tmp/example-repo --branch chore/setup-ci
 ```
+
+## Agent usage
+
+[AGENT_GUIDE.md](AGENT_GUIDE.md) is the tested playbook for agents. Every recipe in it
+runs in CI through both the CLI and MCP (`packages/mcp/test/agent-guide.test.ts`).
+
+- **JSON mode:** pass `--json` on the CLI. MCP tools always return JSON. Errors are
+  `{ "error": { "code", "message", "details"? } }` (the CLI writes them to stderr and
+  exits non-zero). Absent optional values are explicit `null`, and timestamps are
+  ISO-8601.
+- **Projection:** `fields` (CLI `--fields stateName,revision`) adds only the list/search
+  columns you name. `get_issue` / `issue view` take `fields` and `maxBytes` for bounded
+  reads.
+- **Pagination:** `limit` is 1–250 (default 50). Continue with the opaque `nextCursor`
+  and the same filters; see [Issue cursor consistency](#issue-cursor-consistency).
+- **Null aliases:** MCP `assignee: null`, `project: null`, `parent: null`, and
+  `ready: false` are CLI `--unassigned`, `--no-project`, `--no-parent`, and
+  `--not-ready`.
+
+Compatibility paths kept for existing callers:
+
+- Legacy numeric offset cursors are still accepted as input.
+- Legacy `get_issue` comment options (`comments`, `commentCursor`, `commentLimit`) keep
+  working when `fields`/`maxBytes` are not used.
+- Mutations default to `--response full` / `response: "full"`.
+- The MCP server defaults to the `full` tool profile.
+- Saved-view search goes through `issue list --view V --query <text>` /
+  `list_issues {view, query}`. MCP `search` has no `view` argument.
 
 ## MCP
 
@@ -262,7 +290,15 @@ handles are explicit null; archived actor references remain readable.
 `parent` (null or `--no-parent` means no parent), `blockedBy`, `blocks`, `repository`, `updatedSince`, inclusive `dueFrom`
 and `dueTo`, and `sort` (`identifier`, `priority`, `updatedAt`). Saved views retain
 these filters. Corresponding CLI flags use kebab-case; `--not-ready` selects the
-complement of readiness. CLI search also accepts the ordinary list filters.
+complement of readiness. CLI `issue search` accepts the same filter flags as
+`issue list`, with two differences: the query is the positional argument, and it has
+no `--view` (search a saved view with `issue list --view <name> --query <text>`).
+`view save` accepts the same filters except `--limit`.
+
+Paired flags are mutually exclusive: `--assignee`/`--unassigned`,
+`--project`/`--no-project`, `--parent`/`--no-parent`, and `--ready`/`--not-ready`.
+Passing both halves of a pair, in either order, fails with `VALIDATION_FAILED`
+instead of letting one silently win.
 
 Ready means non-archived backlog/unstarted work with no non-archived blocker in a
 nonterminal state. Completed, canceled, or archived blockers do not prevent
