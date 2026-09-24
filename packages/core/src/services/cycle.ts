@@ -1,7 +1,7 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, sql, type SQL } from "drizzle-orm";
 
 import { inTransaction, type ServiceContext } from "../context.js";
-import { cycles, teams, type Cycle } from "../db/schema.js";
+import { cycles, issues, teams, type Cycle } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { uuid } from "../ids.js";
 import { ConfigKey, getConfig } from "./config.js";
@@ -89,23 +89,25 @@ export function resolveOptionalCycleId(
   return ref == null ? null : getCycle(context, ref, teamId).id;
 }
 
-export function cycleIdsForIssueFilter(
+/**
+ * SQL condition restricting issues to a cycle filter, or null when the filter can match
+ * nothing (an unknown id, or an id from another team). A numeric ref matches that cycle
+ * number in every team (or the given team) through a subquery, so the bind list stays
+ * constant no matter how many teams share the number.
+ */
+export function cycleFilterCondition(
   context: ServiceContext,
   ref: CycleRef,
   teamRef?: string
-): string[] {
+): SQL | null {
   const team = teamRef ? resolveTeam(context, teamRef) : null;
   const cycleNumber = cycleNumberRef(ref);
 
   if (cycleNumber !== null) {
-    const found = context.db.query.cycles.findMany({
-      where: team
-        ? and(eq(cycles.teamId, team.id), eq(cycles.number, cycleNumber))
-        : eq(cycles.number, cycleNumber),
-      orderBy: [asc(cycles.teamId), asc(cycles.number), asc(cycles.id)]
-    }).sync();
-
-    return found.map((cycle) => cycle.id);
+    const where = team
+      ? and(eq(cycles.teamId, team.id), eq(cycles.number, cycleNumber))
+      : eq(cycles.number, cycleNumber);
+    return sql`${issues.cycleId} in (select ${cycles.id} from ${cycles} where ${where})`;
   }
 
   const cycle = context.db.query.cycles.findFirst({
@@ -113,10 +115,10 @@ export function cycleIdsForIssueFilter(
   }).sync();
 
   if (!cycle || (team && cycle.teamId !== team.id)) {
-    return [];
+    return null;
   }
 
-  return [cycle.id];
+  return eq(issues.cycleId, cycle.id);
 }
 
 function findCycle(context: ServiceContext, ref: CycleRef, teamId?: string): Cycle | null {

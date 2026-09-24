@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 
 import { inTransaction, type ServiceContext, type ServiceTransaction } from "../context.js";
 import { issueLabels, issues, labels, type Issue, type Label } from "../db/schema.js";
@@ -203,21 +203,47 @@ export function resolveIssueLabels(context: ServiceContext, refs: string[] | und
   return resolved;
 }
 
+// One canonical definition of "an issue's labels" (columns, archive filter, order),
+// shared by the single-issue loader and the batched page loader.
+const issueLabelColumns = {
+  id: labels.id,
+  name: labels.name,
+  color: labels.color,
+  group: labels.group,
+  groupKey: labels.groupKey,
+  archivedAt: labels.archivedAt
+};
+const issueLabelOrder = [asc(labels.groupKey), asc(labels.name), asc(labels.id)];
+
 export function listIssueLabels(context: ServiceContext, issueId: string) {
   return context.db
-    .select({
-      id: labels.id,
-      name: labels.name,
-      color: labels.color,
-      group: labels.group,
-      groupKey: labels.groupKey,
-      archivedAt: labels.archivedAt
-    })
+    .select(issueLabelColumns)
     .from(issueLabels)
     .innerJoin(labels, eq(labels.id, issueLabels.labelId))
     .where(and(eq(issueLabels.issueId, issueId), isNull(labels.archivedAt)))
-    .orderBy(asc(labels.groupKey), asc(labels.name), asc(labels.id))
+    .orderBy(...issueLabelOrder)
     .all();
+}
+
+/**
+ * Batched form of listIssueLabels: one query for a bounded set of issue ids (a page).
+ * Every requested id is present in the result, mapped to [] when it has no labels.
+ * Internal to core (not exported from the barrel).
+ */
+export function listLabelsForIssues(context: ServiceContext, issueIds: readonly string[]): Map<string, Label[]> {
+  const result = new Map<string, Label[]>(issueIds.map((id) => [id, []]));
+  if (issueIds.length === 0) return result;
+
+  const rows = context.db
+    .select({ issueId: issueLabels.issueId, label: issueLabelColumns })
+    .from(issueLabels)
+    .innerJoin(labels, eq(labels.id, issueLabels.labelId))
+    .where(and(inArray(issueLabels.issueId, [...issueIds]), isNull(labels.archivedAt)))
+    .orderBy(...issueLabelOrder)
+    .all();
+
+  for (const row of rows) result.get(row.issueId)?.push(row.label);
+  return result;
 }
 
 export function withIssueLabels(context: ServiceContext, issue: Issue): IssueWithLabels {
