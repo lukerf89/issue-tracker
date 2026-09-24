@@ -250,51 +250,96 @@ function fingerprintOf(context: WorkContext): string {
 }
 
 /**
+ * One optional section as the fill sees it: its complete and zero (fully omitted) fill states and
+ * a search for its largest partial state. Omission entries carry retrieval paths and can be larger
+ * than the content they stand for, so a fuller state is not necessarily a larger one: completing a
+ * section drops its omission entry, and omitting everything can cost more than including it all.
+ * Partial states (a text prefix, an item count short of complete) all carry an omission entry, so
+ * between zero and complete the size does grow with the amount and can be searched.
+ */
+interface Slot {
+  complete: Partial<Fill>;
+  zero: Partial<Fill>;
+  /** Largest partial state that fits (given the rest of the fill), or null when none does. */
+  partial: (fitsWith: (patch: Partial<Fill>) => boolean) => Partial<Fill> | null;
+}
+
+function slotsOf(sources: WorkSources): Slot[] {
+  const prefix = (text: string, fitsAt: (end: number) => boolean) => fitStringPrefix(text, 0, (slice) => slice.length < text.length && fitsAt(slice.length));
+  const items = (key: "blockers" | "candidates" | "decisions" | "comments", available: number): Slot => ({
+    complete: { [key]: available },
+    zero: { [key]: 0 },
+    partial: (fitsWith) => {
+      let low = 0, high = available - 1;
+      if (high < 0 || !fitsWith({ [key]: 0 })) return null;
+      while (low < high) {
+        const count = Math.ceil((low + high) / 2);
+        if (fitsWith({ [key]: count })) low = count; else high = count - 1;
+      }
+      return { [key]: low };
+    }
+  });
+  const description = sources.issue.description ?? "";
+  const parentExcerpt = sources.parent?.issue.description ? excerpt(sources.parent.issue.description, PARENT_EXCERPT_LIMIT).text : "";
+  return [
+    {
+      complete: { descriptionEnd: description.length },
+      zero: { descriptionEnd: 0 },
+      partial: (fitsWith) => ({ descriptionEnd: prefix(description, (end) => fitsWith({ descriptionEnd: end })) })
+    },
+    items("blockers", sources.blockers.length),
+    {
+      complete: { parent: sources.parent !== null, parentExcerptEnd: parentExcerpt.length },
+      zero: { parent: false, parentExcerptEnd: 0 },
+      // A parent item with a cut excerpt; the absent parent is the zero state.
+      partial: (fitsWith) => parentExcerpt === "" || !fitsWith({ parent: true, parentExcerptEnd: 0 }) ? null
+        : { parent: true, parentExcerptEnd: prefix(parentExcerpt, (end) => fitsWith({ parent: true, parentExcerptEnd: end })) }
+    },
+    items("candidates", sources.routing.candidates.length),
+    items("decisions", Math.min(DECISION_LIMIT, sources.decisions.length)),
+    items("comments", Math.min(RECENT_COMMENT_LIMIT, sources.recentComments.length))
+  ];
+}
+
+/**
  * Builds the bounded work context on an already-open transaction context (the caller owns the
  * transaction). Clock-free and deterministic: identical source state yields byte-identical output.
- * The mandatory minimum (task scalars, full acceptance criteria, source revisions, routing header,
- * and an omission entry for every optional section) is sized first; only if it cannot fit does the
- * build fail. Remaining bytes are spent in fixed priority order: description, blockers, parent,
- * repository candidates, decisions, recent comments. Each admission is measured on the complete
- * context it would produce, so acceptance criteria can never be displaced by optional content.
+ * Task scalars, full acceptance criteria, source revisions and the routing header are always
+ * present; optional sections (description, blockers, parent, repository candidates, decisions,
+ * recent comments, in priority order) are complete, partial or omitted with an omission entry.
+ * Every candidate is measured on the complete context it would produce, and fuller always wins:
+ * - the complete context is returned whenever it fits;
+ * - otherwise the floor (each section at the smaller of its complete and zero states) is the
+ *   minimum, and the build fails only when neither the complete context nor the floor fits;
+ * - starting from the floor, each section in priority order takes the fullest state that fits
+ *   with the later sections still at their floor states: complete, else its largest partial,
+ *   else zero. The fill fits after every step, so a section is only ever made fuller.
  */
 export function buildWorkContext(context: ServiceContext, identifier: string, maxBytes: number): WorkContext {
   const sources = loadSources(context, identifier);
-  const fill: Fill = { descriptionEnd: 0, blockers: 0, parent: false, parentExcerptEnd: 0, candidates: 0, decisions: 0, comments: 0 };
   // Sized with the widest usedBytes (maxBytes) and a same-length fingerprint placeholder.
   const size = (candidate: Fill) => jsonBytes(render(sources, maxBytes, candidate, maxBytes, PLACEHOLDER_FINGERPRINT));
   const fits = (candidate: Fill) => size(candidate) <= maxBytes;
-  const minimumBytes = size(fill);
-  if (minimumBytes > maxBytes) {
-    throw new WorkContextMinimumExceededError(sources.issue.identifier, minimumBytes, maxBytes);
-  }
-  // Completing a section (a whole text, or every admissible item) drops or re-labels its omission
-  // entry, so the output can shrink there: fits is not monotone at that point. Every fill tries the
-  // complete amount first and only then searches for the largest partial amount that fits.
-  const fillTo = (complete: number, fitsAt: (amount: number) => boolean, partial: () => number) => fitsAt(complete) ? complete : partial();
-  const fitPrefix = (text: string, fitsAt: (end: number) => boolean) => fillTo(text.length, fitsAt, () => fitStringPrefix(text, 0, (slice) => fitsAt(slice.length)));
-  const description = sources.issue.description;
-  if (description) fill.descriptionEnd = fitPrefix(description, (end) => fits({ ...fill, descriptionEnd: end }));
-  const admit = (key: "blockers" | "candidates" | "decisions" | "comments", available: number) => {
-    const fitsAt = (count: number) => fits({ ...fill, [key]: count });
-    fill[key] = fillTo(available, fitsAt, () => {
-      let count = fill[key];
-      while (count + 1 < available && fitsAt(count + 1)) count += 1;
-      return count;
-    });
-  };
-  admit("blockers", sources.blockers.length);
-  if (sources.parent && fits({ ...fill, parent: true })) {
-    fill.parent = true;
-    const parentDescription = sources.parent.issue.description;
-    if (parentDescription) {
-      const capped = excerpt(parentDescription, PARENT_EXCERPT_LIMIT).text;
-      fill.parentExcerptEnd = fitPrefix(capped, (end) => fits({ ...fill, parentExcerptEnd: end }));
+  const slots = slotsOf(sources);
+  const zero: Fill = { descriptionEnd: 0, blockers: 0, parent: false, parentExcerptEnd: 0, candidates: 0, decisions: 0, comments: 0 };
+  const complete: Fill = Object.assign({ ...zero }, ...slots.map((slot) => slot.complete));
+  let fill: Fill;
+  if (fits(complete)) {
+    fill = complete;
+  } else {
+    fill = { ...zero };
+    for (const slot of slots) if (size({ ...fill, ...slot.complete }) <= size({ ...fill, ...slot.zero })) Object.assign(fill, slot.complete);
+    const minimumBytes = size(fill);
+    if (minimumBytes > maxBytes) throw new WorkContextMinimumExceededError(sources.issue.identifier, minimumBytes, maxBytes);
+    for (const slot of slots) {
+      const fitsWith = (patch: Partial<Fill>) => fits({ ...fill, ...patch });
+      if (fitsWith(slot.complete)) { Object.assign(fill, slot.complete); continue; }
+      const partial = slot.partial(fitsWith);
+      // The current fill (this section at its floor state) fits, so zero is only reached when the
+      // floor state is zero itself.
+      Object.assign(fill, partial !== null && fitsWith(partial) ? partial : slot.zero);
     }
   }
-  admit("candidates", sources.routing.candidates.length);
-  admit("decisions", Math.min(DECISION_LIMIT, sources.decisions.length));
-  admit("comments", Math.min(RECENT_COMMENT_LIMIT, sources.recentComments.length));
 
   const result = render(sources, maxBytes, fill, 0, PLACEHOLDER_FINGERPRINT);
   result.contextFingerprint = fingerprintOf(result);
