@@ -1,11 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { applyMigrations, init, openDb, whoami, type ServiceContext } from "@issue-tracker/core";
 import { createServer, type CreateServerOptions } from "../src/index.js";
+
+// Resolved from this file, not the working directory, so the path is right however vitest is invoked.
+const builtCliPath = resolve(dirname(fileURLToPath(import.meta.url)), "../../cli/dist/index.js");
 
 export async function agentFixture(options: Partial<CreateServerOptions> = {}) {
   const directory = mkdtempSync(join(tmpdir(), "tracker-agent-contract-"));
@@ -28,7 +32,17 @@ export async function agentFixture(options: Partial<CreateServerOptions> = {}) {
       return { error: result.isError === true, data: JSON.parse(block.text) };
     },
     cli(args: string[]) {
-      return execFileSync(process.execPath, [resolve("packages/cli/dist/index.js"), "--db", dbPath, ...args], { encoding: "utf8" });
+      return execFileSync(process.execPath, [builtCliPath, "--db", dbPath, ...args], { encoding: "utf8", stdio: "pipe" });
+    },
+    /** Runs a CLI command that must fail and returns its parsed error envelope from stderr. */
+    cliError(args: string[]): { code: string; message: string; details?: unknown } {
+      try {
+        execFileSync(process.execPath, [builtCliPath, "--db", dbPath, ...args], { encoding: "utf8", stdio: "pipe" });
+      } catch (error) {
+        const stderr = String((error as { stderr?: unknown }).stderr ?? "");
+        return JSON.parse(stderr.trim().split("\n").at(-1)!).error;
+      }
+      throw new Error(`expected CLI command to fail: ${args.join(" ")}`);
     },
     async close() { await client.close(); await server.close(); db.$client.close(); rmSync(directory, { recursive: true, force: true }); }
   };

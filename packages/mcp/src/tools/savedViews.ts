@@ -20,7 +20,7 @@ export function registerSavedViewTools(
   server.registerTool("list_builtin_views", {
     title: "List built-in views",
     description: "Built-in view references, query semantics and filter definitions; use a reference with list_issues.",
-    inputSchema: listSavedViewsInputSchema.shape
+    inputSchema: listSavedViewsInputSchema.strict()
   }, () => mcpToolResult(() => jsonResult(builtinIssueViews)));
 
   server.registerTool(
