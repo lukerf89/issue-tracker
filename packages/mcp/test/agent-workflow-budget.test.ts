@@ -1,4 +1,4 @@
-import { AppError, AppErrorCode, getIssue, listStatesForTeam } from "@issue-tracker/core";
+import { AppError, AppErrorCode, getIssue, listRepositories, listStatesForTeam, resolveIssueRepositories } from "@issue-tracker/core";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { afterAll, expect, it } from "vitest";
 
@@ -87,25 +87,33 @@ type CommentItem = { id: string; body: string };
  * section actually left out, and require omissions to report exactly that many items/characters.
  * Decisions and recent comments are both drawn from the issue's comments, so they are checked
  * together (which comment is a "decision" is core's rule; which comments are missing is not).
- * Repository routing has no read_issue_section path and is not checked here.
+ * Repository routing has no read_issue_section path, so its truth is the routing the fixture seeded.
+ * Returns how many relation entries (blockers, parent, repositories) the context cut.
  */
 function expectOmissionsAccountForCuts(
   payload: {
     sections: {
       task: { description: string | null };
       blockers: { items: Array<{ identifier: string }> };
-      parent: { item: { identifier: string } | null };
+      parent: { item: { identifier: string; descriptionExcerpt: string | null } | null };
+      repositories: { candidates: Array<{ id: string }> };
       decisions: { items: CommentItem[] };
       recentComments: { items: CommentItem[] };
     };
     omissions: Omission[];
   },
-  full: { body: string; comments: CommentItem[]; blockedBy: Array<{ identifier: string }>; parent: { identifier: string } | null }
-) {
+  full: {
+    body: string; comments: CommentItem[]; blockedBy: Array<{ identifier: string }>; parent: { identifier: string } | null;
+    /** The parent's full description; required when the context shows the parent item. */
+    parentDescription?: string | null;
+    /** Repository ids in routing order. */
+    repositories: string[];
+  }
+): number {
   const reported = (sections: string[], unit: Omission["unit"]) => payload.omissions
     .filter((omission) => sections.includes(omission.section) && omission.unit === unit)
     .reduce((total, omission) => total + omission.omittedCount, 0);
-  const { task, blockers, parent, decisions, recentComments } = payload.sections;
+  const { task, blockers, parent, repositories, decisions, recentComments } = payload.sections;
 
   // Task body: the context carries a prefix of the full description.
   const shown = task.description ?? "";
@@ -127,14 +135,37 @@ function expectOmissionsAccountForCuts(
   expect(reported(["decisions", "recentComments"], "items"), "comments omitted").toBe(commentsCut);
   expect(reported(["decisions", "recentComments"], "characters"), "comment characters omitted").toBe(commentCharsCut);
 
-  // Blockers and parent.
+  // Blockers: every shown blocker is a real edge; every real edge not shown is reported.
+  const allBlockers = new Set(full.blockedBy.map((edge) => edge.identifier));
+  for (const item of blockers.items) expect(allBlockers.has(item.identifier), `blocker ${item.identifier} is a real edge`).toBe(true);
   const blockersShown = new Set(blockers.items.map((item) => item.identifier));
-  expect(reported(["blockers"], "items"), "blockers omitted").toBe(full.blockedBy.filter((edge) => !blockersShown.has(edge.identifier)).length);
-  expect(reported(["parent"], "items"), "parent omitted").toBe(full.parent !== null && parent.item === null ? 1 : 0);
+  const blockersCut = full.blockedBy.filter((edge) => !blockersShown.has(edge.identifier)).length;
+  expect(reported(["blockers"], "items"), "blockers omitted").toBe(blockersCut);
+
+  // Parent: a missing item is one omitted item; a shown item's excerpt cut is reported in characters.
+  const parentCut = full.parent !== null && parent.item === null ? 1 : 0;
+  expect(reported(["parent"], "items"), "parent omitted").toBe(parentCut);
+  let parentCharsCut = 0;
+  if (parent.item !== null) {
+    expect(parent.item.identifier).toBe(full.parent?.identifier);
+    expect(full.parentDescription, "parentDescription is needed to check a shown parent").toBeDefined();
+    const fullDescription = full.parentDescription ?? "";
+    const excerpt = parent.item.descriptionExcerpt ?? "";
+    expect(fullDescription.startsWith(excerpt), "parent excerpt is a prefix").toBe(true);
+    parentCharsCut = fullDescription.length - excerpt.length;
+  }
+  expect(reported(["parent"], "characters"), "parent characters omitted").toBe(parentCharsCut);
+
+  // Repositories: the shown candidates are a prefix of the routing, and the rest is reported.
+  const shownRepositories = repositories.candidates.map((candidate) => candidate.id);
+  expect(shownRepositories, "shown repositories are a prefix of the routing").toEqual(full.repositories.slice(0, shownRepositories.length));
+  const repositoriesCut = full.repositories.length - shownRepositories.length;
+  expect(reported(["repositories"], "items"), "repositories omitted").toBe(repositoriesCut);
 
   // The fixture must actually exercise cuts, or the checks above prove nothing.
   expect(bodyCut).toBeGreaterThan(0);
   expect(commentsCut + commentCharsCut).toBeGreaterThan(0);
+  return blockersCut + parentCut + repositoriesCut;
 }
 
 const caller = (call: ReturnType<Recorder["agent"]>["call"]): ToolCaller => call;
@@ -213,7 +244,20 @@ it("requirements retrieval: bounded work context with explicit omissions, then t
     // cut must be reported in omissions with its exact count.
     const blockedBy = await readComplete(call, requirements.identifier, ["blockedBy"]) as Array<{ identifier: string }>;
     const parent = await readComplete(call, requirements.identifier, ["parent"]) as { identifier: string } | null;
-    expectOmissionsAccountForCuts(payload, { body: fullBody, comments, blockedBy, parent });
+    const parentDescription = payload.sections.parent.item === null || parent === null ? undefined
+      : await readComplete(call, parent.identifier, ["description"]) as string | null;
+    // Repository routing has no MCP read path per issue: its truth is what the fixture seeded,
+    // cross-checked against core's plain resolver (a separate query from the routing view).
+    const repositoryIds = new Map(listRepositories(f.context).map((repository) => [repository.name, repository.id]));
+    const repositories = requirements.repositories.map((name) => required(repositoryIds.get(name), `repository ${name}`));
+    expect(resolveIssueRepositories(f.context, requirements.identifier).map((repository) => repository.id)).toEqual(repositories);
+    // The relation sections are populated, so dropping any of them silently would be caught.
+    expect(blockedBy.map((edge) => edge.identifier)).toEqual(requirements.blockedBy);
+    expect(parent?.identifier).toBe(requirements.parent);
+    expect(repositories.length).toBeGreaterThan(1);
+    const relationsCut = expectOmissionsAccountForCuts(payload, { body: fullBody, comments, blockedBy, parent, parentDescription, repositories });
+    // Under the default budget at least one relation entry is actually cut (and so reported).
+    expect(relationsCut).toBeGreaterThan(0);
 
     // Every relationship edge of the hub, paged to completion.
     const identifiers = (entries: unknown[]) => entries.map((entry) => (entry as { identifier: string }).identifier);

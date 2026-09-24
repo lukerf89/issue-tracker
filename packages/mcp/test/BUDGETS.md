@@ -35,6 +35,10 @@ contract seed (ENG-1..ENG-5, repositories and a started run):
 - 60 workload tasks with mixed states and priorities. Every fourth task is assigned to the human, and four are archived.
 - A requirements issue with a ~40 KB multi-section body, a 12-item `Done when:` list and thirty ~2 KB comments.
 - A hub issue with 8 children, 7 blockers and 7 dependants, plus 12 labels and 5 link attachments.
+- On the requirements issue: a parent with a ~2.5 KB description, 6 open blockers and a
+  2-repository routing override (Primary, Secondary). These are created after the hub, so they
+  don't change any earlier identifier. They give its work context populated `blockers`, `parent`
+  and `repositories` sections.
 - 50 appended events on the seeded run.
 
 ## Phases
@@ -43,7 +47,7 @@ contract seed (ENG-1..ENG-5, repositories and a started run):
 | --- | --- |
 | discovery | `whoami` and `describe`. The `full` and `coding` catalogs are both listed. `coding` is a strict subset that still covers the agent loop. |
 | actionable | `list_issues` is walked page by page, once with `stateTypes`+`assignee:null` and once with `builtin:unassigned`. The result must equal the claimable set read from the records, in order, with no duplicates. Also checks the default 50-row page and 5 search results. |
-| requirements | `get_work_context` must stay within its budget and return the complete acceptance criteria. The complete-content path rebuilds the body and all 30 comments byte for byte through `read_issue_section`, and returns every hub relation. What the context left out is then computed from that complete content (body characters, whole comments, comment-body characters, blockers, parent), and `omissions` must report exactly those counts. |
+| requirements | `get_work_context` must stay within its budget and return the complete acceptance criteria. The complete-content path rebuilds the body and all 30 comments byte for byte through `read_issue_section`, and returns every hub relation. What the context left out is then computed from that complete content (body characters, whole comments, comment-body characters, blockers, parent and its excerpt) and from the seeded repository routing, and `omissions` must report exactly those counts. At least one relation entry must actually be cut. |
 | claim | The first `claim_issue` wins. A second agent gets `ISSUE_ALREADY_CLAIMED`. |
 | update | A priority-only compact `update_issue`, then `comment_on_issue` and `link_issue`. Each one must show up in `list_activity`. Also measures a full-response update on the heavy issue. |
 | recovery | Claim and update, then disconnect while a human edits the issue. After reconnecting, the agent finds its work through `assignee`. The stale `expectedRevision` is rejected and nothing is written. The update with the fresh revision succeeds. The agent then reads the run event log to the end with no gaps. |
@@ -91,6 +95,23 @@ paged `list_activity` and no structured output, so the phases cannot run there.
 | recovery | 10 | 18,611 | 21,388 | 13 / 23,000 / 26,500 |
 | concurrent | 27 | 185,026 | 196,762 | 34 / 223,000 / 237,000 |
 | parity | 2 | 31,124 | 32,651 | 3 / 37,500 / 39,500 |
+
+The tables above were measured before the requirements issue got its parent, blockers and
+repository routing. That seed change, together with the extra reads in the independent omission
+check, moved these values. All of them are still under the unchanged ceilings:
+
+| Measure | Before | After | Ceiling |
+| --- | --- | --- | --- |
+| Verbose `get_issue` (heavy issue) | 68,261 / 0 | 69,489 / 0 | 82,000 / 0 |
+| Priority-only `update_issue`, full response | 68,261 / 68,261 | 69,489 / 69,489 | 82,000 / 82,000 |
+| requirements phase (calls / combined / JSON-RPC) | 51 / 223,156 / 230,879 | 52 / 225,933 / 234,188 | 62 / 268,000 / 277,000 |
+| update phase | 8 / 145,455 / 147,623 | 8 / 147,911 / 150,207 | 10 / 175,000 / 178,000 |
+| concurrent phase | 27 / 185,026 / 196,762 | 28 / 193,710 / 205,967 | 34 / 223,000 / 237,000 |
+| parity phase | 2 / 31,124 / 32,651 | 2 / 31,124 / 32,833 | 3 / 37,500 / 39,500 |
+
+The "Before" requirements row already includes the two relation reads added by the first review
+round (49 calls at `e3bd0a4`). The concurrent phase takes one more page because there are more
+live issues.
 
 The small-fixture response ceilings in `tool-catalog-size.test.ts` are listed in
 `budgets.ts` under `responses`.

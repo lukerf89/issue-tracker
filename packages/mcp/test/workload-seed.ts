@@ -1,5 +1,5 @@
 import {
-  addAttachment, addComment, appendRunEvent, archiveIssue, assignIssue, createIssue, createLabel, updateIssue, whoami,
+  addAttachment, addComment, appendRunEvent, archiveIssue, assignIssue, associateRepository, createIssue, createLabel, updateIssue, whoami,
   type ServiceContext
 } from "@issue-tracker/core";
 
@@ -8,6 +8,10 @@ import {
  * - 60 mixed-state/priority "workload" tasks, some assigned to the human, a few archived;
  * - one requirements issue with a ~40 KB multi-section body and 30 ~2 KB comments;
  * - one hub issue with 22 relation edges (children, blockers, blocked), 12 labels and 5 links;
+ * - on the requirements issue, populated relation sections for its work context: a parent with a
+ *   long description, 6 open blockers and a 2-repository routing override (the contract seed's
+ *   Primary and Secondary repositories). They are created after the hub, so earlier identifiers
+ *   are unchanged;
  * - 50 appended events on the contract seed's run (when a run id is given).
  * Seeded only through the core barrel, on its own advancing clock so every byte is reproducible.
  * Returns what the seed did (never what a query later reports), so tests can compare against it.
@@ -70,15 +74,32 @@ export function seedWorkload(context: ServiceContext, runId: string | null) {
       links.push(url);
     }
 
+    // Requirements relations, so a bounded work context has populated blockers/parent/repositories.
+    const parent = createIssue(context, {
+      title: "Fictional importer initiative",
+      description: "Fictional initiative overview. " + "The fictional importer initiative spans many fictional teams. ".repeat(40),
+      state: "In Progress", priority: 1
+    });
+    updateIssue(context, requirements.identifier, { parent: parent.identifier });
+    const requirementsBlockers: string[] = [];
+    for (let n = 1; n <= 6; n += 1) {
+      requirementsBlockers.push(createIssue(context, { title: `Fictional importer prerequisite ${n}`, blocks: [requirements.identifier], state: "In Progress", priority: 2 }).identifier);
+    }
+    const requirementsRepositories = ["Primary", "Secondary"];
+    requirementsRepositories.forEach((repository, position) => associateRepository(context, { repository, issue: requirements.identifier, position, isDefault: false, overrideKind: "replace" }));
+
     for (let n = 1; runId !== null && n <= 50; n += 1) {
       appendRunEvent(context, { runId, type: "fictional.progress", data: { step: n, note: `Fictional progress ${n}` }, progress: true });
     }
 
     return {
       workload, archivedWorkload,
-      requirements: { identifier: requirements.identifier, body: requirementsBody, doneWhen, comments: commentBodies },
+      requirements: {
+        identifier: requirements.identifier, body: requirementsBody, doneWhen, comments: commentBodies,
+        parent: parent.identifier, blockedBy: requirementsBlockers, repositories: requirementsRepositories
+      },
       hub: { identifier: hub.identifier, children, blockedBy, blocks, labels, links },
-      lastIdentifier: blocks.at(-1)!
+      lastIdentifier: requirementsBlockers.at(-1)!
     };
   } finally {
     context.clock = previousClock;
