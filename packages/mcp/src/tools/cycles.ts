@@ -9,7 +9,7 @@ import {
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { OpenMcpContextOptions } from "../context.js";
-import { jsonResult, mcpToolResult, withMcpContext } from "./result.js";
+import { mcpToolResult, toolConfig, toolResult, withMcpContext } from "./result.js";
 
 export function registerCycleTools(
   server: McpServer,
@@ -19,14 +19,14 @@ export function registerCycleTools(
     "create_cycle",
     {
       _meta: toolGroups("admin"),
-      title: "Create cycle",
+      ...toolConfig("create_cycle"),
       description: "Create a cycle.",
       inputSchema: createCycleInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = createCycleInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(serializeCycle(createCycle(context, parsed)))
+      return withMcpContext({ ...options, requireActor: false, tool: "create_cycle" }, ({ context }) =>
+        toolResult("create_cycle", serializeCycle(createCycle(context, parsed)))
       );
     })
   );
@@ -35,14 +35,14 @@ export function registerCycleTools(
     "list_cycles",
     {
       _meta: toolGroups("admin"),
-      title: "List cycles",
+      ...toolConfig("list_cycles"),
       description: "List cycles.",
       inputSchema: listCyclesInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = listCyclesInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(listCycles(context, parsed).map(serializeCycle))
+      return withMcpContext({ ...options, requireActor: false, tool: "list_cycles" }, ({ context }) =>
+        toolResult("list_cycles", listCycles(context, parsed).map(serializeCycle))
       );
     })
   );

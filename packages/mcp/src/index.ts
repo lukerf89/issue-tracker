@@ -1,4 +1,4 @@
-import { toolProfileSchema, type ToolProfile } from "@issue-tracker/core";
+import { toolProfileSchema, type Clock, type ToolProfile } from "@issue-tracker/core";
 import { ToolProfileTransport } from "./tool-profile.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -24,6 +24,8 @@ export interface CreateServerOptions {
   dbPath: string;
   toolProfile?: ToolProfile;
   actor?: McpActorContext;
+  /** Injectable clock forwarded to every per-call context (tests use an advancing clock). */
+  clock?: Clock;
 }
 
 export function createServer(options: CreateServerOptions): McpServer {

@@ -7,17 +7,17 @@ import {
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { OpenMcpContextOptions } from "../context.js";
-import { jsonResult, mcpToolResult, withMcpContext } from "./result.js";
+import { mcpToolResult, toolConfig, toolResult, withMcpContext } from "./result.js";
 
 export function registerRepositoryTools(server: McpServer, options: Omit<OpenMcpContextOptions, "requireActor">) {
   server.registerTool("list_repositories", {
-      _meta: toolGroups("orchestration"), title: "List repositories", description: "List registered repositories.", inputSchema: listRepositoriesInputSchema.strict() }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: false }, ({ context }) => jsonResult(listRepositories(context, listRepositoriesInputSchema.parse(input))))));
+      _meta: toolGroups("orchestration"), ...toolConfig("list_repositories"), description: "List registered repositories.", inputSchema: listRepositoriesInputSchema.strict() }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: false, tool: "list_repositories" }, ({ context }) => toolResult("list_repositories", listRepositories(context, listRepositoriesInputSchema.parse(input))))));
   server.registerTool("get_repository", {
-      _meta: toolGroups("orchestration"), title: "Get repository", description: "Read a registered repository.", inputSchema: repositoryRefSchema.strict() }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: false }, ({ context }) => jsonResult(getRepository(context, repositoryRefSchema.parse(input).repository)))));
+      _meta: toolGroups("orchestration"), ...toolConfig("get_repository"), description: "Read a registered repository.", inputSchema: repositoryRefSchema.strict() }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: false, tool: "get_repository" }, ({ context }) => toolResult("get_repository", getRepository(context, repositoryRefSchema.parse(input).repository)))));
   server.registerTool("add_repository", {
-      _meta: toolGroups("orchestration"), title: "Add repository", description: "Validate and register a local Git repository.", inputSchema: addRepositoryInputSchema.strict() }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: true }, ({ context }) => jsonResult(addRepository(context, addRepositoryInputSchema.parse(input), createNodeRepositoryInspector())))));
+      _meta: toolGroups("orchestration"), ...toolConfig("add_repository"), description: "Validate and register a local Git repository.", inputSchema: addRepositoryInputSchema.strict() }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: true, tool: "add_repository" }, ({ context }) => toolResult("add_repository", addRepository(context, addRepositoryInputSchema.parse(input), createNodeRepositoryInspector())))));
   server.registerTool("archive_repository", {
-      _meta: toolGroups("orchestration"), title: "Archive repository", description: "Archive a registered repository.", inputSchema: repositoryRefSchema.strict() }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: true }, ({ context }) => jsonResult(archiveRepository(context, repositoryRefSchema.parse(input).repository)))));
+      _meta: toolGroups("orchestration"), ...toolConfig("archive_repository"), description: "Archive a registered repository.", inputSchema: repositoryRefSchema.strict() }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: true, tool: "archive_repository" }, ({ context }) => toolResult("archive_repository", archiveRepository(context, repositoryRefSchema.parse(input).repository)))));
   server.registerTool("associate_repository", {
-      _meta: toolGroups("orchestration"), title: "Associate repository", description: "Associate a repository with a project or issue.", inputSchema: associateRepositoryInputSchema.strict() }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: true }, ({ context }) => jsonResult(associateRepository(context, associateRepositoryInputSchema.parse(input))))));
+      _meta: toolGroups("orchestration"), ...toolConfig("associate_repository"), description: "Associate a repository with a project or issue.", inputSchema: associateRepositoryInputSchema.strict() }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: true, tool: "associate_repository" }, ({ context }) => toolResult("associate_repository", associateRepository(context, associateRepositoryInputSchema.parse(input))))));
 }
