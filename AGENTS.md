@@ -79,3 +79,18 @@ Commands (once scaffolded): `npm run typecheck` · `npm test` · `npm run build`
 - ESM only; no CommonJS `require` in source. better-sqlite3 is CJS — rely on
   `esModuleInterop` for its default import.
 - Commit messages (when asked to commit): `LF-<n>: <summary>`.
+
+## Merging, CI and review
+
+- `main` is protected. The `ci` check must pass, the branch must be up to date with `main`, and
+  every PR review conversation must be resolved before a merge is accepted. After
+  `gh pr merge`, confirm `origin/main` actually moved. A blocked merge only prints a hint.
+- Check that a branch contains `main` with `git merge-base --is-ancestor origin/main <branch>`.
+  GitHub's `baseRefOid` only shows the current tip of `main`.
+- CI runs with `CI=true`, which turns on picocolors ANSI color in spawned-CLI output. Tests that
+  assert on human-readable CLI text must not depend on color. Run `CI=true npm test` before
+  opening a PR.
+- The Codex GitHub reviewer posts P1/P2 review threads, but it skips draft PRs unless someone
+  comments `@codex review`. Fix each valid thread with a regression test, then reply with the
+  fixing commit and resolve the thread.
+- Parallel agents never check out branches in the shared checkout. Work in your own worktree.
