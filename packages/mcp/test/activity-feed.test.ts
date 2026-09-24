@@ -132,10 +132,11 @@ describe("MCP activity feed and paged history", () => {
         expect(fx.cli(cli), `${tool} ${JSON.stringify(args)}`).toBe(`${await mcpText(tool, args)}\n`);
       }
 
-      const text = fx.cli(["issue", "history", "ENG-1", "--limit", "1"]);
+      // Human output may be colorized (CI=true enables picocolors); assert on plain text.
+      const text = stripAnsi(fx.cli(["issue", "history", "ENG-1", "--limit", "1"]));
       expect(text).toContain("created");
       expect(text).toMatch(/next: 1\n$/);
-      expect(fx.cli(["issue", "history", "ENG-1"])).not.toContain("next:");
+      expect(stripAnsi(fx.cli(["issue", "history", "ENG-1"]))).not.toContain("next:");
     } finally {
       await fx.close();
     }
@@ -153,3 +154,12 @@ describe("MCP activity feed and paged history", () => {
     }
   });
 });
+
+function stripAnsi(value: string): string {
+  const escape = String.fromCharCode(27);
+
+  return value
+    .split(escape)
+    .map((part, index) => (index === 0 ? part : part.replace(/^\[[0-?]*[ -/]*[@-~]/, "")))
+    .join("");
+}
