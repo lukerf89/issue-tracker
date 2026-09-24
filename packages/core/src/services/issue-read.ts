@@ -54,11 +54,16 @@ export function readIssueSection(context: ServiceContext, input: z.input<typeof 
     const { data, snapshot } = source({ ...context, db }, parsed.identifier);
     if (parsed.snapshot && parsed.snapshot !== snapshot) throw stale();
     let value: unknown = data;
-    for (const part of parsed.path) {
+    // Array indexes are canonicalized to numbers so ["comments","0"] and ["comments",0]
+    // name the same section and share one cursor identity.
+    const path: Path = [];
+    for (const raw of parsed.path) {
+      const part = Array.isArray(value) && typeof raw === "string" && /^(0|[1-9]\d*)$/.test(raw) ? Number(raw) : raw;
       if (value === null || typeof value !== "object" || !Object.hasOwn(value, part) || ["__proto__", "constructor", "prototype"].includes(String(part))) throw new AppError(AppErrorCode.VALIDATION_FAILED, "Unknown section path.", { path: parsed.path });
       value = (value as Record<string | number, unknown>)[part];
+      path.push(part);
     }
-    const pathKey = JSON.stringify([parsed.identifier, parsed.path]);
+    const pathKey = JSON.stringify([parsed.identifier, path]);
     let offset = 0;
     if (parsed.cursor) {
       let cursor: z.infer<typeof cursorSchema>;
@@ -71,7 +76,7 @@ export function readIssueSection(context: ServiceContext, input: z.input<typeof 
       offset = cursor.offset;
     }
     const next = (offset: number) => "is1." + Buffer.from(JSON.stringify({ snapshot, path: pathKey, offset })).toString("base64url");
-    const result = { identifier: parsed.identifier, revision: data.revision, snapshot, path: parsed.path, value: null as unknown, omittedPaths: [] as Path[], nextCursor: null as string | null };
+    const result = { identifier: parsed.identifier, revision: data.revision, snapshot, path, value: null as unknown, omittedPaths: [] as Path[], nextCursor: null as string | null };
     if (typeof value === "string") {
       if (offset > value.length) throw new AppError(AppErrorCode.VALIDATION_FAILED, "Section cursor is out of range.");
       let low = offset, high = value.length;
@@ -91,7 +96,7 @@ export function readIssueSection(context: ServiceContext, input: z.input<typeof 
         entries.push(value[index]); result.nextCursor = index + 1 < value.length ? next(index + 1) : null;
         if (bytes(result) > parsed.maxBytes) {
           entries[entries.length - 1] = null;
-          result.omittedPaths.push([...parsed.path, index]);
+          result.omittedPaths.push([...path, index]);
           if (bytes(result) > parsed.maxBytes) { entries.pop(); result.omittedPaths.pop(); break; }
         }
       }
@@ -101,7 +106,7 @@ export function readIssueSection(context: ServiceContext, input: z.input<typeof 
       const entries: Record<string, unknown> = {}; result.value = entries;
       for (const [key, entry] of Object.entries(value)) {
         entries[key] = entry;
-        if (bytes(result) > parsed.maxBytes - 256) { delete entries[key]; result.omittedPaths.push([...parsed.path, key]); }
+        if (bytes(result) > parsed.maxBytes - 256) { delete entries[key]; result.omittedPaths.push([...path, key]); }
       }
     } else result.value = value;
     if (bytes(result) > parsed.maxBytes) throw new AppError(AppErrorCode.VALIDATION_FAILED, "Increase maxBytes to fit section metadata.");

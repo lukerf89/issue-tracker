@@ -981,9 +981,11 @@ function withIssueDetails(
     hasMoreComments: commentMode === "latest" && (paged
       ? commentOffset + comments.length < commentCount
       : comments.length < commentCount),
-    nextCommentCursor: paged && commentOffset + comments.length < commentCount
-      ? String(commentOffset + comments.length)
-      : null,
+    // Unpaged "latest" shows the newest window; when older comments exist, the cursor
+    // points at the oldest comment so a caller can page forward through the full history.
+    nextCommentCursor: paged
+      ? (commentOffset + comments.length < commentCount ? String(commentOffset + comments.length) : null)
+      : (commentMode === "latest" && comments.length < commentCount ? "0" : null),
     attachments: listAttachments(context, { issue: issue.id })
   };
 }

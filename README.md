@@ -314,6 +314,11 @@ explicit `omittedPaths`; read each indicated path (e.g. `["comments",0]`, then
 `["comments",0,"body"]`) to recover its content. Objects omit oversized fields
 with the same path mechanism. Comments in this section API include the complete
 history, so older comments are reachable without guessing a legacy offset.
+The default `get_issue` shows the newest comments. When older ones exist, it
+returns `hasMoreComments: true` with `nextCommentCursor: "0"`. Pass that value as
+`commentCursor` and follow `nextCommentCursor` until it is null to read the full
+history, oldest first. Numeric strings in a section path, such as
+`["comments","0"]`, resolve to array indexes.
 CLI: `issue read-section ENG-1 --path comments.0.body --max-bytes 4096 --json`.
 Pass the selection's snapshot to require consistent content. Section cursors bind
 path and source snapshot; changed data returns ISSUE_CURSOR_STALE and requires a
