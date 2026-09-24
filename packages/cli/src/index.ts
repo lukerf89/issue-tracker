@@ -163,7 +163,7 @@ import {
 } from "@issue-tracker/core";
 import { runStdioServer } from "@issue-tracker/mcp";
 import { runLinekeeperTui } from "@issue-tracker/tui";
-import { Command, InvalidArgumentError } from "commander";
+import { Command, InvalidArgumentError, Option } from "commander";
 
 import { openCliContext, resolveDbPath, type CliGlobalOptions } from "./context.js";
 import {
@@ -228,6 +228,15 @@ export function createProgram(): Command {
     .configureOutput({
       writeErr: () => {}
     });
+
+  // --response only shapes the JSON mutation result; rejecting it without --json has to
+  // happen before the action runs, or the mutation would already be committed.
+  program.hook("preAction", (_program, actionCommand) => {
+    const options = optionsWithGlobals(actionCommand);
+    if (options.response !== undefined && !options.json) {
+      throw new InvalidArgumentError("--response requires --json");
+    }
+  });
 
   program
     .command("init")
@@ -574,7 +583,7 @@ export function createProgram(): Command {
   const issue = program.command("issue").description("manage issues");
   issue
     .command("create")
-    .option("--response <mode>", "JSON mutation response: full (default) or compact", (value) => issueResponseSchema.parse(value))
+    .addOption(responseOption())
     .argument("[title]")
     .option("--title <title>", "issue title")
     .option("--desc <description>", "issue description")
@@ -726,7 +735,7 @@ export function createProgram(): Command {
     );
   issue
     .command("update")
-    .option("--response <mode>", "JSON mutation response: full (default) or compact", (value) => issueResponseSchema.parse(value))
+    .addOption(responseOption())
     .option("--expected-revision <number>", "fail if issue revision changed", parsePositiveInteger)
     .argument("<identifier>")
     .option("--title <title>", "issue title")
@@ -763,7 +772,7 @@ export function createProgram(): Command {
     );
   issue
     .command("move")
-    .option("--response <mode>", "JSON mutation response: full (default) or compact", (value) => issueResponseSchema.parse(value))
+    .addOption(responseOption())
     .option("--expected-revision <number>", "fail if issue revision changed", parsePositiveInteger)
     .argument("<identifier>")
     .argument("<state>")
@@ -780,7 +789,7 @@ export function createProgram(): Command {
     );
   issue
     .command("assign")
-    .option("--response <mode>", "JSON mutation response: full (default) or compact", (value) => issueResponseSchema.parse(value))
+    .addOption(responseOption())
     .option("--expected-revision <number>", "fail if issue revision changed", parsePositiveInteger)
     .argument("<identifier>")
     .argument("[actor]")
@@ -838,7 +847,7 @@ export function createProgram(): Command {
     );
   issue
     .command("archive")
-    .option("--response <mode>", "JSON mutation response: full (default) or compact", (value) => issueResponseSchema.parse(value))
+    .addOption(responseOption())
     .option("--expected-revision <number>", "fail if issue revision changed", parsePositiveInteger)
     .argument("<identifier>")
     .option("--json", "print JSON output")
@@ -854,7 +863,7 @@ export function createProgram(): Command {
     );
   issue
     .command("unarchive")
-    .option("--response <mode>", "JSON mutation response: full (default) or compact", (value) => issueResponseSchema.parse(value))
+    .addOption(responseOption())
     .option("--expected-revision <number>", "fail if issue revision changed", parsePositiveInteger)
     .argument("<identifier>")
     .option("--json", "print JSON output")
@@ -1388,6 +1397,11 @@ function issueListFilters(options: Record<string, unknown>, defaultTeam?: string
 // --cursor/--fields only shape the --json page envelope; the human table path
 // is full and unpaged, so silently ignoring them would mislead. Fail loudly,
 // mirroring the existing `export requires --json` guard.
+function responseOption(): Option {
+  return new Option("--response <mode>", "JSON mutation response: full (default) or compact")
+    .argParser((value) => issueResponseSchema.parse(value));
+}
+
 function requireJsonForPagination(options: Record<string, unknown>): void {
   if (stringOption(options.cursor) !== undefined) {
     throw new InvalidArgumentError("--cursor requires --json");
