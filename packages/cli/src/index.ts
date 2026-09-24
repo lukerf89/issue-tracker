@@ -17,6 +17,7 @@ import {
   issueResponseSchema,
   withIssueMutationReceipt,
   getIssueResponse, getIssuesResponse, readIssueSection, getIssuesInputSchema, readIssueSectionInputSchema,
+  getWorkContext, getWorkContextInputSchema,
   toolProfileSchema,
   addAttachment,
   archiveIssue,
@@ -935,6 +936,13 @@ export function createProgram(): Command {
       const options = optionsWithGlobals(command);
       const path = String(options.path).split(".").map((part) => /^\d+$/.test(part) ? Number(part) : part);
       printJson(readIssueSection(cli.context, readIssueSectionInputSchema.parse({ identifier, path, cursor: stringOption(options.cursor), snapshot: stringOption(options.snapshot), limit: numberOption(options.limit), maxBytes: numberOption(options.maxBytes) })));
+    }));
+  issue.command("context").description("bounded, source-versioned work context (live, or the snapshot frozen for --run)").argument("<identifier>")
+    .option("--run <id>", "read the immutable snapshot captured when this run launched, with staleness")
+    .option("--max-bytes <number>", "live-mode JSON byte budget for the context payload", parsePositiveInteger).option("--json")
+    .action((identifier, _options, command) => withContext(command, { requireActor: false }, (cli) => {
+      const options = optionsWithGlobals(command);
+      printJson(getWorkContext(cli.context, getWorkContextInputSchema.parse({ identifier, run: stringOption(options.run), maxBytes: numberOption(options.maxBytes) })));
     }));
   const repository = program.command("repo").description("manage registered repositories");
   repository.command("add")

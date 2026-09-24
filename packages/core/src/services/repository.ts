@@ -133,6 +133,55 @@ export function resolveIssueRepositories(context: ServiceContext, issueRef: stri
   return context.db.select({ repository: repositories, position: projectRepositories.position, isDefault: projectRepositories.isDefault }).from(projectRepositories).innerJoin(repositories, eq(projectRepositories.repositoryId, repositories.id)).where(and(eq(projectRepositories.projectId, issue.projectId), isNull(repositories.archivedAt))).orderBy(asc(projectRepositories.position), asc(repositories.id)).all().map(({ repository }) => parseRepository(repository));
 }
 
+export type RepositoryRoutingSource = "issue_override" | "project" | null;
+export type RepositoryRoutingStatus = "resolved" | "ambiguous" | "missing";
+export interface RepositoryRoutingCandidate {
+  id: string;
+  name: string;
+  defaultBranch: string;
+  position: number;
+  isDefault: boolean | null;
+  overrideKind: "replace" | "additional" | null;
+  primary: boolean;
+  updatedAt: string;
+}
+
+/**
+ * Routing view of resolveIssueRepositories with the association metadata needed to explain and
+ * version it. Semantics mirror resolveIssueRepositories exactly: any non-archived issue
+ * association (either overrideKind) replaces the project set; order is position, then id; the
+ * first candidate is primary. A project-sourced set with several candidates and no default is
+ * "ambiguous" (reported, not blocking); an empty set is "missing".
+ */
+export function resolveIssueRepositoryRouting(context: ServiceContext, issueRef: string) {
+  const issue = getIssue(context, issueRef, { comments: "none" });
+  return repositoryRoutingForIssue(context, issue);
+}
+
+export function repositoryRoutingForIssue(context: ServiceContext, issue: { id: string; projectId: string | null }) {
+  const overrides = context.db.select({ repository: repositories, position: issueRepositories.position, overrideKind: issueRepositories.overrideKind }).from(issueRepositories).innerJoin(repositories, eq(issueRepositories.repositoryId, repositories.id)).where(and(eq(issueRepositories.issueId, issue.id), isNull(repositories.archivedAt))).orderBy(asc(issueRepositories.position), asc(repositories.id)).all();
+  let source: RepositoryRoutingSource = null;
+  let rows: Array<{ repository: typeof repositories.$inferSelect; position: number; isDefault: boolean | null; overrideKind: "replace" | "additional" | null }> = [];
+  if (overrides.length > 0) {
+    source = "issue_override";
+    rows = overrides.map((row) => ({ ...row, isDefault: null }));
+  } else if (issue.projectId) {
+    rows = context.db.select({ repository: repositories, position: projectRepositories.position, isDefault: projectRepositories.isDefault }).from(projectRepositories).innerJoin(repositories, eq(projectRepositories.repositoryId, repositories.id)).where(and(eq(projectRepositories.projectId, issue.projectId), isNull(repositories.archivedAt))).orderBy(asc(projectRepositories.position), asc(repositories.id)).all().map((row) => ({ ...row, overrideKind: null }));
+    if (rows.length > 0) source = "project";
+  }
+  const candidates: RepositoryRoutingCandidate[] = rows.map((row, index) => ({
+    id: row.repository.id, name: row.repository.name, defaultBranch: row.repository.defaultBranch, position: row.position,
+    isDefault: row.isDefault, overrideKind: row.overrideKind, primary: index === 0, updatedAt: row.repository.updatedAt
+  }));
+  return { source, status: repositoryRoutingStatus(source, candidates), primaryRepositoryId: candidates[0]?.id ?? null, candidates };
+}
+
+export function repositoryRoutingStatus(source: RepositoryRoutingSource, entries: ReadonlyArray<{ isDefault: boolean | null }>): RepositoryRoutingStatus {
+  if (entries.length === 0) return "missing";
+  if (source === "project" && entries.length > 1 && !entries.some((entry) => entry.isDefault === true)) return "ambiguous";
+  return "resolved";
+}
+
 function parseRepository<T extends { setupCommand: unknown; testCommand: unknown; verificationCommand: unknown }>(row: T) {
   const setup = row.setupCommand === null ? { success: true as const, data: null } : commandSpecSchema.safeParse(row.setupCommand);
   const test = commandSpecSchema.safeParse(row.testCommand);

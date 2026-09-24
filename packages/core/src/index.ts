@@ -498,3 +498,13 @@ export { getIssueResponse, getIssuesResponse, readIssueSection } from "./service
 export { getIssuesInputSchema, readIssueSectionInputSchema } from "./schemas/issue-read.js";
 
 export { isToolAdvertised, TOOL_GROUPS_META_KEY, toolGroups, toolGroupSchema, toolProfileSchema, type ToolGroup, type ToolProfile } from "./schemas/tool-profile.js";
+
+// LF-144: bounded, source-versioned work context shared by CLI, MCP and agentd.
+export {
+  buildWorkContext, getWorkContext, parseAcceptanceCriteria, RUN_WORK_CONTEXT_MAX_BYTES, workContextForPrompt, workContextStaleness
+} from "./services/work-context.js";
+export {
+  getWorkContextInputSchema, WORK_CONTEXT_DEFAULT_MAX_BYTES, WORK_CONTEXT_MAX_CHANGES, workContextChangeSchema, workContextResponseSchema, workContextSchema, workContextStalenessSchema,
+  type GetWorkContextInput, type WorkContext, type WorkContextChange, type WorkContextResponse, type WorkContextRoutingEntry, type WorkContextStaleness
+} from "./schemas/work-context.js";
+export { resolveIssueRepositoryRouting, type RepositoryRoutingCandidate, type RepositoryRoutingSource, type RepositoryRoutingStatus } from "./services/repository.js";

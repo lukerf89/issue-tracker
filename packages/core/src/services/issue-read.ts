@@ -6,8 +6,8 @@ import { getIssuesInputSchema, readIssueSectionInputSchema } from "../schemas/is
 import { serializeIssue } from "../serialize.js";
 import { fingerprint } from "./issue-cursor.js";
 import { getIssue } from "./issue.js";
+import { fitStringPrefix, jsonBytes as bytes } from "./json-budget.js";
 
-const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
 type Path = Array<string | number>;
 function source(context: ServiceContext, identifier: string) {
   const data = serializeIssue(getIssue(context, identifier, { comments: "all" }));
@@ -79,13 +79,11 @@ export function readIssueSection(context: ServiceContext, input: z.input<typeof 
     const result = { identifier: parsed.identifier, revision: data.revision, snapshot, path, value: null as unknown, omittedPaths: [] as Path[], nextCursor: null as string | null };
     if (typeof value === "string") {
       if (offset > value.length) throw new AppError(AppErrorCode.VALIDATION_FAILED, "Section cursor is out of range.");
-      let low = offset, high = value.length;
-      while (low < high) {
-        const end = Math.ceil((low + high) / 2);
-        result.value = value.slice(offset, end); result.nextCursor = end < value.length ? next(end) : null;
-        if (bytes(result) <= parsed.maxBytes) low = end; else high = end - 1;
-      }
-      if (low < value.length && low > offset && /[\uD800-\uDBFF]/.test(value[low - 1]!)) low--;
+      const low = fitStringPrefix(value, offset, (slice) => {
+        const end = offset + slice.length;
+        result.value = slice; result.nextCursor = end < value.length ? next(end) : null;
+        return bytes(result) <= parsed.maxBytes;
+      });
       result.value = value.slice(offset, low); result.nextCursor = low < value.length ? next(low) : null;
       if (low === offset && offset < value.length) throw new AppError(AppErrorCode.VALIDATION_FAILED, "Increase maxBytes to fit section metadata.");
     } else if (Array.isArray(value)) {

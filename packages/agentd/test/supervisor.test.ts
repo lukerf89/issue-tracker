@@ -8,7 +8,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   addRepository, applyMigrations, associateRepository, claimRunAction,
   completeRunWorkflow, createIssue, createNodeRepositoryInspector, createProject, exportSnapshot, getRun, init, listRunEvents,
-  openDb, previewRun, requestRunPublication, startRun, type Clock, type EngineDefinition, type ServiceContext
+  addComment, getWorkContext, openDb, previewRun, requestRunPublication, startRun, updateIssue, workContextForPrompt,
+  type Clock, type EngineDefinition, type ServiceContext
 } from "@issue-tracker/core";
 
 import { FakeProviderAdapter } from "../src/adapters/fake.js";
@@ -111,7 +112,60 @@ describe("durable coding-run supervisor", () => {
       expect(JSON.stringify(exportSnapshot(context, { includeRawLogs: true }))).toContain("private-fictional-prompt-text");
     } finally { db.$client.close(); }
   }, 120_000);
+
+  it("feeds participants the frozen work context verbatim, identical to the snapshot and live reads", async () => {
+    const { context, run, prompt, liveAtLaunch, close } = await launchFirstParticipant();
+    try {
+      const workContext = (prompt as { workContext: unknown }).workContext;
+      expect(workContext).toStrictEqual(workContextForPrompt(getRun(context, run.id).resolvedConfiguration));
+      expect(workContext).toStrictEqual(getWorkContext(context, { identifier: "ENG-1", run: run.id }).context);
+      // The explicit live read of the same source state (taken at launch, before the run mutated anything).
+      expect(workContext).toStrictEqual(liveAtLaunch);
+      expect((workContext as { sections: { acceptanceCriteria: { items: string[] } } }).sections.acceptanceCriteria.items).toEqual(["Worktree is recovered", "No duplicate effects"]);
+    } finally { close(); }
+  }, 120_000);
+
+  it("launches legacy runs without a work-context snapshot with workContext null", async () => {
+    const { prompt, close } = await launchFirstParticipant({ legacy: true });
+    try {
+      expect(prompt).toHaveProperty("workContext", null);
+      expect(prompt).toHaveProperty("issue.identifier", "ENG-1");
+    } finally { close(); }
+  }, 120_000);
 });
+
+async function launchFirstParticipant(options: { legacy?: boolean } = {}) {
+  const root = mkdtempSync(join(tmpdir(), "issue-tracker-agentd-context-")); tempDirs.push(root);
+  const db = openDb(join(root, "tracker.db")); applyMigrations(db);
+  const context: ServiceContext = { db, actor: null, clock: mutableClock("2026-07-17T12:00:00.000Z") };
+  context.actor = init(context, { teamKey: "ENG", actorHandle: "owner" }).actor;
+  const project = createProject(context, { name: "Fictional Agent Runtime" });
+  const issue = createIssue(context, { title: "Recover a durable worktree", projectId: project.id, description: "Recovery work.\n\n## Done when\n- Worktree is recovered\n- No duplicate effects\n" });
+  createIssue(context, { title: "Fictional prerequisite" });
+  updateIssue(context, issue.identifier, { blockedBy: ["ENG-2"] });
+  addComment(context, { issue: issue.identifier, body: "Decision: recover in place" });
+  const command = { executable: process.execPath, args: ["-e", "process.exit(0)"], envNames: [] };
+  const repository = addRepository(context, { name: "Runtime", path: createRepository(root), testCommand: command, verificationCommand: command }, createNodeRepositoryInspector());
+  associateRepository(context, { repository: repository.id, project: project.id, position: 0, isDefault: true, overrideKind: "replace" });
+  const capabilities = { resume: true, redirect: true, interactivePermissions: true, structuredOutput: true, childParticipants: false, usage: true };
+  const engine: EngineDefinition = { adapter: "fake", executable: "fixture", model: "fictional-model", permissionMode: "autonomous", envNames: [], capabilities };
+  const runtime = { inspector: createNodeRepositoryInspector(), dataRoot: join(root, "data"), engineCatalog: { schemaVersion: 1 as const, engines: { "claude-default": engine } } };
+  const preview = previewRun(context, { issue: issue.identifier }, runtime);
+  const run = startRun(context, { issue: issue.identifier, previewFingerprint: preview.previewFingerprint, confirmWarnings: preview.warnings }, runtime);
+  const liveAtLaunch = getWorkContext(context, { identifier: issue.identifier }).context;
+  if (options.legacy) {
+    const legacy = { ...(run.resolvedConfiguration as Record<string, unknown>) };
+    delete legacy.workContext;
+    db.$client.prepare("update agent_runs set resolved_configuration = ? where id = ?").run(JSON.stringify(legacy), run.id);
+  }
+  const fake = new FakeProviderAdapter([{ result: (launch: { role: string }) => ({ exitCode: 0, sessionId: "fictional-session", actualModel: "fictional-model", structuredResult: { role: launch.role, summary: "Planned fictional work", files: [], tests: [], risks: [], findings: [], verifiedTestsPassed: true, riskNotes: [], risk: "low" as const, estimatedSize: "small" }, events: [] }) }]);
+  const supervisor = new Supervisor({ id: "context-agentd", context, dataRoot: join(root, "data"), adapters: { fake }, engines: { "claude-default": engine } });
+  for (let index = 0; index < 4 && fake.launches.length === 0; index += 1) await supervisor.runOnce();
+  const launched = fake.launches[0];
+  if (!launched) throw new Error("expected a participant launch");
+  const prompt = JSON.parse(launched.prompt.slice(launched.prompt.indexOf("\n") + 1)) as Record<string, unknown>;
+  return { context, run, prompt, liveAtLaunch, close: () => db.$client.close() };
+}
 
 function createRepository(root: string, name = "repository") {
   const repository = join(root, name);

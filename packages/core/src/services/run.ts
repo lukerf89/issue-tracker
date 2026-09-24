@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 
 import { and, asc, desc, eq, gt, isNull } from "drizzle-orm";
@@ -17,6 +16,8 @@ import { getIssue } from "./issue.js";
 import { getProfile } from "./profile.js";
 import { engineHealthFingerprint, engineHealthProblem, getEngineHealth } from "./engine-health.js";
 import { resolveIssueRepositories, type RepositoryInspector } from "./repository.js";
+import { stableHash } from "./stable-hash.js";
+import { buildWorkContext, RUN_WORK_CONTEXT_MAX_BYTES } from "./work-context.js";
 
 const TERMINAL_STATES = new Set<RunState>(["succeeded", "partial", "failed", "canceled", "crashed"]);
 const TRANSITIONS: Record<RunState, readonly RunState[]> = {
@@ -38,12 +39,27 @@ export interface RunResolutionRuntime {
 }
 
 export function previewRun(context: ServiceContext, input: PreviewRunInput, runtime: RunResolutionRuntime) {
-  const issue = getIssue(context, input.issue);
-  const profile = getProfile(context, input.profile);
-  if (profile.archivedAt) throw new AppError(AppErrorCode.CONSTRAINT_VIOLATION, `Profile ${profile.name} is archived.`);
-  const repositories = resolveIssueRepositories(context, issue.identifier);
-  if (repositories.length === 0) throw new AppError(AppErrorCode.REPOSITORY_NOT_FOUND, `Issue ${issue.identifier} has no resolved repository.`);
-  const priorRunCount = context.db.query.agentRuns.findMany({ where: eq(agentRuns.issueId, issue.id) }).sync().length;
+  // Phase A: every database read happens in one read transaction, so the issue, routing, run
+  // ordinal, engine health and the frozen work context describe the same source state.
+  const { issue, profile, repositories, priorRunCount, engineHealth, workContext } = context.db.transaction((db) => {
+    const tx = { ...context, db };
+    const issue = getIssue(tx, input.issue);
+    const profile = getProfile(tx, input.profile);
+    if (profile.archivedAt) throw new AppError(AppErrorCode.CONSTRAINT_VIOLATION, `Profile ${profile.name} is archived.`);
+    const repositories = resolveIssueRepositories(tx, issue.identifier);
+    if (repositories.length === 0) throw new AppError(AppErrorCode.REPOSITORY_NOT_FOUND, `Issue ${issue.identifier} has no resolved repository.`);
+    const priorRunCount = tx.db.query.agentRuns.findMany({ where: eq(agentRuns.issueId, issue.id) }).sync().length;
+    const engineHealth = new Map<string, ReturnType<typeof getEngineHealth>>();
+    if (runtime.requireEngineHealth) {
+      for (const engineName of new Set(Object.values(profile.configuration.roles))) {
+        const definition = runtime.engineCatalog?.engines[engineName];
+        if (definition) engineHealth.set(engineName, getEngineHealth(tx, engineName, engineHealthFingerprint(engineName, definition)));
+      }
+    }
+    const workContext = buildWorkContext(tx, issue.identifier, RUN_WORK_CONTEXT_MAX_BYTES);
+    return { issue, profile, repositories, priorRunCount, engineHealth, workContext };
+  });
+  // Phase B: filesystem inspection and snapshot assembly, outside the database transaction.
   const runSeed = stableHash({ issueId: issue.id, ordinal: priorRunCount + 1, parallelGroup: input.parallelGroup ?? null }).slice(0, 12);
   const resolvedRepositories = repositories.map((repository, position) => {
     const baseRef = input.baseRef ?? repository.defaultBranch;
@@ -78,8 +94,7 @@ export function previewRun(context: ServiceContext, input: PreviewRunInput, runt
       if (runtime.engineCatalog && assignment.adapter === "unresolved") return [`Engine ${assignment.engineName} is not configured.`];
       if (assignment.executable && runtime.executableAvailable && !runtime.executableAvailable(assignment.executable)) return [`Executable ${assignment.executable} for engine ${assignment.engineName} is unavailable.`];
       if (runtime.requireEngineHealth && assignment.options) {
-        const fingerprint = assignment.healthFingerprint!;
-        const problem = engineHealthProblem(getEngineHealth(context, assignment.engineName, fingerprint), context.clock.now(), runtime.engineHealthTtlMs ?? 15 * 60_000);
+        const problem = engineHealthProblem(engineHealth.get(assignment.engineName) ?? null, context.clock.now(), runtime.engineHealthTtlMs ?? 15 * 60_000);
         if (problem) return [`${problem.code}: Engine ${assignment.engineName}: ${problem.message} ${problem.remediation}`];
       }
       return assignment.validationErrors.map((message) => `Engine ${assignment.engineName}: ${message}`);
@@ -95,6 +110,7 @@ export function previewRun(context: ServiceContext, input: PreviewRunInput, runt
   const snapshot = {
     schemaVersion: 1, workflow: profile.workflow, workflowVersion: 1,
     issue: { id: issue.id, identifier: issue.identifier, title: issue.title, description: issue.description },
+    workContext,
     profile: { id: profile.id, name: profile.name, configuration: profileConfigurationSchema.parse(profile.configuration) },
     roleAssignments,
     repositories: resolvedRepositories,
@@ -251,10 +267,6 @@ function hydrateRun(context: ServiceContext, run: AgentRun) {
   };
 }
 
-function stableHash(value: unknown): string {
-  return createHash("sha256").update(stableStringify(value)).digest("hex");
-}
-
 function breadcrumbAction(type: string, data: Record<string, unknown>) {
   if (type === "phase.changed") return "run_phase_changed";
   if (type === "input.requested" || type === "permission.requested") return "run_waiting_for_input";
@@ -265,8 +277,3 @@ function breadcrumbAction(type: string, data: Record<string, unknown>) {
   return null;
 }
 
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  if (value && typeof value === "object") return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => `${JSON.stringify(key)}:${stableStringify(child)}`).join(",")}}`;
-  return JSON.stringify(value);
-}

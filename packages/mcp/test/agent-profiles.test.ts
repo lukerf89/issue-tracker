@@ -19,6 +19,7 @@ const CODING_TOOLS = [
   "describe",
   "get_issue",
   "get_issues",
+  "get_work_context",
   "link_issue",
   "list_activity_feed",
   "list_builtin_views",

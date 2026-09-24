@@ -5,6 +5,7 @@ import {
   serializeIssueMutation,
   withIssueMutationReceipt,
   getIssueResponse, getIssuesResponse, readIssueSection, getIssuesInputSchema, readIssueSectionInputSchema,
+  getWorkContext, getWorkContextInputSchema,
   addAttachment,
   addComment,
   addCommentInputSchema,
@@ -55,6 +56,8 @@ export function registerIssueTools(
   server.registerTool("read_issue_section", {
       _meta: toolGroups("coding"), title: "Read issue section", description: "Page a string or collection independently. Follow nextCursor; retrieve oversized values through omittedPaths. Pass snapshot to reject changed source content.", inputSchema: readIssueSectionInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: false }, ({ context }) => jsonResult(readIssueSection(context, input)))));
 
+  server.registerTool("get_work_context", {
+      _meta: toolGroups("coding"), title: "Read work context", description: "Deterministic, bounded work context for an issue: task, full acceptance criteria (Done when / Acceptance criteria lists), blockers, parent, repository routing, decisions (comments starting \"Decision:\" or \"Decided:\") and recent comments. Every section has provenance and a retrieval path; omissions list what the byte budget or selection limits left out. Pass run to read the immutable snapshot a run launched with plus stale source revisions (maxBytes is live-only).", inputSchema: getWorkContextInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: false }, ({ context }) => jsonResult(getWorkContext(context, input)))));
   server.registerTool("claim_issue", {
       _meta: toolGroups("coding"), title: "Claim issue", description: "Atomically claim active unassigned backlog/unstarted work for the current actor. Claims have no lease; release through assign_issue with actor:null. Conflicts require a fresh read.", inputSchema: claimIssueInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: true }, ({ context }) => jsonResult(serializeIssue(claimIssue(context, input.identifier, input))))));
 
