@@ -174,9 +174,16 @@ export function startRun(context: ServiceContext, input: StartRunInput, runtime:
   return inTransaction(context, (txContext) => {
     // Repository inspection ran outside any transaction, so a write may have landed since the
     // preview's reads. Re-read the database-derived inputs here and refuse to store a stale snapshot.
-    if (runSourcesDigest(readRunSources(txContext, input, runtime)) !== sourcesDigest) {
-      throw new AppError(AppErrorCode.RUN_PREVIEW_STALE, "Run sources changed while the preview was being resolved; preview again before starting.");
+    const stale = (details?: Record<string, unknown>) => new AppError(AppErrorCode.RUN_PREVIEW_STALE, "Run sources changed while the preview was being resolved; preview again before starting.", details);
+    let currentDigest: string;
+    try {
+      currentDigest = runSourcesDigest(readRunSources(txContext, input, runtime));
+    } catch (error) {
+      // The same reads succeeded moments ago, so a failure now means a concurrent write invalidated them.
+      if (error instanceof AppError) throw stale({ cause: { code: error.code, message: error.message } });
+      throw error;
     }
+    if (currentDigest !== sourcesDigest) throw stale();
     const active = txContext.db.query.agentRuns.findMany({ where: and(eq(agentRuns.issueId, preview.issue.id), isNull(agentRuns.completedAt)) }).sync();
     if (!preview.parallelGroup && active.some((candidate) => candidate.parallelGroup === null)) throw new AppError(AppErrorCode.CONSTRAINT_VIOLATION, `Issue ${preview.issue.identifier} already has an active run.`, { runId: active.find((candidate) => candidate.parallelGroup === null)?.id });
     if (preview.parallelGroup && active.some((candidate) => candidate.parallelGroup === preview.parallelGroup)) throw new AppError(AppErrorCode.CONSTRAINT_VIOLATION, `Parallel group ${preview.parallelGroup} is already active for ${preview.issue.identifier}.`, { parallelGroup: preview.parallelGroup });

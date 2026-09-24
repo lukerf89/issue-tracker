@@ -446,6 +446,24 @@ describe("run launch freezes the work context", () => {
     } finally { f.close(); }
   });
 
+  it("reports RUN_PREVIEW_STALE when a write during start's inspection invalidates the sources outright", () => {
+    const f = setup();
+    try {
+      let interfere: (() => void) | null = null;
+      const runtime = { ...f.runtime, inspector: { inspect: (path: string, baseRef?: string) => {
+        const write = interfere; interfere = null; write?.();
+        return fakeInspector.inspect(path, baseRef);
+      } } satisfies RepositoryInspector };
+      const preview = previewRun(f.context, { issue: "ENG-1" }, runtime);
+      // Archiving the only repository makes the re-read itself fail with REPOSITORY_NOT_FOUND.
+      interfere = () => archiveRepository(f.context, f.repositories[0]!.id);
+      const error = captureError(() => startRun(f.context, { issue: "ENG-1", previewFingerprint: preview.previewFingerprint, confirmWarnings: preview.warnings }, runtime));
+      expect(error.code).toBe("RUN_PREVIEW_STALE");
+      expect(error.details).toEqual({ cause: { code: "REPOSITORY_NOT_FOUND", message: expect.any(String) } });
+      expect(f.db.$client.prepare("SELECT count(*) AS n FROM agent_runs").get()).toEqual({ n: 0 });
+    } finally { f.close(); }
+  });
+
   it("raises RUN_PREVIEW_STALE when routing changes between preview and start without an issue revision", () => {
     const f = setup({ repositories: 2 });
     try {
