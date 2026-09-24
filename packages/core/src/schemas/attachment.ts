@@ -5,6 +5,7 @@ import { nonEmptyStringSchema, optionalNullableStringSchema } from "./common.js"
 
 const attachmentBaseSchema = z.object({
   issue: nonEmptyStringSchema,
+  expectedRevision: z.number().int().positive().optional(),
   title: optionalNullableStringSchema,
   remote: optionalNullableStringSchema
 });
@@ -44,6 +45,7 @@ export const linkIssueInputSchema = z.discriminatedUnion("kind", [
 
 export const linkIssueToolInputSchema = z.object({
   issue: nonEmptyStringSchema,
+  expectedRevision: z.number().int().positive().optional(),
   kind: attachmentKindSchema,
   title: optionalNullableStringSchema,
   url: optionalNullableStringSchema,

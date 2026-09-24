@@ -209,3 +209,21 @@ use the corresponding remove fields to remove them. Page limits are integers
 from 1 through 250 (paginated issue reads default to 50). Search splits free text
 into alphanumeric tokens and ANDs their prefix matches; it does not execute FTS
 operators supplied in the query.
+
+### Concurrent issue writes
+
+Full issue reads include a monotonic `revision`. Pass `expectedRevision` to issue
+updates, moves, assignment, archive/unarchive, comments, or attachments (CLI:
+`--expected-revision`). A stale write returns `ISSUE_CONFLICT` with the current
+revision; reread before deciding whether to retry. Scalar changes and direct
+label, dependency (both endpoints), comment, and attachment changes increment
+revisions transactionally, including writes at the same clock timestamp.
+An operation affecting several relations may increment more than once. Revisions
+are change tokens, not counts of user actions. Scalar no-ops leave revision and
+activity unchanged.
+
+`claim_issue` / `tracker issue claim ENG-1 --json` atomically assigns active,
+unassigned backlog/unstarted work to the current actor. A second claim conflicts,
+including a replay by the same actor; there is no lease or automatic expiry.
+Release ownership through ordinary assignment with a null actor. Claims do not
+change workflow state or guarantee dependencies are satisfied.

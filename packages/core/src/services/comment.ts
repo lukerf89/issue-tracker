@@ -1,3 +1,4 @@
+import { assertIssueRevision, type IssueWriteOptions } from "./issue-revision.js";
 import { asc, eq, sql } from "drizzle-orm";
 
 import { inTransaction, type ServiceContext } from "../context.js";
@@ -6,7 +7,7 @@ import { AppError, AppErrorCode } from "../errors.js";
 import { uuid } from "../ids.js";
 import { appendActivityInTransaction } from "./activity.js";
 
-export interface AddCommentInput {
+export interface AddCommentInput extends IssueWriteOptions {
   issue: string;
   body: string;
   parent?: string | null;
@@ -27,6 +28,7 @@ export function addComment(context: ServiceContext, input: AddCommentInput): Com
   requireActor(context);
 
   return inTransaction(context, (txContext) => {
+    assertIssueRevision(txContext, input.issue, input.expectedRevision);
     const actor = requireActor(txContext);
     const issue = getIssueByIdOrIdentifier(txContext, input.issue);
     const parent = input.parent == null ? null : getCommentById(txContext, input.parent);

@@ -1,3 +1,4 @@
+import { assertIssueRevision, type IssueWriteOptions } from "./issue-revision.js";
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 
 import { inTransaction, type ServiceContext, type ServiceTransaction } from "../context.js";
@@ -152,7 +153,7 @@ export interface GetIssueOptions {
   commentLimit?: number;
 }
 
-export interface UpdateIssueInput {
+export interface UpdateIssueInput extends IssueWriteOptions {
   title?: string;
   description?: string | null;
   priority?: number;
@@ -175,16 +176,16 @@ export interface UpdateIssueInput {
   removeBlocks?: string[];
 }
 
-export interface AssignIssueInput {
+export interface AssignIssueInput extends IssueWriteOptions {
   identifier: string;
   actor: string | null;
 }
 
-export interface ArchiveIssueInput {
+export interface ArchiveIssueInput extends IssueWriteOptions {
   identifier: string;
 }
 
-export interface UnarchiveIssueInput {
+export interface UnarchiveIssueInput extends IssueWriteOptions {
   identifier: string;
 }
 
@@ -308,7 +309,8 @@ export function createIssue(context: ServiceContext, input: CreateIssueInput): C
       completedAt: null,
       canceledAt: null,
       archivedAt: null,
-      idempotencyKey
+      idempotencyKey,
+      revision: 1
     };
 
     try {
@@ -593,6 +595,7 @@ export function updateIssue(context: ServiceContext, issueIdentifier: string, in
   requireActor(context);
 
   return inTransaction(context, (txContext) => {
+    assertIssueRevision(txContext, issueIdentifier, input.expectedRevision);
     const issue = getIssue(txContext, issueIdentifier);
     const now = txContext.clock.now().toISOString();
     const changes: Partial<typeof issues.$inferInsert> = { updatedAt: now };
@@ -652,6 +655,9 @@ export function updateIssue(context: ServiceContext, issueIdentifier: string, in
     if (has(input, "dueDate")) addChange(changes, changedFields, "dueDate", input.dueDate ?? null);
     if (has(input, "sortOrder")) addChange(changes, changedFields, "sortOrder", input.sortOrder!);
 
+    for (const key of Object.keys(changedFields) as Array<keyof typeof issues.$inferInsert>) {
+      if (changes[key] === issue[key]) { delete changes[key]; delete changedFields[key]; }
+    }
     if (Object.keys(changedFields).length > 0) {
       txContext.db.update(issues).set(changes).where(eq(issues.id, issue.id)).run();
       appendActivityInTransaction(txContext, {
@@ -693,11 +699,13 @@ export function updateIssue(context: ServiceContext, issueIdentifier: string, in
 export function assignIssue(
   context: ServiceContext,
   issueIdentifier: string,
-  actorRef: string | null
+  actorRef: string | null,
+  options: IssueWriteOptions = {}
 ) {
   requireActor(context);
 
   return inTransaction(context, (txContext) => {
+    assertIssueRevision(txContext, issueIdentifier, options.expectedRevision);
     const issue = getIssueByIdOrIdentifier(txContext, issueIdentifier);
     const assignee = resolveOptionalActor(txContext, actorRef);
     const previousAssignee = issue.assigneeId ? getActorById(txContext, issue.assigneeId) : null;
@@ -732,10 +740,11 @@ export function assignIssue(
   });
 }
 
-export function archiveIssue(context: ServiceContext, issueIdentifier: string) {
+export function archiveIssue(context: ServiceContext, issueIdentifier: string, options: IssueWriteOptions = {}) {
   requireActor(context);
 
   return inTransaction(context, (txContext) => {
+    assertIssueRevision(txContext, issueIdentifier, options.expectedRevision);
     const issue = getIssueByIdOrIdentifier(txContext, issueIdentifier);
 
     if (issue.archivedAt !== null) {
@@ -764,10 +773,11 @@ export function archiveIssue(context: ServiceContext, issueIdentifier: string) {
   });
 }
 
-export function unarchiveIssue(context: ServiceContext, issueIdentifier: string) {
+export function unarchiveIssue(context: ServiceContext, issueIdentifier: string, options: IssueWriteOptions = {}) {
   requireActor(context);
 
   return inTransaction(context, (txContext) => {
+    assertIssueRevision(txContext, issueIdentifier, options.expectedRevision);
     const issue = getIssueByIdOrIdentifier(txContext, issueIdentifier);
 
     if (issue.archivedAt === null) {
@@ -800,10 +810,11 @@ export function unarchiveIssue(context: ServiceContext, issueIdentifier: string)
   });
 }
 
-export function moveIssue(context: ServiceContext, issueIdentifier: string, stateIdOrName: string) {
+export function moveIssue(context: ServiceContext, issueIdentifier: string, stateIdOrName: string, options: IssueWriteOptions = {}) {
   requireActor(context);
 
   return inTransaction(context, (txContext) => {
+    assertIssueRevision(txContext, issueIdentifier, options.expectedRevision);
     const issue = getIssue(txContext, issueIdentifier);
     const previousState = getState(txContext, issue.stateId, issue.teamId);
     const nextState = getState(txContext, stateIdOrName, issue.teamId);
@@ -1431,4 +1442,17 @@ function touchIssue(context: ServiceContext, issueId: string): void {
 
 function has<T extends object>(object: T, key: keyof T): boolean {
   return Object.prototype.hasOwnProperty.call(object, key);
+}
+
+/** Atomic, non-leased claim. Only active unassigned backlog/unstarted issues qualify. */
+export function claimIssue(context: ServiceContext, issueIdentifier: string, options: IssueWriteOptions = {}) {
+  const actor = requireActor(context);
+  return inTransaction(context, (txContext) => {
+    assertIssueRevision(txContext, issueIdentifier, options.expectedRevision);
+    const issue = getIssueByIdOrIdentifier(txContext, issueIdentifier);
+    if (issue.assigneeId !== null) throw new AppError(AppErrorCode.ISSUE_ALREADY_CLAIMED, "Issue already has an assignee.", { identifier: issue.identifier, assigneeId: issue.assigneeId, currentRevision: issue.revision });
+    const state = getState(txContext, issue.stateId, issue.teamId);
+    if (issue.archivedAt !== null || !["backlog", "unstarted"].includes(state.type)) throw new AppError(AppErrorCode.CONSTRAINT_VIOLATION, "Only active backlog or unstarted issues can be claimed.");
+    return assignIssue(txContext, issueIdentifier, actor.id);
+  });
 }
