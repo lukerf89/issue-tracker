@@ -81,12 +81,14 @@ function records(f: ContractFixture) {
 
 type Omission = { section: string; unit: "items" | "characters"; omittedCount: number };
 type CommentItem = { id: string; body: string };
+/** workload-seed.ts leads every decision comment with "Decision:" and every other comment without it. */
+const SEEDED_DECISION = /^Decision:/;
 
 /**
  * Independent omission check for a work context: from the complete content, work out what each
  * section actually left out, and require omissions to report exactly that many items/characters.
- * Decisions and recent comments are both drawn from the issue's comments, so they are checked
- * together (which comment is a "decision" is core's rule; which comments are missing is not).
+ * Decisions and recent comments are checked per section: a comment's section follows the marker the
+ * workload seed writes (SEEDED_DECISION), cross-checked against what core returns in each section.
  * Repository routing has no read_issue_section path, so its truth is the routing the fixture seeded.
  * Returns how many relation entries (blockers, parent, repositories) the context cut.
  */
@@ -121,19 +123,26 @@ function expectOmissionsAccountForCuts(
   const bodyCut = full.body.length - shown.length;
   expect(reported(["task"], "characters"), "task characters omitted").toBe(bodyCut);
 
-  // Comments: whole comments left out, and characters cut from the bodies of included ones.
+  // Comments, per section: whole comments left out, and characters cut from included bodies.
   const byId = new Map(full.comments.map((comment) => [comment.id, comment.body]));
-  const included = [...decisions.items, ...recentComments.items];
-  let commentCharsCut = 0;
-  for (const item of included) {
-    const body = byId.get(item.id);
-    expect(body, `comment ${item.id} exists`).toBeDefined();
-    expect(body!.startsWith(item.body), `comment ${item.id} body is a prefix`).toBe(true);
-    commentCharsCut += body!.length - item.body.length;
+  let commentsCut = 0, commentCharsCut = 0;
+  for (const [name, section, isDecision] of [["decisions", decisions, true], ["recentComments", recentComments, false]] as const) {
+    const expected = full.comments.filter((comment) => SEEDED_DECISION.test(comment.body) === isDecision);
+    let charsCut = 0;
+    for (const item of section.items) {
+      const body = byId.get(item.id);
+      expect(body, `${name}: comment ${item.id} exists`).toBeDefined();
+      // Core's classification must agree with the seed's marker.
+      expect(SEEDED_DECISION.test(body!), `${name}: comment ${item.id} belongs in this section`).toBe(isDecision);
+      expect(body!.startsWith(item.body), `${name}: comment ${item.id} body is a prefix`).toBe(true);
+      charsCut += body!.length - item.body.length;
+    }
+    const itemsCut = expected.length - new Set(section.items.map((item) => item.id)).size;
+    expect(reported([name], "items"), `${name} items omitted`).toBe(itemsCut);
+    expect(reported([name], "characters"), `${name} characters omitted`).toBe(charsCut);
+    commentsCut += itemsCut;
+    commentCharsCut += charsCut;
   }
-  const commentsCut = full.comments.length - new Set(included.map((item) => item.id)).size;
-  expect(reported(["decisions", "recentComments"], "items"), "comments omitted").toBe(commentsCut);
-  expect(reported(["decisions", "recentComments"], "characters"), "comment characters omitted").toBe(commentCharsCut);
 
   // Blockers: every shown blocker is a real edge; every real edge not shown is reported.
   const allBlockers = new Set(full.blockedBy.map((edge) => edge.identifier));
@@ -329,10 +338,13 @@ it("recovery after interruption: find claimed work again and resume only on a fr
     const mine = await walkPages(caller(resumed.call), "list_issues", { assignee: "fictional-agent", stateTypes: [...OPEN] });
     expect(mine.identifiers).toEqual([target]);
 
+    // The rejected write changes nothing anywhere: every user table (activity included) is compared.
+    const beforeConflict = f.snapshot();
     const rejected = await resumed.call("update_issue", { identifier: target, expectedRevision: staleRevision, priority: 4, response: "compact" });
     expect(rejected.data.error).toMatchObject({ code: "ISSUE_CONFLICT", details: { expectedRevision: staleRevision } });
+    expect(f.snapshot()).toEqual(beforeConflict);
     const current = await resumed.call("get_issue", { identifier: target, fields: ["revision", "priority", "title"] });
-    // The rejected write changed nothing.
+    // And the issue reads back unchanged through the tool.
     expect(current.data.data).toMatchObject({ priority: 2, title: "Fictional task (edited)" });
     const revision = current.data.data.revision as number;
     expect(revision).toBe(rejected.data.error.details.currentRevision);
