@@ -21,6 +21,7 @@ const RUN_TOOL_NAMES = [
   "start_run",
   "list_runs",
   "get_run",
+  "list_run_records",
   "list_run_events",
   "respond_to_run",
   "resolve_run_permission",

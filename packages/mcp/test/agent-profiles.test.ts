@@ -48,6 +48,7 @@ const ORCHESTRATION_ONLY_TOOLS = [
   "list_repositories",
   "list_run_artifacts",
   "list_run_events",
+  "list_run_records",
   "list_runs",
   "nudge_run",
   "preview_run",
