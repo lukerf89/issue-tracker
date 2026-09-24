@@ -1,4 +1,5 @@
 import {
+  getIssue,
   AppError,
   AppErrorCode,
   addAttachment,
@@ -131,7 +132,9 @@ export function loadLinekeeperData(
     ? searchIssuesPage(context, searchInputSchema.parse({ ...queryFilters, query: search }),
         { fields: ["labels"], cursor: options.cursor })
     : listIssuesPageWithView(context, { filters: queryFilters, fields: ["labels"], cursor: options.cursor });
-  const issues = page.rows.map(row => row.issue as IssueWithDetails);
+  // Page rows carry only the projected fields; the detail pane renders the full issue
+  // (relations, comments, attachments), so load that through core's getIssue.
+  const issues = page.rows.map(row => getIssue(context, row.issue.identifier));
   const snippets = new Map<string, string>();
   for (const row of page.rows) {
     if (row.snippet) snippets.set(row.issue.id, row.snippet);

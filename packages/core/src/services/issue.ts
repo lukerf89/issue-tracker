@@ -4,13 +4,13 @@ import { getRepository } from "./repository.js";
 import { and, asc, desc, gte, lte, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 
 import { inTransaction, type ServiceContext, type ServiceTransaction } from "../context.js";
-import { actors, issueDependencies, issueLabels, issues, labels, projects, teams, workflowStates, type Actor, type Attachment, type Issue } from "../db/schema.js";
+import { actors, issueDependencies, issues, projects, teams, workflowStates, type Actor, type Attachment, type Issue } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { identifier, uuid } from "../ids.js";
 import { appendActivityInTransaction } from "./activity.js";
 import { ConfigKey, getConfig } from "./config.js";
 import {
-  cycleIdsForIssueFilter,
+  cycleFilterCondition,
   resolveOptionalCycleId,
   type CycleRef
 } from "./cycle.js";
@@ -25,6 +25,10 @@ import { listAttachments } from "./attachment.js";
 import { countComments, listComments, listCommentsPage, type CommentWithAuthor } from "./comment.js";
 import { getState, resolveDefaultUnstartedState } from "./state.js";
 import { getTeam, getTeamByKey } from "./team.js";
+import { hydrateIssuePageRows } from "./issue-hydrate.js";
+import { issueReference, type IssueReference } from "./issue-reference.js";
+
+export type { IssueReference } from "./issue-reference.js";
 
 export interface CreateIssueInput {
   title: string;
@@ -122,15 +126,6 @@ export const ISSUE_PROJECTABLE_FIELDS = [
   "archivedAt"
 ] as const;
 
-// Projectable fields whose values require the expensive per-issue detail load.
-const ISSUE_RELATION_FIELDS = new Set([
-  "labels",
-  "parent",
-  "children",
-  "blockedBy",
-  "blocks"
-]);
-
 export type IssueProjectionField = (typeof ISSUE_PROJECTABLE_FIELDS)[number];
 
 export const DEFAULT_ISSUE_PAGE_SIZE = 50;
@@ -198,14 +193,6 @@ export interface ArchiveIssueInput extends IssueWriteOptions {
 
 export interface UnarchiveIssueInput extends IssueWriteOptions {
   identifier: string;
-}
-
-export interface IssueReference {
-  id: string;
-  identifier: string;
-  teamId: string;
-  number: number;
-  title: string;
 }
 
 export type IssueWithDetails = IssueWithLabels & {
@@ -417,16 +404,17 @@ export function listIssues(context: ServiceContext, filters: ListIssueFilters = 
 }
 
 export function searchIssues(context: ServiceContext, input: SearchIssuesInput) {
-  const results = orderedSearchResults(context, input);
-
-  if (results === null) {
-    return [];
-  }
-
-  const limited =
-    input.limit !== undefined && input.limit >= 0 ? results.slice(0, input.limit) : results;
-
-  return limited.map(({ issue }) => withIssueDetails(context, issue));
+  // Ranking, filtering and the limit all run in SQL; only the returned rows are
+  // hydrated. The non-paged contract stays full-detail (comments, attachments, ...).
+  return context.db.transaction((db) => {
+    const txContext = { ...context, db };
+    const search = buildSearchQuery(txContext, input);
+    if (search === null) return [];
+    const limit = input.limit !== undefined && input.limit >= 0 ? input.limit : -1;
+    const hits = search.page(limit, 0);
+    return loadIssuesInOrder(txContext, hits.map((hit) => hit.issueId))
+      .map((issue) => withIssueDetails(txContext, issue));
+  });
 }
 
 export function decodeIssueCursor(cursor: string | number | undefined): number {
@@ -451,10 +439,6 @@ export function decodeIssueCursor(cursor: string | number | undefined): number {
 function resolvePageSize(limit: number | undefined): number {
   const requested = limit ?? DEFAULT_ISSUE_PAGE_SIZE;
   return Math.max(1, Math.min(requested, MAX_ISSUE_PAGE_SIZE));
-}
-
-function needsIssueDetails(fields: IssueProjectionField[] | undefined): boolean {
-  return (fields ?? []).some((field) => ISSUE_RELATION_FIELDS.has(field));
 }
 
 function paginateIssueRows(
@@ -488,7 +472,6 @@ function paginateIssueRows(
     else conditions.push(tie);
   }
   const pageSize = resolvePageSize(options.limit);
-  const detailed = needsIssueDetails(options.fields);
 
   const rows = context.db
     .select({ issue: issues, teamKey: teams.key })
@@ -504,11 +487,9 @@ function paginateIssueRows(
   const pageRows = hasMore ? rows.slice(0, pageSize) : rows;
 
   const last = pageRows.at(-1);
+  const hydrated = hydrateIssuePageRows(context, pageRows.map(({ issue }) => issue), options.fields);
   return {
-    rows: pageRows.map(({ issue }) => ({
-      issue: withReadableIssueFields(context, detailed ? withIssueDetails(context, issue) : issue, options.fields),
-      fields: options.fields
-    })),
+    rows: hydrated.map((issue) => ({ issue, fields: options.fields })),
     nextCursor: hasMore && last ? encodePageCursor({ version: 1, kind: "list", query,
       key: [last.teamKey, last.issue.number, last.issue.id], offset: 0, snapshot,
       value: options.sort === "priority" ? (last.issue.priority || 5) : options.sort === "updatedAt" ? last.issue.updatedAt : null
@@ -533,27 +514,29 @@ function searchIssuesPageSnapshot(
   input: SearchIssuesInput,
   options: IssuePageOptions = {}
 ): IssuePage {
-  const results = orderedSearchResults(context, input);
-
-  const matches = results ?? [];
+  const search = buildSearchQuery(context, input);
 
   const query = queryFingerprint(input);
   const { legacyOffset, cursor } = decodePageCursor(options.cursor, "search", query);
-  const snapshot = fingerprint(matches.map(({ issue, snippet }) => [issue.id, issue.revision, snippet]));
+  // The snapshot is the ordered [id, revision] list of every match, aggregated in SQL.
+  // Membership, content (revision) and order changes all invalidate the cursor; snippets
+  // derive from identifier/title/description, whose edits bump revision.
+  const snapshot = fingerprint(search?.snapshot() ?? "[]");
   assertCursorSnapshot(cursor, snapshot);
   const offset = cursor?.offset ?? legacyOffset;
   const pageSize = resolvePageSize(input.limit);
-  const detailed = needsIssueDetails(options.fields);
 
-  const window = matches.slice(offset, offset + pageSize + 1);
+  const window = search?.page(pageSize + 1, offset) ?? [];
   const hasMore = window.length > pageSize;
-  const pageResults = hasMore ? window.slice(0, pageSize) : window;
+  const pageHits = hasMore ? window.slice(0, pageSize) : window;
+  const snippets = search?.snippets(pageHits.map((hit) => hit.frow)) ?? new Map<number, string>();
+  const hydrated = hydrateIssuePageRows(context, loadIssuesInOrder(context, pageHits.map((hit) => hit.issueId)), options.fields);
 
   return {
-    rows: pageResults.map(({ issue, snippet }) => ({
-      issue: withReadableIssueFields(context, detailed ? withIssueDetails(context, issue) : issue, options.fields),
+    rows: hydrated.map((issue, index) => ({
+      issue,
       fields: options.fields,
-      snippet
+      snippet: snippets.get(pageHits[index]!.frow) ?? ""
     })),
     nextCursor: hasMore ? encodePageCursor({ version: 1, kind: "search", query, key: null, value: null, offset: offset + pageSize, snapshot }) : null,
     fields: options.fields
@@ -568,10 +551,10 @@ function issueFilterConditions(
 
   if (filters.stateTypes) {
     if (!filters.stateTypes.length) return null;
-    const states = context.db.select({ id: workflowStates.id }).from(workflowStates)
-      .where(inArray(workflowStates.type, filters.stateTypes)).all();
-    if (!states.length) return null;
-    conditions.push(inArray(issues.stateId, states.map(state => state.id)));
+    // A subquery over the (at most six) enum values: the bind list never grows with the
+    // number of workflow states.
+    const types = [...new Set(filters.stateTypes)];
+    conditions.push(sql`${issues.stateId} in (select ${workflowStates.id} from ${workflowStates} where ${inArray(workflowStates.type, types)})`);
   }
   if (filters.dueFrom && filters.dueTo && filters.dueFrom > filters.dueTo) throw new AppError(AppErrorCode.VALIDATION_FAILED, "dueFrom must be on or before dueTo.");
   if (filters.parent !== undefined) conditions.push(filters.parent === null ? isNull(issues.parentId) : eq(issues.parentId, getIssueByIdOrIdentifier(context, filters.parent).id));
@@ -631,23 +614,19 @@ function issueFilterConditions(
   }
 
   if (filters.label) {
-    const issueIds = issueIdsForLabelName(context, filters.label);
-
-    if (issueIds.length === 0) {
-      return null;
-    }
-
-    conditions.push(inArray(issues.id, issueIds));
+    // An unknown or archived label matches nothing, exactly as before.
+    conditions.push(sql`exists (select 1 from issue_labels il join labels l on l.id = il.label_id
+      where il.issue_id = ${issues.id} and l.name = ${filters.label} and l.archived_at is null)`);
   }
 
   if (filters.cycle !== undefined) {
-    const cycleIds = cycleIdsForIssueFilter(context, filters.cycle, filters.team);
+    const cycle = cycleFilterCondition(context, filters.cycle, filters.team);
 
-    if (cycleIds.length === 0) {
+    if (cycle === null) {
       return null;
     }
 
-    conditions.push(inArray(issues.cycleId, cycleIds));
+    conditions.push(cycle);
   }
 
   return conditions;
@@ -1220,31 +1199,6 @@ function notFound(identifier: string): never {
   );
 }
 
-function issueReference(issue: Issue): IssueReference {
-  return {
-    id: issue.id,
-    identifier: issue.identifier,
-    teamId: issue.teamId,
-    number: issue.number,
-    title: issue.title
-  };
-}
-
-function issueIdsForLabelName(context: ServiceContext, labelName: string): string[] {
-  return context.db
-    .select({ issueId: issueLabels.issueId })
-    .from(issueLabels)
-    .innerJoin(labels, eq(labels.id, issueLabels.labelId))
-    .where(and(eq(labels.name, labelName), isNull(labels.archivedAt)))
-    .all()
-    .map((row) => row.issueId);
-}
-
-interface OrderedSearchResult {
-  issue: Issue;
-  snippet: string;
-}
-
 // Split free-text search input into the alphanumeric tokens the FTS index
 // matches on: each run of letters/digits is one token. Callers rendering match
 // highlights reuse this so what they emphasize matches what actually matched.
@@ -1266,56 +1220,72 @@ function buildFtsMatch(query: string): string | null {
   return tokens.map((token) => `"${token}"*`).join(" ");
 }
 
-// Run the FTS index, apply the standard list filters, and return matches in
-// bm25 rank order (best first) each carrying a snippet excerpt. Returns null
-// when a filter (e.g. an unknown label) can produce no rows at all.
-function orderedSearchResults(
-  context: ServiceContext,
-  input: SearchIssuesInput
-): OrderedSearchResult[] | null {
+interface SearchHit {
+  issueId: string;
+  // The issues_fts rowid of the match: the relevance tie-breaker and the key used to
+  // fetch snippets for just the page.
+  frow: number;
+}
+
+interface SearchQuery {
+  /** Ordered json array of [id, revision] for every filtered match. */
+  snapshot(): string;
+  /** One window of filtered matches in effective order (limit -1 = unbounded). */
+  page(limit: number, offset: number): SearchHit[];
+  /** Snippets for the given fts rowids, computed under the same MATCH expression. */
+  snippets(frows: readonly number[]): Map<number, string>;
+}
+
+// Build the SQL for a search: FTS match + bm25 ranking + the standard list filters,
+// all evaluated inside SQLite. Returns null when a filter (e.g. an unknown cycle id) or
+// an empty query can produce no rows at all.
+//
+// The fts rows are gathered in a MATERIALIZED CTE: bm25() needs an FTS MATCH context,
+// and SQLite refuses it inside an aggregate ORDER BY or an inlined CTE. Ranking and the
+// staleness snapshot are still O(matches) (both need the whole set), but they touch
+// only narrow columns; row hydration and snippets are limited to the page.
+function buildSearchQuery(context: ServiceContext, input: SearchIssuesInput): SearchQuery | null {
   const filterConditions = issueFilterConditions(context, input);
-
-  if (filterConditions === null) {
-    return null;
-  }
-
+  if (filterConditions === null) return null;
   const matchExpr = buildFtsMatch(input.query);
+  if (matchExpr === null) return null;
 
-  if (matchExpr === null) {
-    return [];
-  }
+  const matches = sql`with m as materialized (
+    select issue_id, rowid as frow, bm25(issues_fts, 10.0, 5.0, 1.0, 0.0) as score
+    from issues_fts where issues_fts match ${matchExpr}
+  )`;
+  const from = sql`from m join ${issues} on ${issues.id} = m.issue_id join ${teams} on ${teams.id} = ${issues.teamId}`;
+  const where = filterConditions.length ? sql`where ${and(...filterConditions)}` : sql``;
+  const order = input.sort ? sql.join(issueOrder(input), sql`, `) : sql`m.score, m.frow`;
 
-  const ftsRows = context.db.all<{ issueId: string; snippet: string; rank: number }>(sql`
-    select
-      ${sql.raw("issue_id")} as "issueId",
-      snippet(issues_fts, -1, '', '', '\u2026', 12) as "snippet",
-      bm25(issues_fts, 10.0, 5.0, 1.0, 0.0) as "rank"
-    from issues_fts
-    where issues_fts match ${matchExpr}
-    order by "rank", ${sql.raw("rowid")}
-  `);
+  return {
+    snapshot: () => context.db.get<{ snapshot: string }>(sql`${matches}
+      select json_group_array(json_array(${issues.id}, ${issues.revision}) order by ${order}) as "snapshot"
+      ${from} ${where}`).snapshot,
+    page: (limit, offset) => context.db.all<SearchHit>(sql`${matches}
+      select ${issues.id} as "issueId", m.frow as "frow"
+      ${from} ${where}
+      order by ${order}
+      limit ${limit} offset ${offset}`),
+    snippets: (frows) => {
+      if (frows.length === 0) return new Map();
+      // snippet() is only meaningful under MATCH: without it SQLite silently returns
+      // text from the wrong column. Repeat the same expression, restricted to the page.
+      const rows = context.db.all<{ frow: number; snippet: string }>(sql`
+        select rowid as "frow", snippet(issues_fts, -1, '', '', '\u2026', 12) as "snippet"
+        from issues_fts
+        where issues_fts match ${matchExpr} and rowid in (${sql.join(frows.map((frow) => sql`${frow}`), sql`, `)})`);
+      return new Map(rows.map((row) => [row.frow, row.snippet]));
+    }
+  };
+}
 
-  if (ftsRows.length === 0) {
-    return [];
-  }
-
-  const metaByIssueId = new Map<string, { snippet: string; order: number }>();
-  ftsRows.forEach((row, index) => {
-    metaByIssueId.set(row.issueId, { snippet: row.snippet, order: index });
-  });
-
-  const conditions: SQL[] = [...filterConditions, inArray(issues.id, ftsRows.map((row) => row.issueId))];
-
-  return context.db
-    .select({ issue: issues })
-    .from(issues)
-    .innerJoin(teams, eq(teams.id, issues.teamId))
-    .where(and(...conditions))
-    .orderBy(...issueOrder(input))
-    .all()
-    .map(({ issue }, index) => ({ issue, meta: metaByIssueId.get(issue.id)!, index }))
-    .sort((a, b) => input.sort ? a.index - b.index : a.meta.order - b.meta.order)
-    .map(({ issue, meta }) => ({ issue, snippet: meta.snippet }));
+// Load a bounded list of issues (a page) in the given order with one query.
+function loadIssuesInOrder(context: ServiceContext, ids: readonly string[]): Issue[] {
+  if (ids.length === 0) return [];
+  const byId = new Map(context.db.select().from(issues).where(inArray(issues.id, [...ids])).all()
+    .map((issue) => [issue.id, issue]));
+  return ids.map((id) => byId.get(id)!);
 }
 
 function resolveTeam(context: ServiceContext, idOrKey?: string) {
@@ -1363,11 +1333,11 @@ function stateFilterCondition(context: ServiceContext, stateRef: string, teamRef
     return eq(issues.stateId, byId.id);
   }
 
-  const statesByName = context.db.query.workflowStates.findMany({
+  const anyByName = context.db.query.workflowStates.findFirst({
     where: eq(workflowStates.name, stateRef)
   }).sync();
 
-  if (statesByName.length === 0) {
+  if (!anyByName) {
     throw new AppError(
       AppErrorCode.WORKFLOW_STATE_NOT_FOUND,
       `Workflow state ${stateRef} was not found.`,
@@ -1375,7 +1345,8 @@ function stateFilterCondition(context: ServiceContext, stateRef: string, teamRef
     );
   }
 
-  return inArray(issues.stateId, statesByName.map((state) => state.id));
+  // Same-named states across every team, via a subquery (bounded bind list).
+  return sql`${issues.stateId} in (select ${workflowStates.id} from ${workflowStates} where ${eq(workflowStates.name, stateRef)})`;
 }
 
 function resolveOptionalActorId(context: ServiceContext, actorRef: string | null | undefined) {
@@ -1519,18 +1490,6 @@ export function claimIssue(context: ServiceContext, issueIdentifier: string, opt
     if (issue.archivedAt !== null || !["backlog", "unstarted"].includes(state.type)) throw new AppError(AppErrorCode.CONSTRAINT_VIOLATION, "Only active backlog or unstarted issues can be claimed.");
     return assignIssue(txContext, issueIdentifier, actor.id);
   });
-}
-
-function withReadableIssueFields<T extends Issue>(context: ServiceContext, issue: T, fields: IssueProjectionField[] = []): T {
-  const extra: Record<string, string | null> = {};
-  if (fields.includes("stateName") || fields.includes("stateType")) {
-    const state = getState(context, issue.stateId, issue.teamId);
-    if (fields.includes("stateName")) extra.stateName = state.name;
-    if (fields.includes("stateType")) extra.stateType = state.type;
-  }
-  if (fields.includes("assigneeHandle")) extra.assigneeHandle = issue.assigneeId
-    ? context.db.query.actors.findFirst({ where: eq(actors.id, issue.assigneeId) }).sync()?.handle ?? null : null;
-  return { ...issue, ...extra };
 }
 
 function issueOrder(filters: Pick<ListIssueFilters, "sort">): SQL[] {
