@@ -186,6 +186,128 @@ describe("work context contract", () => {
     } finally { f.close(); }
   });
 
+  it("returns the complete context when it fits, even though the all-omitted rendering would not", () => {
+    // Short sections: each one's retrieval-bearing omission entry is larger than its content, so
+    // omitting everything costs more bytes than including everything.
+    const f = setup();
+    try {
+      const parent = createIssue(f.context, { title: "Fictional platform epic", projectId: f.project.id, description: "Epic." });
+      updateIssue(f.context, "ENG-1", { description: "Wire CI.\n\n## Done when\n- CI runs\n", parent: parent.identifier });
+      addComment(f.context, { issue: "ENG-1", body: "Decision: use the fictional runner" });
+      f.tick();
+      addComment(f.context, { issue: "ENG-1", body: "Fictional note" });
+      const build = (maxBytes: number) => f.db.transaction((db) => buildWorkContext({ ...f.context, db }, "ENG-1", maxBytes));
+      const complete = build(65536);
+      expect(complete.omissions).toEqual([]);
+      const exact = complete.budget.usedBytes - 1;
+      expect(String(exact).length).toBe(String(complete.budget.usedBytes).length);
+      const context = build(exact);
+      expect(context.sections).toEqual(complete.sections);
+      expect(context.omissions).toEqual([]);
+      expect(context.budget.usedBytes).toBe(exact);
+      expect(context.budget.usedBytes).toBe(bytes(context));
+    } finally { f.close(); }
+  });
+
+  it("admits the complete parent when it fits, even though a parent with a cut excerpt would not", () => {
+    const f = setup({ repositories: 0 });
+    try {
+      const parent = createIssue(f.context, { title: "Fictional epic", projectId: f.project.id, description: "Epic body." });
+      updateIssue(f.context, "ENG-1", { description: "Fictional child detail. ".repeat(60).slice(0, 1400), parent: parent.identifier });
+      const build = (maxBytes: number) => f.db.transaction((db) => buildWorkContext({ ...f.context, db }, "ENG-1", maxBytes));
+      const complete = build(65536);
+      expect(complete.omissions).toEqual([]);
+      const exact = complete.budget.usedBytes - 1;
+      expect(String(exact).length).toBe(String(complete.budget.usedBytes).length);
+      const context = build(exact);
+      expect(context.sections.parent.item).toMatchObject({ identifier: parent.identifier, descriptionExcerpt: "Epic body.", descriptionTruncated: false });
+      expect(context.sections).toEqual(complete.sections);
+      expect(context.budget.usedBytes).toBe(exact);
+      // One byte less the complete context no longer fits and the fill still stays in budget.
+      const tighter = build(exact - 1);
+      expect(tighter.budget.usedBytes).toBeLessThanOrEqual(exact - 1);
+      expect(tighter.budget.usedBytes).toBe(bytes(tighter));
+    } finally { f.close(); }
+  });
+
+  it("property: complete when it fits, fails only when nothing fits, never drops a section that fits whole", () => {
+    // Seeded PRNG (mulberry32) so every run sweeps the same issues and budgets.
+    let seed = 0x5eed144;
+    const random = () => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    const int = (max: number) => Math.floor(random() * (max + 1));
+    const pick = <T,>(values: T[]) => values[int(values.length - 1)]!;
+    const text = (length: number) => (random() < 0.2 ? "Fictional 🚀 detail. " : "Fictional detail. ").repeat(Math.ceil(length / 17) + 1).slice(0, length);
+    const f = setup({ repositories: 0 });
+    try {
+      const projects = [0, 1, 3].map((count, index) => {
+        const project = createProject(f.context, { name: `Fictional Area ${index}` });
+        for (let n = 0; n < count; n++) associateRepository(f.context, { repository: f.addRepo(`area-${index}-repo-${n}`).id, project: project.id, position: n, isDefault: n === 0, overrideKind: "replace" });
+        return project;
+      });
+      const build = (identifier: string, maxBytes: number) => f.db.transaction((db) => buildWorkContext({ ...f.context, db }, identifier, maxBytes));
+      const attempt = (identifier: string, maxBytes: number) => {
+        try { return build(identifier, maxBytes); } catch (error) {
+          expect(errorEnvelope(error).error.code).toBe("VALIDATION_FAILED");
+          return null;
+        }
+      };
+      const sectionNames = ["task", "blockers", "parent", "repositories", "decisions", "recentComments"] as const;
+      for (let round = 0; round < 40; round++) {
+        const project = pick(projects);
+        const parentDescription = pick([undefined, null, text(1 + int(30)), text(900 + int(700))]);
+        const parent = parentDescription === undefined ? null : createIssue(f.context, { title: text(5 + int(40)), projectId: project.id, description: parentDescription });
+        const blockers = Array.from({ length: int(4) }, () => createIssue(f.context, { title: text(5 + int(60)), projectId: project.id }).identifier);
+        const description = pick([null, text(int(40)), text(1400), text(3000 + int(4000))]);
+        const criteria = int(1) ? `\n\n## Done when\n- ${text(10 + int(30))}\n` : "";
+        const issue = createIssue(f.context, { title: text(5 + int(80)), projectId: project.id, description: description === null && !criteria ? null : (description ?? "") + criteria, parent: parent?.identifier, blockedBy: blockers.length ? blockers : undefined });
+        for (let n = int(12); n > 0; n--) { f.tick(); addComment(f.context, { issue: issue.identifier, body: "Decision: " + text(pick([10, 60, 1200])) }); }
+        for (let n = int(7); n > 0; n--) { f.tick(); addComment(f.context, { issue: issue.identifier, body: text(pick([5, 80, 1100])) }); }
+
+        const complete = build(issue.identifier, 65536);
+        expect(complete.omissions.every((omission) => omission.reason === "limit")).toBe(true);
+        // The complete context's size at budget B (usedBytes is sized at its widest, B).
+        const completeAt = (maxBytes: number) => bytes({ ...complete, budget: { ...complete.budget, maxBytes, usedBytes: maxBytes } });
+        const exact = complete.budget.usedBytes - 1;
+        const budgets = [exact - 1, exact, exact + 1, ...Array.from({ length: 6 }, () => Math.max(1, Math.floor(exact * (0.25 + random() * 0.75))))].sort((a, b) => a - b);
+        let fitted = false;
+        for (const maxBytes of budgets) {
+          const context = attempt(issue.identifier, maxBytes);
+          if (context === null) {
+            // I2: fail only when the complete context does not fit, and never above a budget that fitted.
+            expect(completeAt(maxBytes)).toBeGreaterThan(maxBytes);
+            expect(fitted).toBe(false);
+            continue;
+          }
+          fitted = true;
+          // I4: exact accounting within budget, schema-valid, deterministic.
+          expect(context.budget).toEqual({ unit: "utf8_json_bytes", maxBytes, usedBytes: bytes(context) });
+          expect(context.budget.usedBytes).toBeLessThanOrEqual(maxBytes);
+          expect(workContextSchema.safeParse(context).success).toBe(true);
+          expect(build(issue.identifier, maxBytes)).toEqual(context);
+          expect(context.sections.acceptanceCriteria).toEqual(complete.sections.acceptanceCriteria);
+          // I1: the complete context whenever it fits.
+          if (completeAt(maxBytes) <= maxBytes) {
+            expect(context.sections).toEqual(complete.sections);
+            expect(context.omissions).toEqual(complete.omissions);
+          }
+          for (const name of sectionNames) {
+            if (JSON.stringify(context.sections[name]) === JSON.stringify(complete.sections[name])) continue;
+            // Anything cut is reported as a budget omission for its section.
+            expect(context.omissions.some((omission) => omission.section === name && omission.reason === "budget")).toBe(true);
+            // I3: this section complete (everything else as returned) would not have fitted.
+            const fuller = {
+              ...context, contextFingerprint: complete.contextFingerprint, budget: { ...context.budget, usedBytes: maxBytes },
+              sections: { ...context.sections, [name]: complete.sections[name] },
+              omissions: [...context.omissions.filter((omission) => omission.section !== name), ...complete.omissions.filter((omission) => omission.section === name)]
+            };
+            expect(bytes(fuller)).toBeGreaterThan(maxBytes);
+          }
+        }
+        expect(fitted).toBe(true);
+      }
+    } finally { f.close(); }
+  });
+
   it("reports characters cut from long decision and comment bodies as limit omissions", () => {
     const f = setup();
     try {
