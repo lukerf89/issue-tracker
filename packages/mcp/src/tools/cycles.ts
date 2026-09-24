@@ -3,7 +3,8 @@ import {
   createCycleInputSchema,
   listCycles,
   listCyclesInputSchema,
-  serializeCycle
+  serializeCycle,
+  toolGroups
 } from "@issue-tracker/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -17,7 +18,7 @@ export function registerCycleTools(
   server.registerTool(
     "create_cycle",
     {
-      _meta: { "issue-tracker/groups": ["admin"] },
+      _meta: toolGroups("admin"),
       title: "Create cycle",
       description: "Create a cycle.",
       inputSchema: createCycleInputSchema.strict()
@@ -33,7 +34,7 @@ export function registerCycleTools(
   server.registerTool(
     "list_cycles",
     {
-      _meta: { "issue-tracker/groups": ["admin"] },
+      _meta: toolGroups("admin"),
       title: "List cycles",
       description: "List cycles.",
       inputSchema: listCyclesInputSchema.strict()

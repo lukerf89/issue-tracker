@@ -327,12 +327,14 @@ optimization remains separate work.
 
 ### Native MCP tool profiles
 
-Start `tracker mcp --agent build-agent --tool-profile coding` to advertise 15
-common coding tools, including scoped discovery, search, selective/section reads,
-mutations, claims, saved-view discovery, and template discovery. `orchestration`
+Start `tracker mcp --agent build-agent --tool-profile coding` to advertise 18
+common coding tools. They cover scoped discovery, search, selective and section
+reads, mutations, claims and releasing a claim (`assign_issue` with
+`actor:null`), saved and built-in views, and listing and applying templates. `orchestration`
 adds run lifecycle, repository, engine, and profile tools. `admin` and `full`
 advertise everything; `full` remains the default. Each registration declares its
-capability group in MCP metadata; the profile derives its list from that metadata.
+capability group in MCP metadata through core's typed `toolGroups()`; the profile
+derives its list from that metadata.
 
 Profiles filter **advertisement only**, not execution or permissions. Known calls
 and aliases (including get_current_actor) remain compatible, and resources are

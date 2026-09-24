@@ -33,7 +33,8 @@ import {
   unarchiveIssue,
   unarchiveIssueInputSchema,
   updateIssue,
-  updateIssueToolInputSchema
+  updateIssueToolInputSchema,
+  toolGroups
 } from "@issue-tracker/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -45,17 +46,17 @@ export function registerIssueTools(
   options: Omit<OpenMcpContextOptions, "requireActor">
 ): void {
   server.registerTool("get_issues", {
-      _meta: { "issue-tracker/groups": ["coding"] }, title: "Read selected issues", description: "Read up to ten known issues under a total JSON byte budget. Omitted fields remain retrievable with read_issue_section.", inputSchema: getIssuesInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: false }, ({ context }) => jsonResult(getIssuesResponse(context, input)))));
+      _meta: toolGroups("coding"), title: "Read selected issues", description: "Read up to ten known issues under a total JSON byte budget. Omitted fields remain retrievable with read_issue_section.", inputSchema: getIssuesInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: false }, ({ context }) => jsonResult(getIssuesResponse(context, input)))));
   server.registerTool("read_issue_section", {
-      _meta: { "issue-tracker/groups": ["coding"] }, title: "Read issue section", description: "Page a string or collection independently. Follow nextCursor; retrieve oversized values through omittedPaths. Pass snapshot to reject changed source content.", inputSchema: readIssueSectionInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: false }, ({ context }) => jsonResult(readIssueSection(context, input)))));
+      _meta: toolGroups("coding"), title: "Read issue section", description: "Page a string or collection independently. Follow nextCursor; retrieve oversized values through omittedPaths. Pass snapshot to reject changed source content.", inputSchema: readIssueSectionInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: false }, ({ context }) => jsonResult(readIssueSection(context, input)))));
 
   server.registerTool("claim_issue", {
-      _meta: { "issue-tracker/groups": ["coding"] }, title: "Claim issue", description: "Atomically claim active unassigned backlog/unstarted work for the current actor. Claims have no lease; release through assign_issue with actor:null. Conflicts require a fresh read.", inputSchema: claimIssueInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: true }, ({ context }) => jsonResult(serializeIssue(claimIssue(context, input.identifier, input))))));
+      _meta: toolGroups("coding"), title: "Claim issue", description: "Atomically claim active unassigned backlog/unstarted work for the current actor. Claims have no lease; release through assign_issue with actor:null. Conflicts require a fresh read.", inputSchema: claimIssueInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: true }, ({ context }) => jsonResult(serializeIssue(claimIssue(context, input.identifier, input))))));
 
   server.registerTool(
     "list_issues",
     {
-      _meta: { "issue-tracker/groups": ["coding"] },
+      _meta: toolGroups("coding"),
       title: "List issues",
       description:
         "Query issues with optional filters. Returns a compact summary page " +
@@ -81,7 +82,7 @@ export function registerIssueTools(
   server.registerTool(
     "search",
     {
-      _meta: { "issue-tracker/groups": ["coding"] },
+      _meta: toolGroups("coding"),
       title: "Search issues",
       description:
         "Search issues by full-text (FTS5) over identifier, title, and " +
@@ -107,7 +108,7 @@ export function registerIssueTools(
   server.registerTool(
     "get_issue",
     {
-      _meta: { "issue-tracker/groups": ["coding"] },
+      _meta: toolGroups("coding"),
       title: "Get issue",
       description: "Read one issue by identifier. Use fields/maxBytes for bounded selection with explicit omissions. For independently paged complete comments use read_issue_section path:[comments]. Legacy comments default to the latest 10; use comments: 'all' for full fidelity or commentCursor/commentLimit to page oldest to newest.",
       inputSchema: getIssueInputSchema.strict()
@@ -123,7 +124,7 @@ export function registerIssueTools(
   server.registerTool(
     "list_activity",
     {
-      _meta: { "issue-tracker/groups": ["admin"] },
+      _meta: toolGroups("admin"),
       title: "List issue activity",
       description: "Read the ordered activity trail for an issue.",
       inputSchema: listActivityInputSchema.strict()
@@ -139,7 +140,7 @@ export function registerIssueTools(
   server.registerTool(
     "create_issue",
     {
-      _meta: { "issue-tracker/groups": ["coding"] },
+      _meta: toolGroups("coding"),
       title: "Create issue",
       description:
         "Create an issue. Pass an optional global `idempotencyKey` to make retries safe: " +
@@ -160,7 +161,7 @@ export function registerIssueTools(
   server.registerTool(
     "update_issue",
     {
-      _meta: { "issue-tracker/groups": ["coding"] },
+      _meta: toolGroups("coding"),
       title: "Update issue",
       description: "Update issue fields.",
       inputSchema: updateIssueToolInputSchema.safeExtend({ response: issueResponseSchema.optional() })
@@ -176,7 +177,7 @@ export function registerIssueTools(
   server.registerTool(
     "move_issue",
     {
-      _meta: { "issue-tracker/groups": ["coding"] },
+      _meta: toolGroups("coding"),
       title: "Move issue",
       description: "Move an issue to another workflow state.",
       inputSchema: moveIssueInputSchema.safeExtend({ response: issueResponseSchema.optional() })
@@ -192,7 +193,7 @@ export function registerIssueTools(
   server.registerTool(
     "assign_issue",
     {
-      _meta: { "issue-tracker/groups": ["admin"] },
+      _meta: toolGroups("coding"),
       title: "Assign issue",
       description: "Assign or clear an issue assignee.",
       inputSchema: assignIssueInputSchema.safeExtend({ response: issueResponseSchema.optional() })
@@ -208,7 +209,7 @@ export function registerIssueTools(
   server.registerTool(
     "archive_issue",
     {
-      _meta: { "issue-tracker/groups": ["admin"] },
+      _meta: toolGroups("admin"),
       title: "Archive issue",
       description: "Archive an issue without deleting it.",
       inputSchema: archiveIssueInputSchema.safeExtend({ response: issueResponseSchema.optional() })
@@ -224,7 +225,7 @@ export function registerIssueTools(
   server.registerTool(
     "unarchive_issue",
     {
-      _meta: { "issue-tracker/groups": ["admin"] },
+      _meta: toolGroups("admin"),
       title: "Unarchive issue",
       description: "Restore an archived issue.",
       inputSchema: unarchiveIssueInputSchema.safeExtend({ response: issueResponseSchema.optional() })
@@ -240,7 +241,7 @@ export function registerIssueTools(
   server.registerTool(
     "comment_on_issue",
     {
-      _meta: { "issue-tracker/groups": ["coding"] },
+      _meta: toolGroups("coding"),
       title: "Comment on issue",
       description: "Add a comment to an issue.",
       inputSchema: addCommentInputSchema.strict()
@@ -256,7 +257,7 @@ export function registerIssueTools(
   server.registerTool(
     "link_issue",
     {
-      _meta: { "issue-tracker/groups": ["coding"] },
+      _meta: toolGroups("coding"),
       title: "Link issue",
       description: "Attach a branch, PR, commit, or URL to an issue.",
       inputSchema: linkIssueToolInputSchema.strict()

@@ -3,7 +3,8 @@ import {
   describeTrackerInputSchema,
   listStatesForTeam,
   listStatesInputSchema,
-  serializeWorkflowState
+  serializeWorkflowState,
+  toolGroups
 } from "@issue-tracker/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -17,7 +18,7 @@ export function registerMetadataTools(
   server.registerTool(
     "describe",
     {
-      _meta: { "issue-tracker/groups": ["coding"] },
+      _meta: toolGroups("coding"),
       title: "Describe tracker metadata",
       description: "Discover teams, workflow states, priorities, labels, projects, and the current actor. Scope with team and sections; compact trims project references. Re-read only when metadataRevision changes.",
       inputSchema: describeTrackerInputSchema.strict()
@@ -33,7 +34,7 @@ export function registerMetadataTools(
   server.registerTool(
     "list_states",
     {
-      _meta: { "issue-tracker/groups": ["admin"] },
+      _meta: toolGroups("admin"),
       title: "List workflow states",
       description: "List ordered workflow states for a team id or key.",
       inputSchema: listStatesInputSchema.strict()

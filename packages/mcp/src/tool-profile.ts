@@ -1,4 +1,4 @@
-import type { ToolProfile } from "@issue-tracker/core";
+import { isToolAdvertised, type ToolProfile } from "@issue-tracker/core";
 import type { Transport, TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage, RequestId } from "@modelcontextprotocol/sdk/types.js";
 
@@ -22,10 +22,7 @@ export class ToolProfileTransport implements Transport {
   }
   async send(message: JSONRPCMessage, options?: TransportSendOptions) {
     if ("id" in message && message.id !== undefined && this.listRequests.delete(message.id) && "result" in message && Array.isArray(message.result.tools)) {
-      const tools = message.result.tools.filter((tool: { _meta?: Record<string, unknown> }) => {
-        const groups = tool._meta?.["issue-tracker/groups"];
-        return this.profile === "full" || this.profile === "admin" || (Array.isArray(groups) && (groups.includes(this.profile) || (this.profile === "orchestration" && groups.includes("coding"))));
-      });
+      const tools = message.result.tools.filter((tool: { _meta?: Record<string, unknown> }) => isToolAdvertised(this.profile, tool._meta));
       message = { ...message, result: { ...message.result, tools } };
     }
     await this.inner.send(message, options);

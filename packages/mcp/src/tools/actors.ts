@@ -5,7 +5,8 @@ import {
   createActorInputSchema,
   listActors,
   listActorsInputSchema,
-  serializeActor
+  serializeActor,
+  toolGroups
 } from "@issue-tracker/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -22,7 +23,7 @@ export function registerActorTools(
   server.registerTool(
     "create_actor",
     {
-      _meta: { "issue-tracker/groups": ["admin"] },
+      _meta: toolGroups("admin"),
       title: "Create actor",
       description: "Create a human or agent actor.",
       inputSchema: createActorInputSchema.strict()
@@ -38,7 +39,7 @@ export function registerActorTools(
   server.registerTool(
     "list_actors",
     {
-      _meta: { "issue-tracker/groups": ["admin"] },
+      _meta: toolGroups("admin"),
       title: "List actors",
       description: "List actors.",
       inputSchema: listActorsInputSchema.strict()
@@ -60,7 +61,7 @@ function registerCurrentActorTool(
   server.registerTool(
     name,
     {
-      _meta: { "issue-tracker/groups": [name === "whoami" ? "coding" : "admin"] },
+      _meta: toolGroups(name === "whoami" ? "coding" : "admin"),
       title: "Get current actor",
       description: "Return the resolved calling actor.",
       inputSchema: {}

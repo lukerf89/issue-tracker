@@ -7,7 +7,8 @@ import {
   listLabelsInputSchema,
   serializeLabel,
   unarchiveLabel,
-  unarchiveLabelInputSchema
+  unarchiveLabelInputSchema,
+  toolGroups
 } from "@issue-tracker/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -21,7 +22,7 @@ export function registerLabelTools(
   server.registerTool(
     "create_label",
     {
-      _meta: { "issue-tracker/groups": ["admin"] },
+      _meta: toolGroups("admin"),
       title: "Create label",
       description: "Create a label.",
       inputSchema: createLabelInputSchema.strict()
@@ -37,7 +38,7 @@ export function registerLabelTools(
   server.registerTool(
     "list_labels",
     {
-      _meta: { "issue-tracker/groups": ["admin"] },
+      _meta: toolGroups("admin"),
       title: "List labels",
       description: "List labels.",
       inputSchema: listLabelsInputSchema.strict()
@@ -53,7 +54,7 @@ export function registerLabelTools(
   server.registerTool(
     "archive_label",
     {
-      _meta: { "issue-tracker/groups": ["admin"] },
+      _meta: toolGroups("admin"),
       title: "Archive label",
       description: "Archive a label without deleting it.",
       inputSchema: archiveLabelInputSchema.strict()
@@ -69,7 +70,7 @@ export function registerLabelTools(
   server.registerTool(
     "unarchive_label",
     {
-      _meta: { "issue-tracker/groups": ["admin"] },
+      _meta: toolGroups("admin"),
       title: "Unarchive label",
       description: "Restore an archived label.",
       inputSchema: unarchiveLabelInputSchema.strict()
