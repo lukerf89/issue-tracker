@@ -636,8 +636,18 @@ export function createProgram(): Command {
     .command("list")
     .option("--view <name>", "saved or builtin view reference")
     .option("--query <text>", "search within these filters")
-    .option("--sort <order>", "identifier or updatedAt (newest first)")
     .option("--state-types <types>", "comma-separated workflow types")
+    .option("--ready", "only ready backlog/unstarted work")
+    .option("--not-ready", "only work that is not ready")
+    .option("--parent <issue>", "parent issue identifier or ID")
+    .option("--no-parent", "only issues without a parent")
+    .option("--blocked-by <issue>", "issues blocked by this issue")
+    .option("--blocks <issue>", "issues blocking this issue")
+    .option("--repository <repository>", "effective repository ID/name")
+    .option("--updated-since <timestamp>", "inclusive ISO timestamp")
+    .option("--due-from <date>", "inclusive due date YYYY-MM-DD")
+    .option("--due-to <date>", "inclusive due date YYYY-MM-DD")
+    .option("--sort <field>", "identifier, priority, or updatedAt")
     .option("--state <state>", "workflow state")
     .option("--assignee <actor>", "assignee id or handle")
     .option("--unassigned", "only unassigned issues")
@@ -673,10 +683,20 @@ export function createProgram(): Command {
     );
   issue
     .command("search")
+    .option("--ready", "only ready backlog/unstarted work")
+    .option("--not-ready", "only work that is not ready")
+    .option("--parent <issue>", "parent issue identifier or ID")
+    .option("--no-parent", "only issues without a parent")
+    .option("--blocked-by <issue>", "issues blocked by this issue")
+    .option("--blocks <issue>", "issues blocking this issue")
+    .option("--repository <repository>", "effective repository ID/name")
+    .option("--updated-since <timestamp>", "inclusive ISO timestamp")
+    .option("--due-from <date>", "inclusive due date YYYY-MM-DD")
+    .option("--due-to <date>", "inclusive due date YYYY-MM-DD")
+    .option("--sort <field>", "identifier, priority, or updatedAt")
     .argument("<query>")
     .option("--state <state>", "workflow state")
     .option("--state-types <types>", "comma-separated workflow types")
-    .option("--sort <order>", "identifier or updatedAt (newest first)")
     .option("--assignee <actor>", "assignee id or handle")
     .option("--unassigned", "only unassigned issues")
     .option("--project <project>", "project id or name")
@@ -976,9 +996,19 @@ export function createProgram(): Command {
   view.command("builtins").description("list built-in references and their query semantics").option("--json").action(() => printJson(builtinIssueViews));
   view
     .command("save")
+    .option("--ready", "only ready backlog/unstarted work")
+    .option("--not-ready", "only work that is not ready")
+    .option("--parent <issue>", "parent issue identifier or ID")
+    .option("--no-parent", "only issues without a parent")
+    .option("--blocked-by <issue>", "issues blocked by this issue")
+    .option("--blocks <issue>", "issues blocking this issue")
+    .option("--repository <repository>", "effective repository ID/name")
+    .option("--updated-since <timestamp>", "inclusive ISO timestamp")
+    .option("--due-from <date>", "inclusive due date YYYY-MM-DD")
+    .option("--due-to <date>", "inclusive due date YYYY-MM-DD")
+    .option("--sort <field>", "identifier, priority, or updatedAt")
     .argument("<name>")
     .option("--query <text>", "saved search text")
-    .option("--sort <order>", "identifier or updatedAt (newest first)")
     .option("--state-types <types>", "comma-separated workflow types")
     .option("--state <state>", "workflow state")
     .option("--assignee <actor>", "assignee id or handle")
@@ -1384,10 +1414,19 @@ function issueListFilters(options: Record<string, unknown>, defaultTeam?: string
   const project = options.project === false ? null : nullableStringOption(options.project);
   const assignee = options.unassigned === true ? null : nullableStringOption(options.assignee);
 
+  if (options.ready && options.notReady) throw new InvalidArgumentError("choose --ready or --not-ready");
   return listIssueFiltersSchema.parse(omitUndefined({
     query: stringOption(options.query),
-    sort: stringOption(options.sort),
     stateTypes: stringOption(options.stateTypes)?.split(",").map(value => value.trim()),
+    ready: options.notReady ? false : booleanOption(options.ready),
+    parent: options.parent === false ? null : nullableStringOption(options.parent),
+    blockedBy: stringOption(options.blockedBy),
+    blocks: stringOption(options.blocks),
+    repository: stringOption(options.repository),
+    updatedSince: stringOption(options.updatedSince),
+    dueFrom: stringOption(options.dueFrom),
+    dueTo: stringOption(options.dueTo),
+    sort: stringOption(options.sort),
     state: stringOption(options.state),
     assignee,
     project,
