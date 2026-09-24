@@ -191,6 +191,10 @@ function render(sources: WorkSources, maxBytes: number, fill: Fill, usedBytes: n
   omit("repositories", "budget", "items", sources.routing.candidates.length - candidates.length);
   omit("decisions", decisions.length < Math.min(DECISION_LIMIT, sources.decisions.length) ? "budget" : "limit", "items", sources.decisions.length - decisions.length);
   omit("recentComments", recent.length < Math.min(RECENT_COMMENT_LIMIT, sources.recentComments.length) ? "budget" : "limit", "items", sources.recentComments.length - recent.length);
+  // Bodies of included comments are capped at COMMENT_BODY_LIMIT; report the cut characters too.
+  const cutCharacters = (included: CommentSource[]) => included.reduce((total, comment) => total + comment.body.length - excerpt(comment.body, COMMENT_BODY_LIMIT).text.length, 0);
+  omit("decisions", "limit", "characters", cutCharacters(decisions));
+  omit("recentComments", "limit", "characters", cutCharacters(recent));
   const truncated = (section: Section) => omissions.some((omission) => omission.section === section);
   const acceptance = parseAcceptanceCriteria(description);
 
@@ -264,8 +268,11 @@ export function buildWorkContext(context: ServiceContext, identifier: string, ma
   if (minimumBytes > maxBytes) {
     throw new WorkContextMinimumExceededError(sources.issue.identifier, minimumBytes, maxBytes);
   }
+  // Reaching the end of a text drops (or re-labels) its omission entry, so the output can shrink
+  // there: fits is not monotone at that point. Try the complete text before binary searching.
+  const fitPrefix = (text: string, fitsAt: (end: number) => boolean) => fitsAt(text.length) ? text.length : fitStringPrefix(text, 0, (slice) => fitsAt(slice.length));
   const description = sources.issue.description;
-  if (description) fill.descriptionEnd = fitStringPrefix(description, 0, (slice) => fits({ ...fill, descriptionEnd: slice.length }));
+  if (description) fill.descriptionEnd = fitPrefix(description, (end) => fits({ ...fill, descriptionEnd: end }));
   const admit = (key: "blockers" | "candidates" | "decisions" | "comments", available: number) => {
     while (fill[key] < available && fits({ ...fill, [key]: fill[key] + 1 })) fill[key] += 1;
   };
@@ -275,7 +282,7 @@ export function buildWorkContext(context: ServiceContext, identifier: string, ma
     const parentDescription = sources.parent.issue.description;
     if (parentDescription) {
       const capped = excerpt(parentDescription, PARENT_EXCERPT_LIMIT).text;
-      fill.parentExcerptEnd = fitStringPrefix(capped, 0, (slice) => fits({ ...fill, parentExcerptEnd: slice.length }));
+      fill.parentExcerptEnd = fitPrefix(capped, (end) => fits({ ...fill, parentExcerptEnd: end }));
     }
   }
   admit("candidates", sources.routing.candidates.length);

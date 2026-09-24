@@ -136,6 +136,48 @@ describe("work context contract", () => {
     } finally { f.close(); }
   });
 
+  it("returns the complete description when it fits exactly, even though a truncated one would not", () => {
+    // No repositories: the description is the only optional content, as in the reported shape.
+    const f = setup({ repositories: 0 });
+    try {
+      // Completing the description drops the task omission entry, so the output shrinks at the end.
+      const description = "Fictional pipeline detail. ".repeat(185).slice(0, 4950) + "\n\n## Done when\n- CI runs on every push\n";
+      updateIssue(f.context, "ENG-1", { description });
+      const complete = getWorkContext(f.context, { identifier: "ENG-1", maxBytes: 65536 }).context;
+      expect(complete.omissions).toEqual([]);
+      // Same-digit-count maxBytes makes the complete rendering exactly this many bytes.
+      const exact = complete.budget.usedBytes - 1;
+      expect(String(exact).length).toBe(4);
+      const { context } = getWorkContext(f.context, { identifier: "ENG-1", maxBytes: exact });
+      expect(context.sections.task.description).toBe(description);
+      expect(context.sections.task.truncated).toBe(false);
+      expect(context.omissions).toEqual([]);
+      expect(context.budget.usedBytes).toBe(exact);
+      expect(context.budget.usedBytes).toBe(bytes(context));
+    } finally { f.close(); }
+  });
+
+  it("reports characters cut from long decision and comment bodies as limit omissions", () => {
+    const f = setup();
+    try {
+      addComment(f.context, { issue: "ENG-1", body: "Decision: " + "use the fictional queue ".repeat(80).slice(0, 1490) });
+      f.tick();
+      addComment(f.context, { issue: "ENG-1", body: "Progress: " + "fictional build log ".repeat(80).slice(0, 1190) });
+      f.tick();
+      addComment(f.context, { issue: "ENG-1", body: "Short fictional note" });
+      const { context } = getWorkContext(f.context, { identifier: "ENG-1", maxBytes: 65536 });
+      expect(context.sections.decisions.items.map((item) => [item.body.length, item.bodyTruncated])).toEqual([[1000, true]]);
+      expect(context.sections.recentComments.items.map((item) => [item.body.length, item.bodyTruncated])).toEqual([[20, false], [1000, true]]);
+      expect(context.sections.decisions.truncated).toBe(true);
+      expect(context.sections.recentComments.truncated).toBe(true);
+      expect(context.omissions).toEqual([
+        { section: "decisions", reason: "limit", unit: "characters", omittedCount: 500, retrieval: context.sections.decisions.retrieval },
+        { section: "recentComments", reason: "limit", unit: "characters", omittedCount: 200, retrieval: context.sections.recentComments.retrieval }
+      ]);
+      expect(context.budget.usedBytes).toBe(bytes(context));
+    } finally { f.close(); }
+  });
+
   it("parses acceptance-criteria headings deterministically", () => {
     expect(parseAcceptanceCriteria("Just prose.\n- a list without a heading")).toEqual({ found: false, items: [] });
     expect(parseAcceptanceCriteria(null)).toEqual({ found: false, items: [] });
