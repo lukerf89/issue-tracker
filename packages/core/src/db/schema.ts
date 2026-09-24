@@ -107,6 +107,10 @@ export const cycles = sqliteTable(
   (table) => [unique("cycles_team_id_number_unique").on(table.teamId, table.number)]
 );
 
+// `revision` is maintained by SQL triggers in migrations/0011_issue_revisions.sql, not by
+// Drizzle. A generated migration that rebuilds this table (or comments, attachments,
+// issue_labels, issue_dependencies) drops those triggers; recreate them in the same
+// migration. agent-concurrency.test.ts fails if any trigger goes missing.
 export const issues = sqliteTable(
   "issues",
   {

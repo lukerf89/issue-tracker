@@ -1449,7 +1449,7 @@ export function claimIssue(context: ServiceContext, issueIdentifier: string, opt
   const actor = requireActor(context);
   return inTransaction(context, (txContext) => {
     assertIssueRevision(txContext, issueIdentifier, options.expectedRevision);
-    const issue = getIssue(txContext, issueIdentifier);
+    const issue = getIssueByIdOrIdentifier(txContext, issueIdentifier);
     if (issue.assigneeId !== null) throw new AppError(AppErrorCode.ISSUE_ALREADY_CLAIMED, "Issue already has an assignee.", { identifier: issue.identifier, assigneeId: issue.assigneeId, currentRevision: issue.revision });
     const state = getState(txContext, issue.stateId, issue.teamId);
     if (issue.archivedAt !== null || !["backlog", "unstarted"].includes(state.type)) throw new AppError(AppErrorCode.CONSTRAINT_VIOLATION, "Only active backlog or unstarted issues can be claimed.");
