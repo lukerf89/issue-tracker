@@ -1,6 +1,9 @@
 import {
   claimIssue,
   claimIssueInputSchema,
+  issueResponseSchema,
+  serializeIssueMutation,
+  withIssueMutationReceipt,
   addAttachment,
   addComment,
   addCommentInputSchema,
@@ -132,13 +135,13 @@ export function registerIssueTools(
         "re-submitting the same key returns the original issue with `alreadyExisted: true` " +
         "instead of filing a duplicate. A deduped result reflects the original issue's current " +
         "state (it may have been edited or archived since it was created).",
-      inputSchema: createIssueInputSchema.strict()
+      inputSchema: createIssueInputSchema.safeExtend({ response: issueResponseSchema.optional() })
     },
     (input) => mcpToolResult(() => {
-      const parsed = createIssueInputSchema.parse(input);
+      const parsed = createIssueInputSchema.parse(withoutResponse(input));
       return withMcpContext({ ...options, requireActor: true }, ({ context }) => {
-        const created = createIssue(context, parsed);
-        return jsonResult({ ...serializeIssue(created), alreadyExisted: created.alreadyExisted });
+        const created = withIssueMutationReceipt(context, null, (tx) => createIssue(tx, parsed));
+        return jsonResult(serializeIssueMutation(created, input.response));
       });
     })
   );
@@ -148,12 +151,12 @@ export function registerIssueTools(
     {
       title: "Update issue",
       description: "Update issue fields.",
-      inputSchema: updateIssueToolInputSchema.strict()
+      inputSchema: updateIssueToolInputSchema.safeExtend({ response: issueResponseSchema.optional() })
     },
     (input) => mcpToolResult(() => {
-      const { identifier, ...update } = updateIssueToolInputSchema.parse(input);
+      const { identifier, ...update } = updateIssueToolInputSchema.parse(withoutResponse(input));
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeIssue(updateIssue(context, identifier, update)))
+        jsonResult(serializeIssueMutation(withIssueMutationReceipt(context, identifier, (tx) => updateIssue(tx, identifier, update)), input.response))
       );
     })
   );
@@ -163,12 +166,12 @@ export function registerIssueTools(
     {
       title: "Move issue",
       description: "Move an issue to another workflow state.",
-      inputSchema: moveIssueInputSchema.strict()
+      inputSchema: moveIssueInputSchema.safeExtend({ response: issueResponseSchema.optional() })
     },
     (input) => mcpToolResult(() => {
-      const parsed = moveIssueInputSchema.parse(input);
+      const parsed = moveIssueInputSchema.parse(withoutResponse(input));
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeIssue(moveIssue(context, parsed.identifier, parsed.state, parsed)))
+        jsonResult(serializeIssueMutation(withIssueMutationReceipt(context, parsed.identifier, (tx) => moveIssue(tx, parsed.identifier, parsed.state, parsed)), input.response))
       );
     })
   );
@@ -178,12 +181,12 @@ export function registerIssueTools(
     {
       title: "Assign issue",
       description: "Assign or clear an issue assignee.",
-      inputSchema: assignIssueInputSchema.strict()
+      inputSchema: assignIssueInputSchema.safeExtend({ response: issueResponseSchema.optional() })
     },
     (input) => mcpToolResult(() => {
-      const parsed = assignIssueInputSchema.parse(input);
+      const parsed = assignIssueInputSchema.parse(withoutResponse(input));
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeIssue(assignIssue(context, parsed.identifier, parsed.actor, parsed)))
+        jsonResult(serializeIssueMutation(withIssueMutationReceipt(context, parsed.identifier, (tx) => assignIssue(tx, parsed.identifier, parsed.actor, parsed)), input.response))
       );
     })
   );
@@ -193,12 +196,12 @@ export function registerIssueTools(
     {
       title: "Archive issue",
       description: "Archive an issue without deleting it.",
-      inputSchema: archiveIssueInputSchema.strict()
+      inputSchema: archiveIssueInputSchema.safeExtend({ response: issueResponseSchema.optional() })
     },
     (input) => mcpToolResult(() => {
-      const parsed = archiveIssueInputSchema.parse(input);
+      const parsed = archiveIssueInputSchema.parse(withoutResponse(input));
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeIssue(archiveIssue(context, parsed.identifier, parsed)))
+        jsonResult(serializeIssueMutation(withIssueMutationReceipt(context, parsed.identifier, (tx) => archiveIssue(tx, parsed.identifier, parsed)), input.response))
       );
     })
   );
@@ -208,12 +211,12 @@ export function registerIssueTools(
     {
       title: "Unarchive issue",
       description: "Restore an archived issue.",
-      inputSchema: unarchiveIssueInputSchema.strict()
+      inputSchema: unarchiveIssueInputSchema.safeExtend({ response: issueResponseSchema.optional() })
     },
     (input) => mcpToolResult(() => {
-      const parsed = unarchiveIssueInputSchema.parse(input);
+      const parsed = unarchiveIssueInputSchema.parse(withoutResponse(input));
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeIssue(unarchiveIssue(context, parsed.identifier, parsed)))
+        jsonResult(serializeIssueMutation(withIssueMutationReceipt(context, parsed.identifier, (tx) => unarchiveIssue(tx, parsed.identifier, parsed)), input.response))
       );
     })
   );
@@ -247,4 +250,10 @@ export function registerIssueTools(
       );
     })
   );
+}
+
+function withoutResponse<T extends { response?: unknown }>(input: T): Omit<T, "response"> {
+  const fields = { ...input };
+  delete fields.response;
+  return fields;
 }
