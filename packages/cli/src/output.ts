@@ -8,8 +8,8 @@ import {
   serializeActor,
   serializeActivity,
   serializeActivityEvent,
-  serializeAttachment,
-  serializeComment,
+  serializeAttachmentMutation,
+  serializeCommentMutation,
   serializeCycle,
   serializeIssue,
   serializeIssueSummary,
@@ -21,6 +21,8 @@ import {
   type Actor,
   type ActivityFeedEvent,
   type ActivityWithActor,
+  type AddAttachmentResult,
+  type AddCommentResult,
   type Attachment,
   type CommentWithAuthor,
   type Cycle,
@@ -147,22 +149,30 @@ export function printLabel(label: Label, options: OutputOptions): void {
   process.stdout.write(`${pc.bold(label.name)}  ${label.color}  ${label.group ?? ""}\n`);
 }
 
-export function printComment(comment: CommentWithAuthor, options: OutputOptions): void {
+export function printComment(comment: AddCommentResult, options: OutputOptions): void {
   if (options.json) {
-    printJson(serializeComment(comment));
+    printJson(serializeCommentMutation(comment));
     return;
   }
 
   process.stdout.write(`${formatCommentLines(comment, 0).join("\n")}\n`);
+  printReplayLine(comment.alreadyExisted, comment.id);
 }
 
-export function printAttachment(attachment: Attachment, options: OutputOptions): void {
+export function printAttachment(attachment: AddAttachmentResult, options: OutputOptions): void {
   if (options.json) {
-    printJson(serializeAttachment(attachment));
+    printJson(serializeAttachmentMutation(attachment));
     return;
   }
 
   process.stdout.write(`${formatAttachmentLine(attachment)}\n`);
+  printReplayLine(attachment.alreadyExisted, attachment.id);
+}
+
+function printReplayLine(alreadyExisted: boolean, id: string): void {
+  if (alreadyExisted) {
+    process.stdout.write(pc.dim(`idempotency key matched ${id}; no duplicate created`) + "\n");
+  }
 }
 
 export function printActivity(

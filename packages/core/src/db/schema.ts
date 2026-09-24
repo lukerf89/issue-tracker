@@ -110,7 +110,9 @@ export const cycles = sqliteTable(
 // `revision` is maintained by SQL triggers in migrations/0011_issue_revisions.sql, not by
 // Drizzle. A generated migration that rebuilds this table (or comments, attachments,
 // issue_labels, issue_dependencies) drops those triggers; recreate them in the same
-// migration. agent-concurrency.test.ts fails if any trigger goes missing.
+// migration. agent-concurrency.test.ts fails if any trigger goes missing. Columns added to
+// those tables later (e.g. comments/attachments `idempotency_key` in 0012) must therefore be
+// additive `ALTER TABLE ... ADD` migrations, never a table rebuild.
 export const issues = sqliteTable(
   "issues",
   {
@@ -199,33 +201,55 @@ export const issueDependencies = sqliteTable(
   (table) => [primaryKey({ columns: [table.blockingIssueId, table.blockedIssueId] })]
 );
 
-export const comments = sqliteTable("comments", {
-  id: text("id").primaryKey(),
-  issueId: text("issue_id")
-    .notNull()
-    .references(() => issues.id),
-  authorId: text("author_id")
-    .notNull()
-    .references(() => actors.id),
-  body: text("body").notNull(),
-  parentId: text("parent_id").references((): AnySQLiteColumn => comments.id),
-  createdAt: text("created_at").notNull()
-});
+export const comments = sqliteTable(
+  "comments",
+  {
+    id: text("id").primaryKey(),
+    issueId: text("issue_id")
+      .notNull()
+      .references(() => issues.id),
+    authorId: text("author_id")
+      .notNull()
+      .references(() => actors.id),
+    body: text("body").notNull(),
+    parentId: text("parent_id").references((): AnySQLiteColumn => comments.id),
+    createdAt: text("created_at").notNull(),
+    // Optional retry key, globally scoped to the comments table. NULL = no key; the partial
+    // unique index only constrains non-NULL keys.
+    idempotencyKey: text("idempotency_key")
+  },
+  (table) => [
+    uniqueIndex("comments_idempotency_key_unique")
+      .on(table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} IS NOT NULL`)
+  ]
+);
 
-export const attachments = sqliteTable("attachments", {
-  id: text("id").primaryKey(),
-  issueId: text("issue_id")
-    .notNull()
-    .references(() => issues.id),
-  kind: text("kind", { enum: ["link", "branch", "pr", "commit"] }).notNull(),
-  title: text("title").notNull(),
-  url: text("url"),
-  repoPath: text("repo_path"),
-  remote: text("remote"),
-  branchName: text("branch_name"),
-  commitSha: text("commit_sha"),
-  createdAt: text("created_at").notNull()
-});
+export const attachments = sqliteTable(
+  "attachments",
+  {
+    id: text("id").primaryKey(),
+    issueId: text("issue_id")
+      .notNull()
+      .references(() => issues.id),
+    kind: text("kind", { enum: ["link", "branch", "pr", "commit"] }).notNull(),
+    title: text("title").notNull(),
+    url: text("url"),
+    repoPath: text("repo_path"),
+    remote: text("remote"),
+    branchName: text("branch_name"),
+    commitSha: text("commit_sha"),
+    createdAt: text("created_at").notNull(),
+    // Optional retry key, globally scoped to the attachments table (independent of the
+    // comments and issues keyspaces). NULL = no key.
+    idempotencyKey: text("idempotency_key")
+  },
+  (table) => [
+    uniqueIndex("attachments_idempotency_key_unique")
+      .on(table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} IS NOT NULL`)
+  ]
+);
 
 export const activity = sqliteTable("activity", {
   id: text("id").primaryKey(),

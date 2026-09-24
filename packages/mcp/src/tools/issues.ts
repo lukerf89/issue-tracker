@@ -26,8 +26,8 @@ import {
   moveIssue,
   moveIssueInputSchema,
   serializeActivity,
-  serializeAttachment,
-  serializeComment,
+  serializeAttachmentMutation,
+  serializeCommentMutation,
   serializeIssue,
   serializeIssueSummary,
   unarchiveIssue,
@@ -243,13 +243,17 @@ export function registerIssueTools(
     {
       _meta: toolGroups("coding"),
       title: "Comment on issue",
-      description: "Add a comment to an issue.",
+      description:
+        "Add a comment to an issue. Optional idempotencyKey (global to comments; trimmed; blank means no key): " +
+        "a retry with the same key and the same issue/author/body/parent returns the stored comment with " +
+        "alreadyExisted: true, writing nothing and skipping the expectedRevision check; the same key with a " +
+        "different payload fails with IDEMPOTENCY_KEY_CONFLICT. alreadyExisted is false on a fresh write.",
       inputSchema: addCommentInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = addCommentInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeComment(addComment(context, parsed)))
+        jsonResult(serializeCommentMutation(addComment(context, parsed)))
       );
     })
   );
@@ -259,13 +263,18 @@ export function registerIssueTools(
     {
       _meta: toolGroups("coding"),
       title: "Link issue",
-      description: "Attach a branch, PR, commit, or URL to an issue.",
+      description:
+        "Attach a branch, PR, commit, or URL to an issue. Optional idempotencyKey (global to attachments; " +
+        "trimmed; blank means no key): a retry with the same key and the same issue/kind/title/url/repoPath/" +
+        "remote/branchName/commitSha returns the stored attachment with alreadyExisted: true, writing nothing " +
+        "and skipping the expectedRevision check; the same key with a different payload fails with " +
+        "IDEMPOTENCY_KEY_CONFLICT. alreadyExisted is false on a fresh write.",
       inputSchema: linkIssueToolInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = linkIssueInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeAttachment(addAttachment(context, parsed)))
+        jsonResult(serializeAttachmentMutation(addAttachment(context, parsed)))
       );
     })
   );

@@ -26,3 +26,7 @@ export const includeArchivedSchema = z.object({
 });
 
 export const issueCursorSchema = z.union([cursorSchema, z.string().regex(/^it1\.[A-Za-z0-9_-]+$/).max(4096)]);
+
+// Bounded retry key. Blank/whitespace keys are normalized to "no key" by the services, so an
+// empty string stays back-compatible with a keyless write rather than erroring.
+export const idempotencyKeySchema = z.string().max(255).nullable().optional();

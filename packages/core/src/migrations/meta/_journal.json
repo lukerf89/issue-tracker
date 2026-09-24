@@ -85,6 +85,13 @@
       "when": 1786000000000,
       "tag": "0011_issue_revisions",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1790222276121,
+      "tag": "0012_comment_attachment_idempotency_keys",
+      "breakpoints": true
     }
   ]
 }

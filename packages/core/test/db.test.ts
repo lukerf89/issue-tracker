@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { applyMigrations, openDb } from "../src/index.js";
-import { activity, actors, attachments, issues, savedViews, teams, templates, workflowStates } from "../src/db/schema.js";
+import { activity, actors, issues, savedViews, teams, templates, workflowStates } from "../src/db/schema.js";
 
 const tableNames = [
   "workspace",
@@ -175,6 +175,59 @@ describe("core database foundation", () => {
     }
   });
 
+  it("adds partial unique idempotency-key indexes to comments and attachments", () => {
+    const db = openTempDb();
+
+    try {
+      applyMigrations(db);
+      insertIssueFixture(db);
+
+      for (const table of ["comments", "attachments"]) {
+        const columns = db.$client.prepare(`pragma table_info(${table})`).all() as Array<{
+          name: string;
+          notnull: number;
+        }>;
+        expect(columns.find((column) => column.name === "idempotency_key")).toMatchObject({
+          notnull: 0
+        });
+        const indexes = db.$client.prepare(`pragma index_list(${table})`).all() as Array<{
+          name: string;
+          unique: number;
+          partial: number;
+        }>;
+        expect(indexes.find((index) => index.name === `${table}_idempotency_key_unique`)).toMatchObject({
+          unique: 1,
+          partial: 1
+        });
+      }
+
+      const insertComment = (id: string, key: string | null): void => {
+        db.$client
+          .prepare(
+            "insert into comments (id, issue_id, author_id, body, created_at, idempotency_key) values (?, ?, ?, ?, ?, ?)"
+          )
+          .run(id, "issue-eng-1", "actor-human", "Looks good", "2026-01-01T00:00:00.000Z", key);
+      };
+      const insertAttachment = (id: string, key: string | null): void => {
+        db.$client
+          .prepare(
+            "insert into attachments (id, issue_id, kind, title, url, created_at, idempotency_key) values (?, ?, ?, ?, ?, ?, ?)"
+          )
+          .run(id, "issue-eng-1", "link", "Doc", "https://example.test/doc", "2026-01-01T00:00:00.000Z", key);
+      };
+
+      for (const insert of [insertComment, insertAttachment]) {
+        // Multiple NULL keys are allowed; a reused non-null key is rejected.
+        expect(() => insert("row-null-1", null)).not.toThrow();
+        expect(() => insert("row-null-2", null)).not.toThrow();
+        expect(() => insert("row-key-1", "dup-key")).not.toThrow();
+        expect(() => insert("row-key-2", "dup-key")).toThrow(/UNIQUE/i);
+      }
+    } finally {
+      db.$client.close();
+    }
+  });
+
   it("enforces duplicate team keys, issue numbers, saved view names, and template names at the DB layer", () => {
     const db = openTempDb();
 
@@ -301,7 +354,9 @@ describe("core database foundation", () => {
     try {
       applyMigrations(db, { migrationsFolder: partialMigrationsFolder(["0000_initial", "0001_nebulous_medusa", "0002_puzzling_red_skull", "0003_add_blocked_workflow_state", "0004_add_issue_dependencies", "0005_add_issue_fts"]) });
       insertIssueFixture(db);
-      db.insert(attachments).values({ id: "attachment-before-runs", issueId: "issue-eng-1", kind: "link", title: "Fictional design", url: "https://example.test/design", repoPath: null, remote: null, branchName: null, commitSha: null, createdAt: "2026-01-01T00:01:00.000Z" }).run();
+      // Raw SQL: the pre-0012 table has no idempotency_key column, which a Drizzle insert
+      // against the current schema would reference.
+      db.$client.prepare("insert into attachments (id, issue_id, kind, title, url, created_at) values (?, ?, ?, ?, ?, ?)").run("attachment-before-runs", "issue-eng-1", "link", "Fictional design", "https://example.test/design", "2026-01-01T00:01:00.000Z");
       db.insert(activity).values({ id: "activity-before-runs", issueId: "issue-eng-1", actorId: "actor-human", action: "linked", data: { title: "Fictional design" }, createdAt: "2026-01-01T00:01:00.000Z" }).run();
 
       applyMigrations(db);

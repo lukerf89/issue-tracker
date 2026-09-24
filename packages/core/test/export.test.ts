@@ -233,7 +233,8 @@ describe("exportSnapshot", () => {
           authorId: context.actor?.id,
           body: "Snapshot includes comments.",
           parentId: null,
-          createdAt: "2026-05-01T00:03:00.000Z"
+          createdAt: "2026-05-01T00:03:00.000Z",
+          idempotencyKey: null
         }
       ]);
       expect(snapshot.actors.map((actor) => actor.handle)).toEqual(["build-agent", "owner"]);
@@ -248,7 +249,8 @@ describe("exportSnapshot", () => {
           remote: null,
           branchName: null,
           commitSha: null,
-          createdAt: "2026-05-01T00:04:00.000Z"
+          createdAt: "2026-05-01T00:04:00.000Z",
+          idempotencyKey: null
         }
       ]);
       expect(snapshot.activity.map((entry) => entry.action)).toEqual([

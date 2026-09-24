@@ -6,11 +6,19 @@ import { actors, comments, issues, type Actor, type Comment, type Issue } from "
 import { AppError, AppErrorCode } from "../errors.js";
 import { uuid } from "../ids.js";
 import { appendActivityInTransaction } from "./activity.js";
+import {
+  idempotencyConflict,
+  isIdempotencyUniqueViolation,
+  mismatchedFields,
+  normalizeIdempotencyKey
+} from "./idempotency.js";
 
 export interface AddCommentInput extends IssueWriteOptions {
   issue: string;
   body: string;
   parent?: string | null;
+  // Optional retry key, global to the comments table. Trimmed; blank means "no key".
+  idempotencyKey?: string | null;
 }
 
 export interface ListCommentsInput {
@@ -24,12 +32,29 @@ export interface ListCommentsPageInput extends ListCommentsInput {
 
 export type CommentWithAuthor = Comment & { author: Actor };
 
-export function addComment(context: ServiceContext, input: AddCommentInput): CommentWithAuthor {
+// `alreadyExisted` is true when an idempotency key matched a prior comment with the same
+// payload; nothing was written and no revision check ran.
+export type AddCommentResult = CommentWithAuthor & { alreadyExisted: boolean };
+
+const COMMENT_KEY_FIELDS = ["issueId", "authorId", "body", "parentId"] as const;
+
+export function addComment(context: ServiceContext, input: AddCommentInput): AddCommentResult {
   requireActor(context);
+  const idempotencyKey = normalizeIdempotencyKey(input.idempotencyKey);
 
   return inTransaction(context, (txContext) => {
-    assertIssueRevision(txContext, input.issue, input.expectedRevision);
     const actor = requireActor(txContext);
+
+    // A key match takes precedence over every other check (revision, issue existence,
+    // parent validation): the retry either replays the stored comment or conflicts.
+    if (idempotencyKey !== null) {
+      const existing = findCommentByIdempotencyKey(txContext, idempotencyKey);
+      if (existing) {
+        return replayOrConflict(txContext, existing, idempotencyKey, input, actor.id);
+      }
+    }
+
+    assertIssueRevision(txContext, input.issue, input.expectedRevision);
     const issue = getIssueByIdOrIdentifier(txContext, input.issue);
     const parent = input.parent == null ? null : getCommentById(txContext, input.parent);
     assertParentBelongsToIssue(issue, parent);
@@ -41,10 +66,27 @@ export function addComment(context: ServiceContext, input: AddCommentInput): Com
       authorId: actor.id,
       body: input.body,
       parentId: parent?.id ?? null,
-      createdAt: now
+      createdAt: now,
+      idempotencyKey
     };
 
-    txContext.db.insert(comments).values(row).run();
+    try {
+      txContext.db.insert(comments).values(row).run();
+    } catch (error) {
+      // Defense-in-depth: IMMEDIATE transactions serialize writers, but if a concurrent
+      // writer won the key, apply the same replay-or-conflict rule to the winner.
+      if (
+        idempotencyKey !== null &&
+        isIdempotencyUniqueViolation(error, "comments.idempotency_key")
+      ) {
+        const winner = findCommentByIdempotencyKey(txContext, idempotencyKey);
+        if (winner) {
+          return replayOrConflict(txContext, winner, idempotencyKey, input, actor.id);
+        }
+      }
+      throw error;
+    }
+
     touchIssue(txContext, issue.id, now);
     appendActivityInTransaction(txContext, {
       issueId: issue.id,
@@ -53,8 +95,55 @@ export function addComment(context: ServiceContext, input: AddCommentInput): Com
       data: { commentId: row.id, parentId: row.parentId }
     });
 
-    return getCommentWithAuthor(txContext, row.id);
+    return { ...getCommentWithAuthor(txContext, row.id), alreadyExisted: false };
   });
+}
+
+function findCommentByIdempotencyKey(
+  context: ServiceContext,
+  key: string
+): Comment | undefined {
+  return context.db.query.comments.findFirst({
+    where: eq(comments.idempotencyKey, key)
+  }).sync();
+}
+
+function replayOrConflict(
+  context: ServiceContext,
+  existing: Comment,
+  idempotencyKey: string,
+  input: AddCommentInput,
+  actorId: string
+): AddCommentResult {
+  // Lookup only: no revision check, and an unresolvable ref is an issueId mismatch rather
+  // than ISSUE_NOT_FOUND. Parent refs are always comment ids, so the raw id is canonical.
+  const incomingIssue = findIssueByIdOrIdentifier(context, input.issue);
+  const incoming = {
+    issueId: incomingIssue?.id ?? null,
+    authorId: actorId,
+    body: input.body,
+    parentId: input.parent ?? null
+  };
+  const stored = {
+    issueId: existing.issueId,
+    authorId: existing.authorId,
+    body: existing.body,
+    parentId: existing.parentId ?? null
+  };
+  const mismatched = mismatchedFields<Record<string, unknown>>(stored, incoming, COMMENT_KEY_FIELDS);
+
+  if (mismatched.length > 0) {
+    const existingIssue = findIssueByIdOrIdentifier(context, existing.issueId);
+    throw idempotencyConflict({
+      resource: "comment",
+      idempotencyKey,
+      existingId: existing.id,
+      issueIdentifier: existingIssue?.identifier ?? existing.issueId,
+      mismatchedFields: mismatched
+    });
+  }
+
+  return { ...getCommentWithAuthor(context, existing.id), alreadyExisted: true };
 }
 
 export function listComments(
@@ -96,6 +185,7 @@ function commentRowsWithAuthors(
       body: comments.body,
       parentId: comments.parentId,
       createdAt: comments.createdAt,
+      idempotencyKey: comments.idempotencyKey,
       authorType: actors.type,
       authorName: actors.name,
       authorHandle: actors.handle,
@@ -121,6 +211,7 @@ function commentRowsWithAuthors(
       body: row.body,
       parentId: row.parentId,
       createdAt: row.createdAt,
+      idempotencyKey: row.idempotencyKey,
       author: {
         id: row.authorId,
         type: row.authorType,
@@ -154,10 +245,18 @@ function getCommentById(context: ServiceContext, id: string): Comment {
   return comment;
 }
 
-function getIssueByIdOrIdentifier(context: ServiceContext, idOrIdentifier: string): Issue {
-  const issue =
+function findIssueByIdOrIdentifier(
+  context: ServiceContext,
+  idOrIdentifier: string
+): Issue | undefined {
+  return (
     context.db.query.issues.findFirst({ where: eq(issues.id, idOrIdentifier) }).sync() ??
-    context.db.query.issues.findFirst({ where: eq(issues.identifier, idOrIdentifier) }).sync();
+    context.db.query.issues.findFirst({ where: eq(issues.identifier, idOrIdentifier) }).sync()
+  );
+}
+
+function getIssueByIdOrIdentifier(context: ServiceContext, idOrIdentifier: string): Issue {
+  const issue = findIssueByIdOrIdentifier(context, idOrIdentifier);
 
   if (!issue) {
     throw new AppError(

@@ -29,7 +29,7 @@ import {
   type Clock,
   type ServiceContext
 } from "../src/index.js";
-import { issues, milestones } from "../src/db/schema.js";
+import { attachments, comments, issues, milestones } from "../src/db/schema.js";
 
 const tempDirs: string[] = [];
 
@@ -151,6 +151,88 @@ describe("importSnapshot", () => {
       expect(
         destination.db.select().from(issues).all().every((issue) => issue.idempotencyKey === null)
       ).toBe(true);
+    } finally {
+      source.close();
+      destination.close();
+    }
+  });
+
+  it("preserves comment and attachment idempotency keys across export and import", () => {
+    const source = initializedContext("2026-05-01T00:00:00.000Z");
+    const destination = emptyContext("2026-05-02T00:00:00.000Z");
+
+    try {
+      const issue = createIssue(source.context, { title: "Set up CI" });
+      const comment = addComment(source.context, {
+        issue: issue.identifier,
+        body: "Pipeline is green.",
+        idempotencyKey: "comment-retry-1"
+      });
+      const link = addAttachment(source.context, {
+        issue: issue.identifier,
+        kind: "link",
+        url: "https://example.invalid/ci",
+        idempotencyKey: "link-retry-1"
+      });
+
+      const snapshot = exportSnapshot(source.context);
+      expect(snapshot.comments.map((row) => row.idempotencyKey)).toEqual(["comment-retry-1"]);
+      expect(snapshot.attachments.map((row) => row.idempotencyKey)).toEqual(["link-retry-1"]);
+
+      importSnapshot(destination.context, snapshot);
+      destination.context.actor = whoami(destination.context);
+
+      const replayedComment = addComment(destination.context, {
+        issue: issue.identifier,
+        body: "Pipeline is green.",
+        idempotencyKey: "comment-retry-1"
+      });
+      const replayedLink = addAttachment(destination.context, {
+        issue: issue.identifier,
+        kind: "link",
+        url: "https://example.invalid/ci",
+        idempotencyKey: "link-retry-1"
+      });
+      expect(replayedComment).toMatchObject({ id: comment.id, alreadyExisted: true });
+      expect(replayedLink).toMatchObject({ id: link.id, alreadyExisted: true });
+      expect(destination.db.select().from(comments).all()).toHaveLength(1);
+      expect(destination.db.select().from(attachments).all()).toHaveLength(1);
+    } finally {
+      source.close();
+      destination.close();
+    }
+  });
+
+  it("imports older snapshots whose comments and attachments have no idempotency keys", () => {
+    const source = populatedContext();
+    const destination = emptyContext();
+
+    try {
+      const snapshot = exportSnapshot(source.context);
+      expect(snapshot.comments.length).toBeGreaterThan(0);
+      expect(snapshot.attachments.length).toBeGreaterThan(0);
+      const legacySnapshot = {
+        ...snapshot,
+        comments: snapshot.comments.map((comment) => {
+          const legacy: Partial<typeof comment> = { ...comment };
+          delete legacy.idempotencyKey;
+          return legacy;
+        }),
+        attachments: snapshot.attachments.map((attachment) => {
+          const legacy: Partial<typeof attachment> = { ...attachment };
+          delete legacy.idempotencyKey;
+          return legacy;
+        })
+      };
+
+      importSnapshot(destination.context, legacySnapshot);
+
+      const importedComments = destination.db.select().from(comments).all();
+      const importedAttachments = destination.db.select().from(attachments).all();
+      expect(importedComments).toHaveLength(snapshot.comments.length);
+      expect(importedAttachments).toHaveLength(snapshot.attachments.length);
+      expect(importedComments.every((row) => row.idempotencyKey === null)).toBe(true);
+      expect(importedAttachments.every((row) => row.idempotencyKey === null)).toBe(true);
     } finally {
       source.close();
       destination.close();

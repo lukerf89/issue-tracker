@@ -849,6 +849,10 @@ export function createProgram(): Command {
     .argument("<identifier>")
     .argument("<body>")
     .option("--parent <comment>", "parent comment id")
+    .option(
+      "--idempotency-key <key>",
+      "retry key; re-running with the same key and payload returns the original comment instead of a duplicate"
+    )
     .option("--json", "print JSON output")
     .action((identifier, body, _options, command) =>
       withContext(command, {}, (cli) => {
@@ -871,6 +875,10 @@ export function createProgram(): Command {
     .option("--branch <name>", "branch name")
     .option("--sha <sha>", "commit SHA")
     .option("--title <title>", "attachment title")
+    .option(
+      "--idempotency-key <key>",
+      "retry key; re-running with the same key and payload returns the original link instead of a duplicate"
+    )
     .option("--json", "print JSON output")
     .action((identifier, url, _options, command) =>
       withContext(command, {}, (cli) => {
@@ -1621,7 +1629,8 @@ function issueCommentInput(
     expectedRevision: numberOption(options.expectedRevision),
     issue: identifier,
     body,
-    parent: nullableStringOption(options.parent)
+    parent: nullableStringOption(options.parent),
+    idempotencyKey: stringOption(options.idempotencyKey)
   }));
 }
 
@@ -1639,7 +1648,8 @@ function issueLinkInput(
     repoPath: stringOption(options.repo),
     remote: nullableStringOption(options.remote),
     branchName: stringOption(options.branch),
-    commitSha: stringOption(options.sha)
+    commitSha: stringOption(options.sha),
+    idempotencyKey: stringOption(options.idempotencyKey)
   }));
 }
 
