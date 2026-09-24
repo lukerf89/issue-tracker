@@ -246,7 +246,9 @@ Use `describe({team:"ENG", sections:["teams","priorities"], compact:true})`
 Omitted sections default to the legacy complete metadata response. `compact`
 returns project ID/name/status only; project descriptions remain available in
 full mode. Team scope applies to teams/states; labels and projects are global
-in this data model. `metadataRevision` is SHA-256 of the selected response
+in this data model. Archived teams are not listed and cannot be scoped to
+(`TEAM_NOT_FOUND`). On the CLI, the global `--team` default also scopes
+`describe`. `metadataRevision` is SHA-256 of the selected response
 content: cache by the normalized request and revision; only changes visible in
 that response invalidate it. It is not a workspace-wide edit counter.
 

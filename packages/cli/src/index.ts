@@ -289,6 +289,8 @@ export function createProgram(): Command {
     .option("--json", "print JSON output")
     .action((_options, command) =>
       withContext(command, {}, (cli) => {
+        // Commander routes `describe --team` to the global --team option, so the global
+        // default team and the subcommand flag are the same value: either scopes discovery.
         const options = optionsWithGlobals(command);
         const input = describeTrackerInputSchema.parse({ team: stringOption(options.team), sections: fieldsOption(options.sections), compact: booleanOption(options.compact) });
         printJson(describeTracker(cli.context, input));
