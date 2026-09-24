@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { describeTrackerInputSchema } from "../schemas/metadata.js";
+import type { z } from "zod";
 import type { Label } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { serializeActor, serializeLabel, serializeProject, serializeWorkflowState } from "../serialize.js";
@@ -20,21 +23,33 @@ export function listStatesForTeam(context: ServiceContext, idOrKey: string) {
   return listStates(context, resolveTeam(context, idOrKey).id);
 }
 
-export function describeTracker(context: ServiceContext) {
-  const teams = listTeams(context).map((team) => ({
-    id: team.id,
-    key: team.key,
-    name: team.name,
-    states: listStates(context, team.id).map(serializeWorkflowState)
-  }));
-
-  return {
-    teams,
-    priorities: priorityLabels,
-    labelGroups: groupLabels(listLabels(context)),
-    projects: listProjects(context).map(serializeProject),
-    actor: serializeActor(context.actor ?? whoami(context))
+export function describeTracker(context: ServiceContext, input: z.input<typeof describeTrackerInputSchema> = {}) {
+  const options = describeTrackerInputSchema.parse(input);
+  const team = options.team ? resolveActiveTeam(context, options.team) : null;
+  const sections = new Set(options.sections ?? ["teams", "priorities", "labelGroups", "projects", "actor"]);
+  const payload = {
+    ...(sections.has("teams") ? { teams: (team ? [team] : listTeams(context)).map((entry) => ({
+      id: entry.id, key: entry.key, name: entry.name,
+      states: listStates(context, entry.id).map(serializeWorkflowState)
+    })) } : {}),
+    ...(sections.has("priorities") ? { priorities: priorityLabels } : {}),
+    ...(sections.has("labelGroups") ? { labelGroups: groupLabels(listLabels(context)) } : {}),
+    ...(sections.has("projects") ? { projects: listProjects(context).map((entry) => options.compact
+      ? { id: entry.id, name: entry.name, status: entry.status }
+      : serializeProject(entry)) } : {}),
+    ...(sections.has("actor") ? { actor: serializeActor(context.actor ?? whoami(context)) } : {})
   };
+  return { ...payload, metadataRevision: createHash("sha256").update(JSON.stringify(payload)).digest("hex") };
+}
+
+// Unscoped discovery lists only active teams, so a scoped read must not surface an
+// archived one as if it were valid for new work.
+function resolveActiveTeam(context: ServiceContext, idOrKey: string) {
+  const team = resolveTeam(context, idOrKey);
+  if (team.archivedAt !== null) {
+    throw new AppError(AppErrorCode.TEAM_NOT_FOUND, `Team not found: ${idOrKey}`, { team: idOrKey });
+  }
+  return team;
 }
 
 function resolveTeam(context: ServiceContext, idOrKey: string) {

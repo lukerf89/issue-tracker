@@ -18,13 +18,13 @@ export function registerMetadataTools(
     "describe",
     {
       title: "Describe tracker metadata",
-      description: "Discover teams, workflow states, priorities, labels, projects, and the current actor.",
+      description: "Discover teams, workflow states, priorities, labels, projects, and the current actor. Scope with team and sections; compact trims project references. Re-read only when metadataRevision changes.",
       inputSchema: describeTrackerInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
-      describeTrackerInputSchema.parse(input);
+      const parsed = describeTrackerInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(describeTracker(context))
+        jsonResult(describeTracker(context, parsed))
       );
     })
   );
