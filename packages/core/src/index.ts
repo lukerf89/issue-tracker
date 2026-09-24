@@ -341,6 +341,27 @@ export {
   cancelRun,
   markRunCrashed
 } from "./services/run-workflow.js";
+export {
+  listRunSummaries,
+  getRunSummary,
+  listRunRecords,
+  runResponse,
+  type RunSummary,
+  type RunSummaryPage,
+  type RunRecordPage
+} from "./services/run-page.js";
+export {
+  runViewSchema,
+  getRunInputSchema,
+  runMutationViewSchema,
+  runRecordCollectionSchema,
+  listRunRecordsInputSchema,
+  listRunArtifactsInputSchema,
+  type RunView,
+  type RunRecordCollection,
+  type ListRunsPageInput,
+  type ListRunRecordsInput
+} from "./schemas/run.js";
 export { requestRunCleanup, assertContained } from "./services/run-cleanup.js";
 export { getRunMetrics } from "./services/run-metrics.js";
 export {

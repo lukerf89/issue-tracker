@@ -89,7 +89,16 @@ import {
   listProfiles,
   listRepositories,
   listRunEvents,
-  listRuns,
+  getRunInputSchema,
+  getRunSummary,
+  listRunArtifactsInputSchema,
+  listRunRecords,
+  listRunRecordsInputSchema,
+  listRunsInputSchema,
+  listRunSummaries,
+  retryRunInputSchema,
+  runMutationViewSchema,
+  runResponse,
   listIssuesWithViewInputSchema,
   listIssuesPageWithView,
   listIssuesPageWithViewInputSchema,
@@ -1005,20 +1014,21 @@ export function createProgram(): Command {
     const options = optionsWithGlobals(command);
     printJson(startRun(cli.context, startRunInputSchema.parse({ issue: issueRef, profile: stringOption(options.profile), baseRef: stringOption(options.base), parallelGroup: stringOption(options.parallelGroup), previewFingerprint: options.preview, confirmWarnings: options.confirm }), runRuntime()));
   }));
-  runCommand.command("list").option("--issue <identifier>").option("--state <state>").option("--include-archived").option("--json").action((_options, command) => withContext(command, { requireActor: false }, (cli) => {
-    const options = optionsWithGlobals(command); printJson(listRuns(cli.context, { issue: stringOption(options.issue), state: stringOption(options.state) as never, includeArchived: booleanOption(options.includeArchived) }));
+  runCommand.command("list").description("list bounded pages of compact run summaries, newest first").option("--issue <identifier>").option("--state <state>").option("--include-archived").option("--cursor <cursor>", "opaque nextCursor from the previous page").option("--limit <number>", "page size (1-100)", parseInteger).option("--json").action((_options, command) => withContext(command, { requireActor: false }, (cli) => {
+    const options = optionsWithGlobals(command); printJson(listRunSummaries(cli.context, listRunsInputSchema.parse({ issue: stringOption(options.issue), state: stringOption(options.state), includeArchived: booleanOption(options.includeArchived), cursor: stringOption(options.cursor), limit: options.limit })));
   }));
-  runCommand.command("view").argument("<run>").option("--json").action((runId, _options, command) => withContext(command, { requireActor: false }, (cli) => printJson(getRun(cli.context, runId))));
+  runCommand.command("view").argument("<run>").option("--view <view>", "summary or full", "full").option("--json").action((runId, _options, command) => withContext(command, { requireActor: false }, (cli) => { const input = getRunInputSchema.parse({ run: runId, view: stringOption(optionsWithGlobals(command).view) }); printJson(input.view === "summary" ? getRunSummary(cli.context, input.run) : getRun(cli.context, input.run)); }));
+  runCommand.command("records").description("page through one related collection of a run").argument("<run>").argument("<collection>").option("--cursor <cursor>", "opaque nextCursor from the previous page").option("--limit <number>", "page size (1-100)", parseInteger).option("--json").action((runId, collection, _options, command) => withContext(command, { requireActor: false }, (cli) => { const options = optionsWithGlobals(command); printJson(listRunRecords(cli.context, listRunRecordsInputSchema.parse({ run: runId, collection, cursor: stringOption(options.cursor), limit: options.limit }))); }));
   runCommand.command("events").argument("<run>").option("--after <cursor>", "event cursor", parseInteger, 0).option("--limit <number>", "event limit", parsePositiveInteger, 100).option("--json").action((runId, _options, command) => withContext(command, { requireActor: false }, (cli) => { const options = optionsWithGlobals(command); printJson(listRunEvents(cli.context, { run: runId, after: Number(options.after), limit: Number(options.limit) })); }));
   runCommand.command("respond").argument("<run>").argument("<request>").argument("<text>").option("--json").action((runId, request, response, _options, command) => withContext(command, {}, (cli) => printJson(respondToRunInput(cli.context, { run: runId, request, response }))));
   runCommand.command("approve").argument("<run>").argument("<request>").option("--deny").option("--json").action((runId, request, _options, command) => withContext(command, {}, (cli) => printJson(resolveRunPermission(cli.context, { run: runId, request, decision: booleanOption(optionsWithGlobals(command).deny) ? "denied" : "approved" }))));
-  runCommand.command("stop").argument("<run>").option("--force").option("--json").action((runId, _options, command) => withContext(command, {}, (cli) => printJson(requestRunStop(cli.context, runId, booleanOption(optionsWithGlobals(command).force) ?? false))));
-  runCommand.command("retry").argument("<run>").option("--engine <name>").option("--json").action((runId, _options, command) => withContext(command, {}, (cli) => printJson(retryRun(cli.context, { run: runId, engine: stringOption(optionsWithGlobals(command).engine) }))));
-  runCommand.command("resume").argument("<run>").option("--json").action((runId, _options, command) => withContext(command, {}, (cli) => printJson(resumeRun(cli.context, runId))));
-  runCommand.command("nudge").argument("<run>").argument("<message>").option("--json").action((runId, message, _options, command) => withContext(command, {}, (cli) => printJson(nudgeRun(cli.context, runId, message))));
-  runCommand.command("artifacts").argument("<run>").option("--json").action((runId, _options, command) => withContext(command, { requireActor: false }, (cli) => printJson(getRun(cli.context, runId).artifacts)));
+  runCommand.command("stop").argument("<run>").option("--force").option("--view <view>", "summary or full", "full").option("--json").action((runId, _options, command) => withContext(command, {}, (cli) => { const options = optionsWithGlobals(command); const input = runMutationViewSchema.parse({ run: runId, view: stringOption(options.view) }); printJson(runResponse(cli.context, requestRunStop(cli.context, input.run, booleanOption(options.force) ?? false), input.view)); }));
+  runCommand.command("retry").argument("<run>").option("--engine <name>").option("--view <view>", "summary or full", "full").option("--json").action((runId, _options, command) => withContext(command, {}, (cli) => { const options = optionsWithGlobals(command); const input = retryRunInputSchema.parse({ run: runId, engine: stringOption(options.engine), view: stringOption(options.view) }); printJson(runResponse(cli.context, retryRun(cli.context, input), input.view)); }));
+  runCommand.command("resume").argument("<run>").option("--view <view>", "summary or full", "full").option("--json").action((runId, _options, command) => withContext(command, {}, (cli) => { const input = runMutationViewSchema.parse({ run: runId, view: stringOption(optionsWithGlobals(command).view) }); printJson(runResponse(cli.context, resumeRun(cli.context, input.run), input.view)); }));
+  runCommand.command("nudge").argument("<run>").argument("<message>").option("--view <view>", "summary or full", "full").option("--json").action((runId, message, _options, command) => withContext(command, {}, (cli) => { const input = runMutationViewSchema.parse({ run: runId, view: stringOption(optionsWithGlobals(command).view) }); printJson(runResponse(cli.context, nudgeRun(cli.context, input.run, message), input.view)); }));
+  runCommand.command("artifacts").argument("<run>").option("--cursor <cursor>", "opaque nextCursor from the previous page").option("--limit <number>", "page size (1-100)", parseInteger).option("--json").action((runId, _options, command) => withContext(command, { requireActor: false }, (cli) => { const options = optionsWithGlobals(command); printJson(listRunRecords(cli.context, { ...listRunArtifactsInputSchema.parse({ run: runId, cursor: stringOption(options.cursor), limit: options.limit }), collection: "artifacts" })); }));
   runCommand.command("publish").argument("<run>").option("--draft-pr").requiredOption("--confirm").option("--json").action((runId, _options, command) => withContext(command, {}, (cli) => printJson(requestRunPublication(cli.context, { run: runId, publishDraftPr: booleanOption(optionsWithGlobals(command).draftPr) ?? false, confirmed: true }))));
-  runCommand.command("archive").argument("<run>").option("--json").action((runId, _options, command) => withContext(command, {}, (cli) => printJson(archiveRun(cli.context, runId))));
+  runCommand.command("archive").argument("<run>").option("--view <view>", "summary or full", "full").option("--json").action((runId, _options, command) => withContext(command, {}, (cli) => { const input = runMutationViewSchema.parse({ run: runId, view: stringOption(optionsWithGlobals(command).view) }); printJson(runResponse(cli.context, archiveRun(cli.context, input.run), input.view)); }));
   runCommand.command("cleanup").argument("<run>").requiredOption("--kind <worktree|raw_logs>").requiredOption("--confirm").option("--allow-unmerged").option("--json").action((runId, _options, command) => withContext(command, {}, (cli) => { const options = optionsWithGlobals(command); const kind = stringOption(options.kind); if (kind !== "worktree" && kind !== "raw_logs") throw new InvalidArgumentError("cleanup kind must be worktree or raw_logs"); printJson(requestRunCleanup(cli.context, { run: runId, kind, managedRoot: resolve((process.env.XDG_DATA_HOME ?? resolve(homedir(), ".local", "share")), "issue-tracker", kind === "worktree" ? "worktrees" : "runs"), confirmed: true, allowUnmerged: booleanOption(options.allowUnmerged) })); }));
   runCommand.command("metrics").option("--json").action((_options, command) => withContext(command, { requireActor: false }, (cli) => printJson(getRunMetrics(cli.context))));
 

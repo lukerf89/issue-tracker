@@ -45,11 +45,29 @@ export const startRunInputSchema = previewRunInputSchema.extend({
   confirmWarnings: z.array(z.string()).default([])
 }).strict();
 export const runRefSchema = z.object({ run: z.string().uuid() }).strict();
+const runPageCursorSchema = z.string().min(1).max(4096);
+const runPageLimitSchema = z.number().int().min(1).max(100).default(25);
 export const listRunsInputSchema = z.object({
   issue: z.string().min(1).optional(),
   state: runStateSchema.optional(),
-  includeArchived: z.boolean().optional()
+  includeArchived: z.boolean().optional(),
+  cursor: runPageCursorSchema.optional(),
+  limit: runPageLimitSchema
 }).strict();
+/** `summary` is a bounded, compact projection; `full` is the hydrated run with configuration and every related collection. */
+export const runViewSchema = z.enum(["summary", "full"]);
+export const getRunInputSchema = runRefSchema.extend({ view: runViewSchema.default("full") }).strict();
+/** Run-returning mutations (stop/resume/nudge/archive) accept the same view selector as get_run. */
+export const runMutationViewSchema = runRefSchema.extend({ view: runViewSchema.default("full") }).strict();
+/** Related collections of a run that can be read independently, in hydrated-run order. */
+export const runRecordCollectionSchema = z.enum(["repositories", "attempts", "participants", "artifacts", "inputRequests", "verifications", "reviewFindings", "pendingActions"]);
+export const listRunRecordsInputSchema = z.object({
+  run: z.string().uuid(),
+  collection: runRecordCollectionSchema,
+  cursor: runPageCursorSchema.optional(),
+  limit: runPageLimitSchema
+}).strict();
+export const listRunArtifactsInputSchema = runRefSchema.extend({ cursor: runPageCursorSchema.optional(), limit: runPageLimitSchema }).strict();
 export const listRunEventsInputSchema = z.object({
   run: z.string().uuid(),
   after: z.number().int().nonnegative().default(0),
@@ -78,7 +96,7 @@ export const respondRunInputSchema = z.object({
 export const resolvePermissionInputSchema = z.object({
   run: z.string().uuid(), request: z.string().uuid(), decision: z.enum(["approved", "denied"])
 }).strict();
-export const retryRunInputSchema = z.object({ run: z.string().uuid(), engine: z.string().min(1).optional() }).strict();
+export const retryRunInputSchema = z.object({ run: z.string().uuid(), engine: z.string().min(1).optional(), view: runViewSchema.default("full") }).strict();
 export const participantFailureCodeSchema = z.enum([
   "provider_authentication_failed", "provider_model_unavailable", "provider_schema_rejected", "provider_exit_nonzero",
   "provider_result_missing", "provider_result_invalid", "provider_process_crashed"
@@ -94,6 +112,10 @@ export const completeParticipantActionInputSchema = z.object({
 
 export type RunPhase = z.infer<typeof runPhaseSchema>;
 export type RunState = z.infer<typeof runStateSchema>;
+export type RunView = z.infer<typeof runViewSchema>;
+export type RunRecordCollection = z.infer<typeof runRecordCollectionSchema>;
+export type ListRunsPageInput = z.input<typeof listRunsInputSchema>;
+export type ListRunRecordsInput = z.input<typeof listRunRecordsInputSchema>;
 export type ParticipantResult = z.infer<typeof participantResultSchema>;
 export type PreviewRunInput = z.infer<typeof previewRunInputSchema>;
 export type StartRunInput = z.infer<typeof startRunInputSchema>;
