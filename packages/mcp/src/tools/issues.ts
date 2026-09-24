@@ -49,7 +49,7 @@ export function registerIssueTools(
         "priority, assigneeId, updatedAt. Use `fields` to project extra columns " +
         "(e.g. description, labels), `limit`/`cursor` to paginate, and get_issue " +
         "for full fidelity incl. comments/attachments.",
-      inputSchema: listIssuesPageWithViewToolInputSchema.shape
+      inputSchema: listIssuesPageWithViewToolInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const { view, cursor, fields, ...filters } =
@@ -75,7 +75,7 @@ export function registerIssueTools(
         "the match. Supports prefix and multi-token queries and composes with " +
         "the standard filters; use `fields` to project extra columns and " +
         "`limit`/`cursor` to paginate.",
-      inputSchema: searchPageInputSchema.shape
+      inputSchema: searchPageInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const { cursor, fields, ...rest } = searchPageInputSchema.parse(input);
@@ -94,7 +94,7 @@ export function registerIssueTools(
     {
       title: "Get issue",
       description: "Read one issue by identifier. Comments default to the latest 10; use comments: 'all' for full fidelity or commentCursor/commentLimit to page oldest to newest.",
-      inputSchema: getIssueInputSchema.shape
+      inputSchema: getIssueInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = getIssueInputSchema.parse(input);
@@ -109,7 +109,7 @@ export function registerIssueTools(
     {
       title: "List issue activity",
       description: "Read the ordered activity trail for an issue.",
-      inputSchema: listActivityInputSchema.shape
+      inputSchema: listActivityInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = listActivityInputSchema.parse(input);
@@ -128,7 +128,7 @@ export function registerIssueTools(
         "re-submitting the same key returns the original issue with `alreadyExisted: true` " +
         "instead of filing a duplicate. A deduped result reflects the original issue's current " +
         "state (it may have been edited or archived since it was created).",
-      inputSchema: createIssueInputSchema.shape
+      inputSchema: createIssueInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = createIssueInputSchema.parse(input);
@@ -144,7 +144,7 @@ export function registerIssueTools(
     {
       title: "Update issue",
       description: "Update issue fields.",
-      inputSchema: updateIssueToolInputSchema.shape
+      inputSchema: updateIssueToolInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const { identifier, ...update } = updateIssueToolInputSchema.parse(input);
@@ -159,7 +159,7 @@ export function registerIssueTools(
     {
       title: "Move issue",
       description: "Move an issue to another workflow state.",
-      inputSchema: moveIssueInputSchema.shape
+      inputSchema: moveIssueInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = moveIssueInputSchema.parse(input);
@@ -174,7 +174,7 @@ export function registerIssueTools(
     {
       title: "Assign issue",
       description: "Assign or clear an issue assignee.",
-      inputSchema: assignIssueInputSchema.shape
+      inputSchema: assignIssueInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = assignIssueInputSchema.parse(input);
@@ -189,7 +189,7 @@ export function registerIssueTools(
     {
       title: "Archive issue",
       description: "Archive an issue without deleting it.",
-      inputSchema: archiveIssueInputSchema.shape
+      inputSchema: archiveIssueInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = archiveIssueInputSchema.parse(input);
@@ -204,7 +204,7 @@ export function registerIssueTools(
     {
       title: "Unarchive issue",
       description: "Restore an archived issue.",
-      inputSchema: unarchiveIssueInputSchema.shape
+      inputSchema: unarchiveIssueInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = unarchiveIssueInputSchema.parse(input);
@@ -219,7 +219,7 @@ export function registerIssueTools(
     {
       title: "Comment on issue",
       description: "Add a comment to an issue.",
-      inputSchema: addCommentInputSchema.shape
+      inputSchema: addCommentInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = addCommentInputSchema.parse(input);
@@ -234,7 +234,7 @@ export function registerIssueTools(
     {
       title: "Link issue",
       description: "Attach a branch, PR, commit, or URL to an issue.",
-      inputSchema: linkIssueToolInputSchema.shape
+      inputSchema: linkIssueToolInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = linkIssueInputSchema.parse(input);

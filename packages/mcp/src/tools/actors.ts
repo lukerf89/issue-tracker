@@ -24,7 +24,7 @@ export function registerActorTools(
     {
       title: "Create actor",
       description: "Create a human or agent actor.",
-      inputSchema: createActorInputSchema.shape
+      inputSchema: createActorInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = createActorInputSchema.parse(input);
@@ -39,7 +39,7 @@ export function registerActorTools(
     {
       title: "List actors",
       description: "List actors.",
-      inputSchema: listActorsInputSchema.shape
+      inputSchema: listActorsInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = listActorsInputSchema.parse(input);

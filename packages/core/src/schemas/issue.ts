@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { validateIssueAliases, validateIssueUpdate } from "./issue-validation.js";
 
 import type {
   ArchiveIssueInput,
@@ -23,41 +24,41 @@ export const prioritySchema = z.number().int().min(0).max(4);
 const optionalPrioritySchema = prioritySchema.optional();
 const optionalNullableCycleRefSchema = cycleRefSchema.nullable().optional();
 
-export const getIssueInputSchema = z.object({
+export const getIssueInputSchema = z.strictObject({
   identifier: nonEmptyStringSchema,
   comments: z.enum(["none", "latest", "all"]).optional(),
   commentCursor: cursorSchema.optional(),
   commentLimit: z.number().int().positive().max(100).optional()
 });
 
-export const createIssueInputSchema = z.object({
+export const createIssueInputSchema = z.strictObject({
   title: nonEmptyStringSchema,
   description: z.string().nullable().optional(),
-  team: nonEmptyStringSchema.optional(),
+  team: nonEmptyStringSchema.optional().describe("Team key or ID. Supply team or teamId, not both."),
   teamId: nonEmptyStringSchema.optional(),
-  state: nonEmptyStringSchema.optional(),
+  state: nonEmptyStringSchema.optional().describe("Workflow state name or ID within the issue's team. Supply state or stateId, not both."),
   stateId: nonEmptyStringSchema.optional(),
   priority: optionalPrioritySchema,
-  assignee: optionalNullableStringSchema,
+  assignee: optionalNullableStringSchema.describe("Actor handle or ID; null unassigns, omit to leave unchanged. Supply assignee or assigneeId, not both."),
   assigneeId: optionalNullableStringSchema,
-  project: optionalNullableStringSchema,
+  project: optionalNullableStringSchema.describe("Project name or ID; null clears, omit to leave unchanged. Supply project or projectId, not both."),
   projectId: optionalNullableStringSchema,
-  cycle: optionalNullableCycleRefSchema,
+  cycle: optionalNullableCycleRefSchema.describe("Cycle number or ID; null clears, omit to leave unchanged. Supply cycle or cycleId, not both."),
   cycleId: optionalNullableStringSchema,
-  parent: optionalNullableStringSchema,
+  parent: optionalNullableStringSchema.describe("Parent issue identifier (e.g. ENG-1) or ID; null clears. Supply parent or parentId, not both."),
   parentId: optionalNullableStringSchema,
   estimate: z.number().int().nullable().optional(),
   dueDate: optionalNullableDateOnlyStringSchema,
   sortOrder: optionalIntegerSchema,
-  labels: z.array(nonEmptyStringSchema).optional(),
-  blockedBy: z.array(nonEmptyStringSchema).optional(),
-  blocks: z.array(nonEmptyStringSchema).optional(),
+  labels: z.array(nonEmptyStringSchema).optional().describe("Add labels by name or ID; does not replace existing labels."),
+  blockedBy: z.array(nonEmptyStringSchema).optional().describe("Add blocking issue identifiers or IDs; use removeBlockedBy to remove edges."),
+  blocks: z.array(nonEmptyStringSchema).optional().describe("Add issues this one blocks, by identifier or ID; use removeBlocks to remove edges."),
   // Bounded; blank/whitespace keys are normalized to "no key" by the service, so an empty
   // string stays back-compatible with today's keyless create rather than erroring.
   idempotencyKey: z.string().max(255).nullable().optional()
-}) satisfies z.ZodType<CreateIssueInput>;
+}).superRefine(validateIssueAliases) satisfies z.ZodType<CreateIssueInput>;
 
-export const listIssueFiltersSchema = z.object({
+export const listIssueFiltersSchema = z.strictObject({
   query: nonEmptyStringSchema.optional(),
   sort: z.enum(["identifier", "updatedAt"]).optional(),
   stateTypes: z.array(z.enum(["backlog", "unstarted", "started", "blocked", "completed", "canceled"])).optional(),
@@ -68,12 +69,12 @@ export const listIssueFiltersSchema = z.object({
   priority: optionalPrioritySchema,
   label: nonEmptyStringSchema.optional(),
   cycle: cycleRefSchema.optional(),
-  limit: optionalIntegerSchema,
+  limit: z.number().int().min(1).max(250).optional().describe("Page size: 1–250; default 50 for paginated reads."),
   includeArchived: z.boolean().optional()
 }) satisfies z.ZodType<ListIssueFilters>;
 
 export const searchInputSchema = listIssueFiltersSchema.extend({
-  query: nonEmptyStringSchema
+  query: nonEmptyStringSchema.describe("Free text: alphanumeric tokens are ANDed prefix matches; FTS operators are literal text.")
 }) satisfies z.ZodType<SearchIssuesInput>;
 
 export const issueProjectionFieldSchema = z.enum(ISSUE_PROJECTABLE_FIELDS);
@@ -84,50 +85,50 @@ export const issuePageOptionsSchema = listIssueFiltersSchema.extend({
 });
 
 export const searchPageInputSchema = issuePageOptionsSchema.extend({
-  query: nonEmptyStringSchema
+  query: nonEmptyStringSchema.describe("Free text: alphanumeric tokens are ANDed prefix matches; FTS operators are literal text.")
 });
 
-export const updateIssueInputSchema = z.object({
+export const updateIssueInputSchema = z.strictObject({
   title: nonEmptyStringSchema.optional(),
   description: z.string().nullable().optional(),
   priority: optionalPrioritySchema,
-  assignee: optionalNullableStringSchema,
+  assignee: optionalNullableStringSchema.describe("Actor handle or ID; null unassigns, omit to leave unchanged. Supply assignee or assigneeId, not both."),
   assigneeId: optionalNullableStringSchema,
-  project: optionalNullableStringSchema,
+  project: optionalNullableStringSchema.describe("Project name or ID; null clears, omit to leave unchanged. Supply project or projectId, not both."),
   projectId: optionalNullableStringSchema,
-  cycle: optionalNullableCycleRefSchema,
+  cycle: optionalNullableCycleRefSchema.describe("Cycle number or ID; null clears, omit to leave unchanged. Supply cycle or cycleId, not both."),
   cycleId: optionalNullableStringSchema,
-  parent: optionalNullableStringSchema,
+  parent: optionalNullableStringSchema.describe("Parent issue identifier (e.g. ENG-1) or ID; null clears. Supply parent or parentId, not both."),
   parentId: optionalNullableStringSchema,
   estimate: z.number().int().nullable().optional(),
   dueDate: optionalNullableDateOnlyStringSchema,
   sortOrder: optionalIntegerSchema,
-  labels: z.array(nonEmptyStringSchema).optional(),
-  removeLabels: z.array(nonEmptyStringSchema).optional(),
-  blockedBy: z.array(nonEmptyStringSchema).optional(),
-  removeBlockedBy: z.array(nonEmptyStringSchema).optional(),
-  blocks: z.array(nonEmptyStringSchema).optional(),
-  removeBlocks: z.array(nonEmptyStringSchema).optional()
-}) satisfies z.ZodType<UpdateIssueInput>;
+  labels: z.array(nonEmptyStringSchema).optional().describe("Add labels by name or ID; does not replace existing labels."),
+  removeLabels: z.array(nonEmptyStringSchema).optional().describe("Remove labels by name or ID."),
+  blockedBy: z.array(nonEmptyStringSchema).optional().describe("Add blocking issue identifiers or IDs; use removeBlockedBy to remove edges."),
+  removeBlockedBy: z.array(nonEmptyStringSchema).optional().describe("Remove blocking issues by identifier or ID."),
+  blocks: z.array(nonEmptyStringSchema).optional().describe("Add issues this one blocks, by identifier or ID; use removeBlocks to remove edges."),
+  removeBlocks: z.array(nonEmptyStringSchema).optional().describe("Remove issues this one blocks, by identifier or ID.")
+}).superRefine(validateIssueUpdate) satisfies z.ZodType<UpdateIssueInput>;
 
-export const updateIssueToolInputSchema = updateIssueInputSchema.extend({
+export const updateIssueToolInputSchema = updateIssueInputSchema.safeExtend({
   identifier: nonEmptyStringSchema
 });
 
-export const moveIssueInputSchema = z.object({
+export const moveIssueInputSchema = z.strictObject({
   identifier: nonEmptyStringSchema,
   state: nonEmptyStringSchema
 });
 
-export const assignIssueInputSchema = z.object({
+export const assignIssueInputSchema = z.strictObject({
   identifier: nonEmptyStringSchema,
   actor: nonEmptyStringSchema.nullable()
 }) satisfies z.ZodType<AssignIssueInput>;
 
-export const archiveIssueInputSchema = z.object({
+export const archiveIssueInputSchema = z.strictObject({
   identifier: nonEmptyStringSchema
 }) satisfies z.ZodType<ArchiveIssueInput>;
 
-export const unarchiveIssueInputSchema = z.object({
+export const unarchiveIssueInputSchema = z.strictObject({
   identifier: nonEmptyStringSchema
 }) satisfies z.ZodType<UnarchiveIssueInput>;

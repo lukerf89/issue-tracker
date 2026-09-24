@@ -8,6 +8,7 @@ import type {
 } from "../services/template.js";
 import { nonEmptyStringSchema, optionalNullableStringSchema } from "./common.js";
 import { createIssueInputSchema, prioritySchema } from "./issue.js";
+import { validateIssueAliases } from "./issue-validation.js";
 
 export const templateLabelsSchema = z.array(nonEmptyStringSchema);
 
@@ -28,7 +29,7 @@ export const deleteTemplateInputSchema = z.object({
 }) satisfies z.ZodType<DeleteTemplateInput>;
 
 export const createIssueFromTemplateOverridesSchema =
-  createIssueInputSchema.partial() satisfies z.ZodType<CreateIssueFromTemplateOverrides>;
+  z.strictObject(createIssueInputSchema.shape).partial().superRefine(validateIssueAliases) satisfies z.ZodType<CreateIssueFromTemplateOverrides>;
 
 export const createIssueFromTemplateInputSchema = z.object({
   name: nonEmptyStringSchema,

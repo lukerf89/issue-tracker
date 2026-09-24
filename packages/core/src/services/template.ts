@@ -114,8 +114,14 @@ export function createIssueFromTemplate(
   applyTemplateField(input, "title", template.title);
   applyTemplateField(input, "description", template.description);
   applyTemplateField(input, "priority", template.priority);
-  applyTemplateField(input, "team", template.team);
-  applyTemplateField(input, "project", template.project);
+  // An override may name the team or project by ID; the template's name-based default
+  // must not be layered on top of it, or the merged input supplies both aliases.
+  if (!hasOwn(input, "teamId")) {
+    applyTemplateField(input, "team", template.team);
+  }
+  if (!hasOwn(input, "projectId")) {
+    applyTemplateField(input, "project", template.project);
+  }
 
   if (!hasOwn(input, "labels") && template.labels.length > 0) {
     input.labels = template.labels;

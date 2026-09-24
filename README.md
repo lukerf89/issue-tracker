@@ -196,3 +196,16 @@ Root scripts cover the backend workspaces and the web package. The project uses 
 The repository is safe to publish, but tracker data is private. SQLite database files such as `*.db`, `*.sqlite`, WAL/SHM files, `.tracker/`, and `/data/` are gitignored. Keep examples fictional; this README uses `ENG-1 "Set up CI"`.
 
 See [docs/SPEC.md](docs/SPEC.md) for the product specification.
+
+### Input validation for agents
+
+MCP validates complete schemas, including unknown properties and refinements.
+Issue updates require at least one supplied field (empty arrays alone do not count).
+Use either a reference (`team`, `state`, `assignee`, `project`, `cycle`, `parent`)
+or its `Id` alias, never both. References accept the names/handles/identifiers
+advertised by each tool; IDs are exact. Omit a field to preserve it; explicit
+`null` clears a nullable field. `labels`, `blockedBy`, and `blocks` add entries;
+use the corresponding remove fields to remove them. Page limits are integers
+from 1 through 250 (paginated issue reads default to 50). Search splits free text
+into alphanumeric tokens and ANDs their prefix matches; it does not execute FTS
+operators supplied in the query.
