@@ -11,7 +11,8 @@ import {
   unarchiveProject,
   unarchiveProjectInputSchema,
   updateProject,
-  updateProjectToolInputSchema
+  updateProjectToolInputSchema,
+  toolGroups
 } from "@issue-tracker/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -25,6 +26,7 @@ export function registerProjectTools(
   server.registerTool(
     "list_projects",
     {
+      _meta: toolGroups("admin"),
       title: "List projects",
       description: "List projects.",
       inputSchema: listProjectsInputSchema.strict()
@@ -40,6 +42,7 @@ export function registerProjectTools(
   server.registerTool(
     "get_project",
     {
+      _meta: toolGroups("admin"),
       title: "Get project",
       description: "Read one project by id or name.",
       inputSchema: getProjectInputSchema.strict()
@@ -55,6 +58,7 @@ export function registerProjectTools(
   server.registerTool(
     "create_project",
     {
+      _meta: toolGroups("admin"),
       title: "Create project",
       description: "Create a project.",
       inputSchema: createProjectInputSchema.strict()
@@ -70,6 +74,7 @@ export function registerProjectTools(
   server.registerTool(
     "update_project",
     {
+      _meta: toolGroups("admin"),
       title: "Update project",
       description: "Update project fields.",
       inputSchema: updateProjectToolInputSchema.strict()
@@ -85,6 +90,7 @@ export function registerProjectTools(
   server.registerTool(
     "archive_project",
     {
+      _meta: toolGroups("admin"),
       title: "Archive project",
       description: "Archive a project without deleting it.",
       inputSchema: archiveProjectInputSchema.strict()
@@ -100,6 +106,7 @@ export function registerProjectTools(
   server.registerTool(
     "unarchive_project",
     {
+      _meta: toolGroups("admin"),
       title: "Unarchive project",
       description: "Restore an archived project.",
       inputSchema: unarchiveProjectInputSchema.strict()

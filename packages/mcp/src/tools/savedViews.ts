@@ -6,7 +6,8 @@ import {
   deleteSavedViewInputSchema,
   listSavedViews,
   listSavedViewsInputSchema,
-  serializeSavedView
+  serializeSavedView,
+  toolGroups
 } from "@issue-tracker/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -18,6 +19,7 @@ export function registerSavedViewTools(
   options: Omit<OpenMcpContextOptions, "requireActor">
 ): void {
   server.registerTool("list_builtin_views", {
+    _meta: toolGroups("coding"),
     title: "List built-in views",
     description: "Built-in view references, query semantics and filter definitions; use a reference with list_issues.",
     inputSchema: listSavedViewsInputSchema.strict()
@@ -26,6 +28,7 @@ export function registerSavedViewTools(
   server.registerTool(
     "create_saved_view",
     {
+      _meta: toolGroups("admin"),
       title: "Create saved view",
       description: "Save a named issue filter preset.",
       inputSchema: createSavedViewInputSchema.strict()
@@ -41,6 +44,7 @@ export function registerSavedViewTools(
   server.registerTool(
     "list_saved_views",
     {
+      _meta: toolGroups("coding"),
       title: "List saved views",
       description: "List named issue filter presets.",
       inputSchema: listSavedViewsInputSchema.strict()
@@ -56,6 +60,7 @@ export function registerSavedViewTools(
   server.registerTool(
     "delete_saved_view",
     {
+      _meta: toolGroups("admin"),
       title: "Delete saved view",
       description: "Delete a named issue filter preset.",
       inputSchema: deleteSavedViewInputSchema.strict()

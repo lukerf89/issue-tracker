@@ -324,3 +324,20 @@ Pass the selection's snapshot to require consistent content. Section cursors bin
 path and source snapshot; changed data returns ISSUE_CURSOR_STALE and requires a
 fresh selection. Budgets bound output, not database hydration; selective loading
 optimization remains separate work.
+
+### Native MCP tool profiles
+
+Start `tracker mcp --agent build-agent --tool-profile coding` to advertise 18
+common coding tools. They cover scoped discovery, search, selective and section
+reads, mutations, claims and releasing a claim (`assign_issue` with
+`actor:null`), saved and built-in views, and listing and applying templates. `orchestration`
+adds run lifecycle, repository, engine, and profile tools. `admin` and `full`
+advertise everything; `full` remains the default. Each registration declares its
+capability group in MCP metadata through core's typed `toolGroups()`; the profile
+derives its list from that metadata.
+
+Profiles filter **advertisement only**, not execution or permissions. Known calls
+and aliases (including get_current_actor) remain compatible, and resources are
+unchanged. The coding profile advertises whoami only, not both identity aliases.
+The separate mcp-tool-filter proxy also filters discovery only. Use the native
+profile directly instead of combining overlapping filters unless that is intended.

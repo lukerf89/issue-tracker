@@ -463,3 +463,5 @@ export { withIssueMutationReceipt, serializeIssueMutation, issueResponseSchema, 
 
 export { getIssueResponse, getIssuesResponse, readIssueSection } from "./services/issue-read.js";
 export { getIssuesInputSchema, readIssueSectionInputSchema } from "./schemas/issue-read.js";
+
+export { isToolAdvertised, TOOL_GROUPS_META_KEY, toolGroups, toolGroupSchema, toolProfileSchema, type ToolGroup, type ToolProfile } from "./schemas/tool-profile.js";
