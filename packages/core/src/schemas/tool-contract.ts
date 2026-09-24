@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { AppError, AppErrorCode } from "../errors.js";
+
 import { workContextResponseSchema } from "./work-context.js";
 import { activityArraySchema, advertisedOutputSchemas as advertised, exactOutputSchemas as exact } from "./tool-output.js";
 
@@ -19,8 +21,9 @@ export interface ToolContract {
   annotations: ToolAnnotations;
   /**
    * True when the tool returns structuredContent next to its text block and advertises
-   * `outputSchema`. Only bounded, single-shape object outputs are structured; budgeted or
-   * unbounded reads and bare-array lists stay text-only so large payloads are not duplicated.
+   * `outputSchema`. Only single-shape object outputs whose size the caller controls are structured;
+   * budgeted or unbounded reads (arbitrary run payloads, full issue detail) and bare-array lists
+   * stay text-only so large payloads are not duplicated.
    */
   structured: boolean;
   /** The advertised (loose, object-root) schema. Present exactly when `structured` is true. */
@@ -41,12 +44,16 @@ export interface ToolContract {
  * - destructiveHint=false: purely additive. No DELETE and no UPDATE of a pre-existing column,
  *   except bookkeeping: issues.revision/updated_at (the 0011 revision triggers), the team issue
  *   counter and FTS shadow tables. Activity appends are inserts.
- * - idempotentHint=true: a repeat call with the same arguments performs no further write (an
- *   early return, or a conflict error that writes nothing). Services that re-stamp timestamps or
+ * - idempotentHint=true: a repeat call with the same arguments has no further observable effect
+ *   (an early return, a conflict error that writes nothing, or a rewrite that leaves identical rows). Services that re-stamp timestamps or
  *   append rows on a repeat are false, as is every create (keyed or not). Hints default to false
  *   unless a repeat-call test under an advancing clock proves no second write. Field updates
  *   (update/move/assign/claim) are proven: every field has set semantics (label and dependency
  *   edits add or remove set members) and an unchanged mutation writes nothing, not even updatedAt.
+ * - structured: list_issues and search stay structured. Their default rows are fixed summary keys;
+ *   `fields` can opt into description, so the caller controls that size (get_issue and
+ *   read_issue_section are the budgeted paths for long text). Run records, events and artifacts
+ *   carry arbitrary engine payloads with no byte budget, so they stay text-only.
  * - openWorldHint: only the run tools whose effects reach an external agent process, provider
  *   session or remote (start/retry/resume/nudge/publish).
  */
@@ -161,15 +168,15 @@ const contracts = {
   start_run: write("Start run", external, exact.runFull),
   list_runs: structured(read("List runs", exact.runSummaryPage), advertised.runSummaryPage),
   get_run: read("Get run", runMutation),
-  list_run_records: structured(read("List run records", exact.runRecordsPage), advertised.runRecordsPage),
-  list_run_events: structured(read("List run events", exact.runEventsPage), advertised.runEventsPage),
+  list_run_records: read("List run records", exact.runRecordsPage),
+  list_run_events: read("List run events", exact.runEventsPage),
   respond_to_run: write("Respond to run", overwrite, record),
   resolve_run_permission: write("Resolve permission", overwrite, record),
   stop_run: write("Stop run", overwrite, runMutation),
   retry_run: write("Retry run", external, runMutation),
   resume_run: write("Resume run", external, runMutation),
   nudge_run: write("Nudge run", external, runMutation),
-  list_run_artifacts: structured(read("List run artifacts", exact.runRecordsPage), advertised.runRecordsPage),
+  list_run_artifacts: read("List run artifacts", exact.runRecordsPage),
   archive_run: write("Archive run", overwrite, runMutation),
   publish_run: write("Publish run", external, record),
   cleanup_run: write("Clean up run", overwrite, record),
@@ -199,7 +206,7 @@ export type ToolName = keyof typeof contracts;
 /** The contract for a registered MCP tool. Throws on an unknown name so a new tool cannot ship without one. */
 export function toolContract(name: string): ToolContract {
   if (!Object.prototype.hasOwnProperty.call(contracts, name)) {
-    throw new Error(`No tool contract is defined for ${name}.`);
+    throw new AppError(AppErrorCode.TOOL_CONTRACT_VIOLATION, `No tool contract is defined for ${name}.`, { tool: name });
   }
   return contracts[name as ToolName];
 }

@@ -60,12 +60,14 @@ export async function contractFixture() {
   const seed = seedWorkspace(context, directory);
 
   const clock = advancingClock();
-  const connect = async (handle: string) => {
-    const server = createServer({ dbPath, actor: { handle }, clock });
+  const servers: Array<{ server: { close(): Promise<void> }; client: Client }> = [];
+  const connect = async (actor: string | { handle: string; type?: "agent" | "human" }) => {
+    const server = createServer({ dbPath, actor: typeof actor === "string" ? { handle: actor } : actor, clock });
     const client = new Client({ name: "tool-contract-test", version: "1" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
     await client.connect(clientTransport);
+    servers.push({ server, client });
     return { server, client };
   };
   const reader = await connect("fictional-unknown-reader");
@@ -91,6 +93,8 @@ export async function contractFixture() {
     read: (name: string, args: Record<string, unknown>) => call(reader.client, name, args),
     write: (name: string, args: Record<string, unknown>) => call(writer.client, name, args),
     call,
+    /** Another client on the same database and clock, as the given caller (closed with the fixture). */
+    connect: async (actor: { handle: string; type?: "agent" | "human" }) => (await connect(actor)).client,
     /** Every table's content (order-insensitive), excluding FTS internals and test bookkeeping. */
     snapshot(): Snapshot {
       const snapshot: Snapshot = {};
@@ -123,8 +127,7 @@ export async function contractFixture() {
       throw new Error(`expected CLI command to fail: ${args.join(" ")}`);
     },
     async close() {
-      await reader.client.close(); await reader.server.close();
-      await writer.client.close(); await writer.server.close();
+      for (const { client, server } of servers) { await client.close(); await server.close(); }
       raw.close();
       db.$client.close();
       for (const [key, value] of Object.entries(previousEnv)) {

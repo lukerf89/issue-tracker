@@ -69,22 +69,16 @@ export function openMcpContext(options: OpenMcpContextOptions): McpContext {
   };
 }
 
-/** Looks up the caller's actor without creating it; null when the handle is unknown. */
+/**
+ * Looks up the caller's actor without creating it. An unknown agent handle yields null (it would be
+ * provisioned on its first write); an unknown human handle is never provisioned, so it fails.
+ */
 export function findMcpActor(context: ServiceContext, actorContext: McpActorContext): Actor | null {
   try {
     return getActor(context, actorContext.handle);
   } catch (error) {
-    if (error instanceof AppError && error.code === AppErrorCode.ACTOR_NOT_FOUND) return null;
-    throw error;
+    if (!(error instanceof AppError) || error.code !== AppErrorCode.ACTOR_NOT_FOUND) throw error;
   }
-}
-
-export function resolveMcpActor(
-  context: ServiceContext,
-  actorContext: McpActorContext
-): Actor {
-  const existing = findMcpActor(context, actorContext);
-  if (existing) return existing;
 
   if (actorContext.type === "human") {
     throw new AppError(
@@ -94,7 +88,14 @@ export function resolveMcpActor(
     );
   }
 
-  return createActor(context, {
+  return null;
+}
+
+export function resolveMcpActor(
+  context: ServiceContext,
+  actorContext: McpActorContext
+): Actor {
+  return findMcpActor(context, actorContext) ?? createActor(context, {
     type: "agent",
     handle: actorContext.handle,
     name: actorContext.name ?? actorContext.handle

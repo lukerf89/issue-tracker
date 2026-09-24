@@ -1,12 +1,13 @@
-import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import {
-  activityArraySchema, activityPageSchema, errorEnvelopeSchema, exactOutputSchemas, issueMutationFullSchema, issueMutationReceiptSchema,
-  issueSummaryPageSchema, runEventsPageSchema, runFullSchema, runRecordsPageSchema, runSummaryPageSchema, runSummarySchema, toolContract,
-  toolContractNames
+  activityArraySchema, activityPageSchema, engineCatalogSchema, engineHealthFingerprint, errorEnvelopeSchema, exactOutputSchemas, issueMutationFullSchema, issueMutationReceiptSchema,
+  issueSummaryPageSchema, runEventsPageSchema, runFullSchema, runRecordsPageSchema, runSummaryPageSchema, runSummarySchema, recordEngineHealth,
+  toolContract, toolContractNames
 } from "@issue-tracker/core";
 import { describe, expect, it } from "vitest";
 
+import { jsonErrorResult, mcpToolResult, toolResult } from "../src/tools/result.js";
 import { contractFixture, type ToolCall } from "./contract-fixture.js";
 import { readScenarios, writeScenarios } from "./tool-scenarios.js";
 
@@ -84,13 +85,15 @@ describe("tool outputs through the SDK client", () => {
       expect(activityArraySchema.safeParse(legacy.data).success).toBe(true);
       expect(Array.isArray(legacy.data)).toBe(true);
 
-      // Page envelopes keep their own field names and cursor types.
+      // Page envelopes keep their own field names and cursor types. Run record, event and artifact
+      // pages carry arbitrary engine payloads, so they are exact but text-only.
       const events = await f.read("list_run_events", { run: f.seed.run });
-      expect(runEventsPageSchema.parse(events.structuredContent).nextCursor).toEqual(expect.any(Number));
       const records = await f.read("list_run_records", { run: f.seed.run, collection: "participants", limit: 1 });
-      expect(runRecordsPageSchema.parse(records.structuredContent)).toMatchObject({ run: f.seed.run, collection: "participants" });
       const artifacts = await f.read("list_run_artifacts", { run: f.seed.run });
-      expect(runRecordsPageSchema.parse(artifacts.structuredContent).collection).toBe("artifacts");
+      for (const page of [events, records, artifacts]) expect(page.structuredContent).toBeUndefined();
+      expect(runEventsPageSchema.parse(events.data).nextCursor).toEqual(expect.any(Number));
+      expect(runRecordsPageSchema.parse(records.data)).toMatchObject({ run: f.seed.run, collection: "participants" });
+      expect(runRecordsPageSchema.parse(artifacts.data).collection).toBe("artifacts");
       const runs = await f.read("list_runs", { limit: 1 });
       expect(runSummaryPageSchema.parse(runs.structuredContent).nextCursor).toEqual(expect.any(String));
       const projected = await f.read("list_issues", { fields: ["labels", "stateName"], limit: 1 });
@@ -103,10 +106,9 @@ describe("tool outputs through the SDK client", () => {
   it("returns text-only error envelopes (never structuredContent) from structured tools", async () => {
     const f = await contractFixture();
     try {
-      const missingRun = randomUUID();
       const cases: Array<[string, Record<string, unknown>, string]> = [
         ["get_project", { project: "No Such Project" }, "PROJECT_NOT_FOUND"],
-        ["list_run_events", { run: missingRun }, "RUN_NOT_FOUND"],
+        ["list_runs", { issue: "ENG-404" }, "ISSUE_NOT_FOUND"],
         ["list_issues", { limit: "many" }, "VALIDATION_FAILED"],
         ["update_issue", { identifier: "ENG-404", priority: 1 }, "ISSUE_NOT_FOUND"],
         ["create_team", { key: "ENG", name: "Duplicate" }, "TEAM_KEY_TAKEN"],
@@ -124,6 +126,44 @@ describe("tool outputs through the SDK client", () => {
       expect(conflict.structuredContent).toBeUndefined();
       expect(errorEnvelopeSchema.safeParse(conflict.data).success).toBe(true);
     } finally { await f.close(); }
+  });
+
+  it("start_run returns the exact full run, text-only", async () => {
+    const f = await contractFixture();
+    try {
+      // A healthy probe of the fictional engine, as tracker-agentd would record it.
+      const { engines } = engineCatalogSchema.parse(JSON.parse(readFileSync(f.engineConfig, "utf8")));
+      for (const [engineName, engine] of Object.entries(engines)) {
+        recordEngineHealth(f.context, {
+          engineName, fingerprint: engineHealthFingerprint(engineName, engine), installed: true, authenticated: true, modelAccessible: true,
+          diagnosticCode: null, remediation: null, checkedAt: "2026-02-01T00:00:00.000Z"
+        });
+      }
+      const preview = await f.write("preview_run", { issue: "ENG-2" });
+      expect(preview.isError, preview.text).toBe(false);
+      const { previewFingerprint, warnings } = preview.data as { previewFingerprint: string; warnings: string[] };
+      const started = await f.write("start_run", { issue: "ENG-2", previewFingerprint, confirmWarnings: warnings });
+      expectStructured("start_run", started);
+      expectResponse("start_run", started.data);
+      expect(runFullSchema.parse(started.data)).toMatchObject({ issueId: expect.any(String) });
+    } finally { await f.close(); }
+  });
+
+  it("reports a result that breaks its advertised schema as TOOL_CONTRACT_VIOLATION, not a database failure", async () => {
+    // Checked in the handler: names the tool and says whether a write may have committed.
+    expect(() => toolResult("create_team", { key: "QA" })).toThrow(
+      expect.objectContaining({ code: "TOOL_CONTRACT_VIOLATION", details: expect.objectContaining({ tool: "create_team", mayHaveBeenApplied: true }) })
+    );
+    expect(() => toolResult("get_project", { name: "Fictional" })).toThrow(
+      expect.objectContaining({ code: "TOOL_CONTRACT_VIOLATION", details: expect.objectContaining({ mayHaveBeenApplied: false }) })
+    );
+    const inHandler = mcpToolResult(() => toolResult("create_team", { key: "QA" }));
+    expect(errorEnvelopeSchema.parse(JSON.parse(inHandler.content[0]!.text)).error.code).toBe("TOOL_CONTRACT_VIOLATION");
+    // The SDK's own post-handler check arrives as a message string; it is classified the same way.
+    const sdk = jsonErrorResult("MCP error -32602: Output validation error: Invalid structured content for tool create_team: missing id");
+    const envelope = errorEnvelopeSchema.parse(JSON.parse(sdk.content[0].text));
+    expect(envelope.error).toMatchObject({ code: "TOOL_CONTRACT_VIOLATION", details: { mayHaveBeenApplied: true } });
+    expect(sdk.isError).toBe(true);
   });
 
   it("validates CLI --json output against the same core schemas (color-independent)", async () => {
@@ -157,5 +197,5 @@ describe("tool outputs through the SDK client", () => {
       const error = f.cliError(["project", "view", "No Such Project", "--json"]);
       expect(errorEnvelopeSchema.parse(error).error.code).toBe("PROJECT_NOT_FOUND");
     } finally { await f.close(); }
-  });
+  }, 60_000);
 });

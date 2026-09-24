@@ -13,6 +13,23 @@ const BOOKKEEPING: Record<string, string[]> = {
 
 const OPEN_WORLD = ["nudge_run", "publish_run", "resume_run", "retry_run", "start_run"];
 
+/**
+ * The documented no-write conflict a repeat returns for an idempotent tool whose first call already
+ * moved the record out of the state it acts on. Every other idempotent repeat must succeed.
+ */
+const REPEAT_CONFLICT: Record<string, string> = {
+  archive_project: "CONSTRAINT_VIOLATION",
+  archive_repository: "CONSTRAINT_VIOLATION",
+  archive_team: "CONSTRAINT_VIOLATION",
+  claim_issue: "ISSUE_ALREADY_CLAIMED",
+  delete_saved_view: "SAVED_VIEW_NOT_FOUND",
+  delete_template: "TEMPLATE_NOT_FOUND",
+  unarchive_issue: "CONSTRAINT_VIOLATION",
+  unarchive_label: "CONSTRAINT_VIOLATION",
+  unarchive_project: "CONSTRAINT_VIOLATION",
+  unarchive_team: "CONSTRAINT_VIOLATION"
+};
+
 function nonBookkeeping(audit: AuditEntry[]): AuditEntry[] {
   return audit.filter((entry) => entry.op === "DELETE" || entry.changed.some((column) => !(BOOKKEEPING[entry.table] ?? []).includes(column)));
 }
@@ -54,7 +71,7 @@ describe("tool catalog", () => {
       expect(outputSchema !== undefined, name).toBe(structured);
       if (!name.endsWith("_engine") && !name.endsWith("_engines")) expect(responseSchema, name).toBeDefined();
     }
-    expect(() => toolContract("drop_database")).toThrow(/No tool contract/);
+    expect(() => toolContract("drop_database")).toThrow(expect.objectContaining({ code: "TOOL_CONTRACT_VIOLATION", message: expect.stringMatching(/No tool contract/) }));
   });
 });
 
@@ -103,6 +120,39 @@ describe("hints match behavior", () => {
     } finally { await f.close(); }
   });
 
+  it("issue resources read through an unknown agent handle without provisioning it", async () => {
+    const f = await contractFixture();
+    try {
+      const before = f.snapshot();
+      const issue = await f.reader.readResource({ uri: "issue://ENG-1" });
+      const backlog = await f.reader.readResource({ uri: "backlog://ENG" });
+      expect(JSON.parse((issue.contents[0] as { text: string }).text)).toMatchObject({ identifier: "ENG-1" });
+      expect(JSON.parse((backlog.contents[0] as { text: string }).text).issues.length).toBeGreaterThan(0);
+      expect(f.snapshot()).toEqual(before);
+      expect(f.actorHandles()).not.toContain("fictional-unknown-reader");
+    } finally { await f.close(); }
+  });
+
+  it("an unknown human handle is rejected on reads and writes alike; an unknown agent reads without provisioning", async () => {
+    const f = await contractFixture();
+    try {
+      const human = await f.connect({ handle: "fictional-ghost", type: "human" });
+      for (const [tool, args] of [["list_issues", {}], ["get_issue", { identifier: "ENG-1" }], ["create_label", { name: "Ghostly" }]] as const) {
+        const result = await f.call(human, tool, args);
+        expect(result.isError, tool).toBe(true);
+        expect((result.data as { error: { code: string } }).error.code, tool).toBe("ACTOR_NOT_FOUND");
+      }
+      await expect(human.readResource({ uri: "issue://ENG-1" })).rejects.toThrow(/fictional-ghost was not found/);
+      expect(f.actorHandles()).not.toContain("fictional-ghost");
+
+      const agent = await f.connect({ handle: "fictional-newcomer" });
+      expect((await f.call(agent, "list_issues", {})).isError).toBe(false);
+      expect(f.actorHandles()).not.toContain("fictional-newcomer");
+      expect((await f.call(agent, "create_label", { name: "Newcomer" })).isError).toBe(false);
+      expect(f.actorHandles()).toContain("fictional-newcomer");
+    } finally { await f.close(); }
+  });
+
   it("idempotent tools do nothing on repeat and non-destructive tools only add rows", async () => {
     const f = await contractFixture();
     try {
@@ -120,7 +170,14 @@ describe("hints match behavior", () => {
 
         if (annotations.idempotentHint === true) {
           const settled = f.snapshot();
-          await f.write(scenario.tool, scenario.args(f.seed, f));
+          const repeat = await f.write(scenario.tool, scenario.args(f.seed, f));
+          const expectedConflict = REPEAT_CONFLICT[scenario.tool];
+          if (expectedConflict) {
+            expect(repeat.isError, `${name}: ${repeat.text}`).toBe(true);
+            expect((repeat.data as { error: { code: string } }).error.code, name).toBe(expectedConflict);
+          } else {
+            expect(repeat.isError, `${name}: ${repeat.text}`).toBe(false);
+          }
           expect(f.snapshot(), name).toEqual(settled);
           f.drainAudit();
         }

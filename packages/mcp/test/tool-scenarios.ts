@@ -97,7 +97,7 @@ export const writeScenarios: Scenario[] = [
   s("update_issue", { identifier: "ENG-2", priority: 3, response: "compact" }, "compact"),
   s("update_issue", { identifier: "ENG-2", labels: ["Feature"], removeLabels: ["Bug"], blockedBy: ["ENG-4"] }, "set edits"),
   s("move_issue", { identifier: "ENG-2", state: "In Progress" }),
-  s("assign_issue", { identifier: "ENG-2", actor: null }),
+  s("assign_issue", { identifier: "ENG-2", actor: "fictional-bot" }),
   s("claim_issue", { identifier: "ENG-4" }),
   s("update_project", { project: "Fictional Delivery", description: "Fictional delivery work" }),
   s("add_orchestration_profile", { name: "Fictional Nightly", configuration: builtinProfileInput().configuration }),
@@ -110,7 +110,8 @@ export const writeScenarios: Scenario[] = [
 ];
 
 /**
- * Tools the harness cannot drive to success without a live engine participant or a verified
- * finalize phase. Their hints are asserted as advertised values only.
+ * Tools the repeat-call harness cannot drive: most need a live engine participant or a verified
+ * finalize phase. start_run needs a fresh preview fingerprint, so its output contract is driven by
+ * its own test in tool-output-contracts.test.ts. Their hints are asserted as advertised values only.
  */
 export const undrivableTools = ["start_run", "respond_to_run", "resolve_run_permission", "resume_run", "nudge_run", "publish_run"];

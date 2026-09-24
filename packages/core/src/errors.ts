@@ -36,6 +36,7 @@ export const AppErrorCode = {
   CONSTRAINT_VIOLATION: "CONSTRAINT_VIOLATION",
   DATABASE_ERROR: "DATABASE_ERROR"
   ,DATA_INTEGRITY: "DATA_INTEGRITY"
+  ,TOOL_CONTRACT_VIOLATION: "TOOL_CONTRACT_VIOLATION"
 } as const;
 
 export type AppErrorCode = (typeof AppErrorCode)[keyof typeof AppErrorCode];
