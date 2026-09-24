@@ -34,3 +34,11 @@ export function decodePageCursor(value: string | number | undefined, kind: Issue
 export function assertCursorSnapshot(cursor: IssueCursor | null, snapshot: string | null) {
   if (cursor && cursor.snapshot !== snapshot) throw new AppError(AppErrorCode.ISSUE_CURSOR_STALE, "Results changed. Restart without a cursor and reconcile previously seen identifiers.");
 }
+
+/** A cursor's sort value must match the sort it continues; otherwise SQL compares against NULL and silently ends the traversal. */
+export function assertCursorValue(value: IssueCursor["value"], sort: "identifier" | "priority" | "updatedAt" | undefined) {
+  const valid = sort === "priority" ? typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 5
+    : sort === "updatedAt" ? typeof value === "string" && !Number.isNaN(Date.parse(value))
+      : value === null;
+  if (!valid) throw new AppError(AppErrorCode.VALIDATION_FAILED, "Invalid or incompatible issue cursor. Restart with the same filters and no cursor.");
+}

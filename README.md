@@ -278,9 +278,13 @@ New list/search responses emit opaque `it1.*` cursors. Reuse the same filters an
 sort; limit and projected fields may change. Default identifier-ordered lists
 use a team/number/ID key, so removing earlier results does not skip later ones.
 This is a live forward traversal: records newly entering before the last key are
-seen only on a new traversal. Team key changes invalidate the query binding.
-Priority/updatedAt sorts and relevance search additionally bind a result
-fingerprint; changed results return `ISSUE_CURSOR_STALE`. Restart without a cursor
+seen only on a new traversal. Every cursor also binds a result fingerprint, and a
+change to it returns `ISSUE_CURSOR_STALE`. What the fingerprint covers depends on
+the sort. Team keys count for every sort. Priority sort adds each matching row's
+priority, so a title edit or comment leaves the cursor valid, while a priority
+change or a row entering or leaving the result stales it. updatedAt sort adds
+each row's revision, because any edit moves the row. Relevance search adds the
+ordered matches and snippets. Restart without a cursor
 and reconcile already-seen identifiers. Page/fingerprint reads share one database
 snapshot. Invalid/cross-query/cross-tool cursors return `VALIDATION_FAILED`.
 Legacy numeric offsets are temporarily accepted as input for compatibility (with

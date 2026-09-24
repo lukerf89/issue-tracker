@@ -1,4 +1,6 @@
 import {
+  AppError,
+  AppErrorCode,
   addAttachment,
   addComment,
   assignIssue,
@@ -196,15 +198,48 @@ export function loadMoreLinekeeperData(
   limit = 100
 ): LinekeeperData {
   if (!data.nextCursor) return data;
-  const page = loadLinekeeperData(context, {
-    ...effectiveLoadOptions(data), cursor: data.nextCursor, limit
-  });
+  let page: LinekeeperData;
+  try {
+    page = loadLinekeeperData(context, {
+      ...effectiveLoadOptions(data), cursor: data.nextCursor, limit
+    });
+  } catch (error) {
+    // Results changed under the cursor, so retrying it can never succeed. Restart the
+    // traversal and reload as deep as the user had browsed, plus the page they asked for.
+    if (error instanceof AppError && error.code === AppErrorCode.ISSUE_CURSOR_STALE) {
+      return reloadThroughDepth(context, data, data.issues.length + limit, limit);
+    }
+    throw error;
+  }
   const known = new Set(data.issues.map(issue => issue.id));
   return {
     ...page,
     issues: [...data.issues, ...page.issues.filter(issue => !known.has(issue.id))],
     snippets: new Map([...data.snippets, ...page.snippets])
   };
+}
+
+function reloadThroughDepth(
+  context: ServiceContext,
+  data: LinekeeperData,
+  depth: number,
+  limit: number
+): LinekeeperData {
+  let page = loadLinekeeperData(context, { ...effectiveLoadOptions(data), limit });
+  const issues = [...page.issues];
+  const snippets = new Map(page.snippets);
+  const known = new Set(issues.map(issue => issue.id));
+  while (page.nextCursor && issues.length < depth) {
+    page = loadLinekeeperData(context, { ...effectiveLoadOptions(data), cursor: page.nextCursor, limit });
+    for (const issue of page.issues) {
+      if (!known.has(issue.id)) {
+        known.add(issue.id);
+        issues.push(issue);
+      }
+    }
+    for (const [id, snippet] of page.snippets) snippets.set(id, snippet);
+  }
+  return { ...page, issues, snippets };
 }
 
 // A view is resolved on selection; subsequent edits operate on the visible query.

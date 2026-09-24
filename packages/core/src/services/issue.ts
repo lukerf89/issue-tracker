@@ -1,4 +1,4 @@
-import { assertCursorSnapshot, decodePageCursor, encodePageCursor, fingerprint, queryFingerprint } from "./issue-cursor.js";
+import { assertCursorSnapshot, assertCursorValue, decodePageCursor, encodePageCursor, fingerprint, queryFingerprint } from "./issue-cursor.js";
 import { assertIssueRevision, type IssueWriteOptions } from "./issue-revision.js";
 import { getRepository } from "./repository.js";
 import { and, asc, desc, gte, lte, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
@@ -462,18 +462,27 @@ function paginateIssueRows(
   baseConditions: SQL[],
   options: IssuePageOptions & { limit?: number; sort?: ListIssueFilters["sort"]; filters: ListIssueFilters }
 ): IssuePage {
-  const teamKeys = context.db.select({ id: teams.id, key: teams.key }).from(teams).orderBy(asc(teams.id)).all();
-  const query = queryFingerprint({ ...options.filters, teamKeys });
+  const query = queryFingerprint(options.filters);
   const { legacyOffset, cursor } = decodePageCursor(options.cursor, "list", query);
-  const snapshot = options.sort && options.sort !== "identifier"
-    ? fingerprint(context.db.select({ id: issues.id, revision: issues.revision }).from(issues).where(and(...baseConditions)).orderBy(asc(issues.id)).all()) : null;
+  if (cursor) assertCursorValue(cursor.value, options.sort);
+  // The snapshot covers only what can move a row across the cursor. Team keys order
+  // every sort. Under priority, a row moves only when its priority does, so title
+  // edits and comments leave the cursor valid; any edit bumps updatedAt, so that
+  // sort tracks revisions.
+  const teamKeys = context.db.select({ id: teams.id, key: teams.key }).from(teams).orderBy(asc(teams.id)).all();
+  const priority = sql<number>`case when ${issues.priority} = 0 then 5 else ${issues.priority} end`;
+  const positions = options.sort === "priority"
+    ? context.db.select({ id: issues.id, priority }).from(issues).where(and(...baseConditions)).orderBy(asc(issues.id)).all()
+    : options.sort === "updatedAt"
+      ? context.db.select({ id: issues.id, revision: issues.revision }).from(issues).where(and(...baseConditions)).orderBy(asc(issues.id)).all()
+      : null;
+  const snapshot = fingerprint({ teamKeys, positions });
   assertCursorSnapshot(cursor, snapshot);
   const conditions = [...baseConditions];
   if (cursor?.key) {
     const [team, number, id] = cursor.key;
     const tie = sql`(${teams.key}, ${issues.number}, ${issues.id}) > (${team}, ${number}, ${id})`;
     if (options.sort === "priority") {
-      const priority = sql`case when ${issues.priority} = 0 then 5 else ${issues.priority} end`;
       conditions.push(sql`(${priority} > ${cursor.value} or (${priority} = ${cursor.value} and ${tie}))`);
     } else if (options.sort === "updatedAt") conditions.push(sql`(${issues.updatedAt} < ${cursor.value} or (${issues.updatedAt} = ${cursor.value} and ${tie}))`);
     else conditions.push(tie);

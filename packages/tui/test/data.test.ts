@@ -13,6 +13,7 @@ import {
   deleteSavedView,
   setLastSelectedView,
   createTeam,
+  updateIssue,
   init,
   listActivitySince,
   openDb,
@@ -78,7 +79,7 @@ describe("Linekeeper core-facing handlers", () => {
       for (let i = 0; i < 205; i++) createIssue(setup.context, { title: `Cursor task ${i}` });
       let data = loadLinekeeperData(setup.context, { search });
       expect(data.issues).toHaveLength(100);
-      expect(data.nextCursor).toBe("100");
+      expect(data.nextCursor).toMatch(/^it1\./);
       const first = data.issues[0];
       const failed = { ...data, nextCursor: "invalid" };
       expect(() => loadMoreLinekeeperData(setup.context, failed)).toThrow("Invalid cursor");
@@ -94,6 +95,21 @@ describe("Linekeeper core-facing handlers", () => {
       const reset = loadLinekeeperData(setup.context, { ...effectiveLoadOptions(data), search: "absent" });
       expect(reset.issues).toEqual([]);
       expect(reset.nextCursor).toBeNull();
+    } finally { setup.close(); }
+  });
+
+  it("reloads to the browsed depth when concurrent edits stale the cursor", () => {
+    const setup = initializedContext();
+    try {
+      for (let i = 0; i < 150; i++) createIssue(setup.context, { title: `Cursor task ${i}` });
+      const data = loadLinekeeperData(setup.context, { search: "cursor" });
+      expect(data.issues).toHaveLength(100);
+      // Search cursors are bound to the result snapshot; any matching edit stales them.
+      updateIssue(setup.context, "ENG-150", { title: "Cursor task renamed" });
+      const more = loadMoreLinekeeperData(setup.context, data);
+      expect(more.issues).toHaveLength(150);
+      expect(new Set(more.issues.map(issue => issue.id)).size).toBe(150);
+      expect(more.nextCursor).toBeNull();
     } finally { setup.close(); }
   });
 
