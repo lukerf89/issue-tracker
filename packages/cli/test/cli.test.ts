@@ -217,6 +217,57 @@ describe("tracker CLI", () => {
     expect(listed.issues.map((issue) => issue.identifier)).toEqual(["ENG-1"]);
   });
 
+  it("replays issue comment and issue link retries by --idempotency-key", async () => {
+    const dbPath = tempDbPath();
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Set up CI"])).status).toBe(0);
+
+    const commentArgs = ["issue", "comment", "ENG-1", "Pipeline is green.", "--idempotency-key", "cli-comment-1"];
+    const firstComment = await tracker(dbPath, [...commentArgs, "--json"]);
+    expect(firstComment.status).toBe(0);
+    const firstCommentJson = JSON.parse(firstComment.stdout) as Record<string, unknown>;
+    expect(firstCommentJson).toMatchObject({ body: "Pipeline is green.", alreadyExisted: false });
+    expect(firstCommentJson).not.toHaveProperty("idempotencyKey");
+
+    const replayComment = await tracker(dbPath, [...commentArgs, "--json"]);
+    expect(replayComment.status).toBe(0);
+    expect(JSON.parse(replayComment.stdout)).toEqual({ ...firstCommentJson, alreadyExisted: true });
+
+    const humanComment = await tracker(dbPath, commentArgs);
+    expect(humanComment.status).toBe(0);
+    expect(stripAnsi(humanComment.stdout)).toContain(
+      `idempotency key matched ${String(firstCommentJson.id)}; no duplicate created`
+    );
+
+    const linkArgs = ["issue", "link", "ENG-1", "https://example.invalid/ci", "--idempotency-key", "cli-link-1"];
+    const firstLink = await tracker(dbPath, [...linkArgs, "--json"]);
+    expect(firstLink.status).toBe(0);
+    const firstLinkJson = JSON.parse(firstLink.stdout) as Record<string, unknown>;
+    expect(firstLinkJson).toMatchObject({ kind: "link", alreadyExisted: false });
+
+    const replayLink = await tracker(dbPath, [...linkArgs, "--json"]);
+    expect(replayLink.status).toBe(0);
+    expect(JSON.parse(replayLink.stdout)).toEqual({ ...firstLinkJson, alreadyExisted: true });
+
+    const humanLink = await tracker(dbPath, linkArgs);
+    expect(stripAnsi(humanLink.stdout)).toContain(
+      `idempotency key matched ${String(firstLinkJson.id)}; no duplicate created`
+    );
+
+    const conflict = await tracker(dbPath, [
+      "issue", "link", "ENG-1", "https://example.invalid/other", "--idempotency-key", "cli-link-1", "--json"
+    ]);
+    expect(conflict.status).not.toBe(0);
+    expect(conflict.stderr).toContain("IDEMPOTENCY_KEY_CONFLICT");
+
+    const view = JSON.parse((await tracker(dbPath, ["issue", "view", "ENG-1", "--json"])).stdout) as {
+      comments: unknown[];
+      attachments: unknown[];
+    };
+    expect(view.comments).toHaveLength(1);
+    expect(view.attachments).toHaveLength(1);
+  });
+
   it("backs up a live database with a restorable copy", async () => {
     const dbPath = tempDbPath();
     const backupPath = join(dirname(dbPath), "tracker-backup-test.db");

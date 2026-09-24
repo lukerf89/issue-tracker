@@ -173,6 +173,7 @@ interface SerializedComment {
   body: string;
   parentId: string | null;
   createdAt: string;
+  idempotencyKey: string | null;
 }
 
 interface SerializedAttachment {
@@ -186,6 +187,7 @@ interface SerializedAttachment {
   branchName: string | null;
   commitSha: string | null;
   createdAt: string;
+  idempotencyKey: string | null;
 }
 
 interface SerializedActivity {
@@ -382,7 +384,8 @@ function serializeCommentRow(row: Comment): SerializedComment {
     authorId: row.authorId,
     body: row.body,
     parentId: row.parentId ?? null,
-    createdAt: toIso(row.createdAt)
+    createdAt: toIso(row.createdAt),
+    idempotencyKey: row.idempotencyKey ?? null
   };
 }
 
@@ -397,7 +400,8 @@ function serializeAttachment(row: Attachment): SerializedAttachment {
     remote: row.remote ?? null,
     branchName: row.branchName ?? null,
     commitSha: row.commitSha ?? null,
-    createdAt: toIso(row.createdAt)
+    createdAt: toIso(row.createdAt),
+    idempotencyKey: row.idempotencyKey ?? null
   };
 }
 

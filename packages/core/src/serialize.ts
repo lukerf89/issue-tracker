@@ -238,6 +238,16 @@ export function serializeAttachment(attachment: Attachment) {
   };
 }
 
+// Comment/link mutation output: the stored record plus an always-present replay indicator.
+// The idempotency key itself is never exposed.
+export function serializeCommentMutation(result: Comment & { author: Actor; alreadyExisted: boolean }) {
+  return { ...serializeComment(result), alreadyExisted: result.alreadyExisted };
+}
+
+export function serializeAttachmentMutation(result: Attachment & { alreadyExisted: boolean }) {
+  return { ...serializeAttachment(result), alreadyExisted: result.alreadyExisted };
+}
+
 function serializeIssueReference(issue: IssueReference) {
   return {
     id: issue.id,

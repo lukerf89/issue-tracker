@@ -1,13 +1,14 @@
 import { z } from "zod";
 
 import type { AddAttachmentInput, ListAttachmentsInput } from "../services/attachment.js";
-import { nonEmptyStringSchema, optionalNullableStringSchema } from "./common.js";
+import { idempotencyKeySchema, nonEmptyStringSchema, optionalNullableStringSchema } from "./common.js";
 
 const attachmentBaseSchema = z.object({
   issue: nonEmptyStringSchema,
   expectedRevision: z.number().int().positive().optional(),
   title: optionalNullableStringSchema,
-  remote: optionalNullableStringSchema
+  remote: optionalNullableStringSchema,
+  idempotencyKey: idempotencyKeySchema
 });
 
 export const attachmentKindSchema = z.enum(["link", "branch", "pr", "commit"]);
@@ -52,7 +53,8 @@ export const linkIssueToolInputSchema = z.object({
   repoPath: optionalNullableStringSchema,
   remote: optionalNullableStringSchema,
   branchName: optionalNullableStringSchema,
-  commitSha: optionalNullableStringSchema
+  commitSha: optionalNullableStringSchema,
+  idempotencyKey: idempotencyKeySchema
 });
 
 export const listAttachmentsInputSchema = z.object({

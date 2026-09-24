@@ -76,7 +76,9 @@ export {
   serializeActivityEvent,
   serializeActor,
   serializeAttachment,
+  serializeAttachmentMutation,
   serializeComment,
+  serializeCommentMutation,
   serializeCycle,
   serializeIssue,
   serializeIssueSummary,
@@ -103,6 +105,7 @@ export {
   addAttachment,
   listAttachments,
   type AddAttachmentInput,
+  type AddAttachmentResult,
   type AttachmentKind,
   type ListAttachmentsInput
 } from "./services/attachment.js";
@@ -118,6 +121,7 @@ export {
   addComment,
   listComments,
   type AddCommentInput,
+  type AddCommentResult,
   type CommentWithAuthor,
   type ListCommentsInput
 } from "./services/comment.js";

@@ -215,7 +215,9 @@ const commentSnapshotSchema = z.strictObject({
   authorId: z.string(),
   body: z.string(),
   parentId: nullableStringSchema,
-  createdAt: isoTimestampSchema
+  createdAt: isoTimestampSchema,
+  // Optional keeps snapshots created before comment idempotency keys importable.
+  idempotencyKey: nullableStringSchema.optional().default(null)
 });
 
 const actorSnapshotSchema = z.strictObject({
@@ -236,7 +238,9 @@ const attachmentSnapshotSchema = z.strictObject({
   remote: nullableStringSchema,
   branchName: nullableStringSchema,
   commitSha: nullableStringSchema,
-  createdAt: isoTimestampSchema
+  createdAt: isoTimestampSchema,
+  // Optional keeps snapshots created before attachment idempotency keys importable.
+  idempotencyKey: nullableStringSchema.optional().default(null)
 });
 
 const activitySnapshotSchema = z.strictObject({
