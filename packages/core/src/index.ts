@@ -508,3 +508,12 @@ export {
   type GetWorkContextInput, type WorkContext, type WorkContextChange, type WorkContextResponse, type WorkContextRoutingEntry, type WorkContextStaleness
 } from "./schemas/work-context.js";
 export { resolveIssueRepositoryRouting, type RepositoryRoutingCandidate, type RepositoryRoutingSource, type RepositoryRoutingStatus } from "./services/repository.js";
+
+// LF-142: shared machine-output contracts and MCP tool annotations.
+export {
+  activityArraySchema, activityFeedSchema, activityPageSchema, advertisedOutputSchemas, attachmentMutationSchema, commentMutationSchema,
+  errorEnvelopeSchema, exactOutputSchemas, issueMutationAdvertisedSchema, issueMutationFullSchema, issueMutationReceiptSchema,
+  issueSummaryPageSchema, runEventsPageSchema, runFullSchema, runRecordsPageSchema, runSummaryPageSchema, runSummarySchema,
+  type OutputSchemaName
+} from "./schemas/tool-output.js";
+export { toolContract, toolContractNames, type ToolAnnotations, type ToolContract, type ToolName } from "./schemas/tool-contract.js";

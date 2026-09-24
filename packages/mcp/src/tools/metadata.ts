@@ -9,7 +9,7 @@ import {
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { OpenMcpContextOptions } from "../context.js";
-import { jsonResult, mcpToolResult, withMcpContext } from "./result.js";
+import { mcpToolResult, toolConfig, toolResult, withMcpContext } from "./result.js";
 
 export function registerMetadataTools(
   server: McpServer,
@@ -19,14 +19,14 @@ export function registerMetadataTools(
     "describe",
     {
       _meta: toolGroups("coding"),
-      title: "Describe tracker metadata",
+      ...toolConfig("describe"),
       description: "Discover teams, workflow states, priorities, labels, projects, and the current actor. Scope with team and sections; compact trims project references. Re-read only when metadataRevision changes.",
       inputSchema: describeTrackerInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = describeTrackerInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(describeTracker(context, parsed))
+      return withMcpContext({ ...options, requireActor: true, tool: "describe" }, ({ context }) =>
+        toolResult("describe", describeTracker(context, parsed))
       );
     })
   );
@@ -35,14 +35,14 @@ export function registerMetadataTools(
     "list_states",
     {
       _meta: toolGroups("admin"),
-      title: "List workflow states",
+      ...toolConfig("list_states"),
       description: "List ordered workflow states for a team id or key.",
       inputSchema: listStatesInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = listStatesInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(listStatesForTeam(context, parsed.team).map(serializeWorkflowState))
+      return withMcpContext({ ...options, requireActor: false, tool: "list_states" }, ({ context }) =>
+        toolResult("list_states", listStatesForTeam(context, parsed.team).map(serializeWorkflowState))
       );
     })
   );

@@ -17,7 +17,7 @@ import {
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { OpenMcpContextOptions } from "../context.js";
-import { jsonResult, mcpToolResult, withMcpContext } from "./result.js";
+import { mcpToolResult, toolConfig, toolResult, withMcpContext } from "./result.js";
 
 export function registerProjectTools(
   server: McpServer,
@@ -27,14 +27,14 @@ export function registerProjectTools(
     "list_projects",
     {
       _meta: toolGroups("admin"),
-      title: "List projects",
+      ...toolConfig("list_projects"),
       description: "List projects.",
       inputSchema: listProjectsInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = listProjectsInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(listProjects(context, parsed).map(serializeProject))
+      return withMcpContext({ ...options, requireActor: false, tool: "list_projects" }, ({ context }) =>
+        toolResult("list_projects", listProjects(context, parsed).map(serializeProject))
       );
     })
   );
@@ -43,14 +43,14 @@ export function registerProjectTools(
     "get_project",
     {
       _meta: toolGroups("admin"),
-      title: "Get project",
+      ...toolConfig("get_project"),
       description: "Read one project by id or name.",
       inputSchema: getProjectInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = getProjectInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(serializeProject(getProject(context, parsed.project)))
+      return withMcpContext({ ...options, requireActor: false, tool: "get_project" }, ({ context }) =>
+        toolResult("get_project", serializeProject(getProject(context, parsed.project)))
       );
     })
   );
@@ -59,14 +59,14 @@ export function registerProjectTools(
     "create_project",
     {
       _meta: toolGroups("admin"),
-      title: "Create project",
+      ...toolConfig("create_project"),
       description: "Create a project.",
       inputSchema: createProjectInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = createProjectInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeProject(createProject(context, parsed)))
+      return withMcpContext({ ...options, requireActor: true, tool: "create_project" }, ({ context }) =>
+        toolResult("create_project", serializeProject(createProject(context, parsed)))
       );
     })
   );
@@ -75,14 +75,14 @@ export function registerProjectTools(
     "update_project",
     {
       _meta: toolGroups("admin"),
-      title: "Update project",
+      ...toolConfig("update_project"),
       description: "Update project fields.",
       inputSchema: updateProjectToolInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const { project, ...update } = updateProjectToolInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeProject(updateProject(context, project, update)))
+      return withMcpContext({ ...options, requireActor: true, tool: "update_project" }, ({ context }) =>
+        toolResult("update_project", serializeProject(updateProject(context, project, update)))
       );
     })
   );
@@ -91,14 +91,14 @@ export function registerProjectTools(
     "archive_project",
     {
       _meta: toolGroups("admin"),
-      title: "Archive project",
+      ...toolConfig("archive_project"),
       description: "Archive a project without deleting it.",
       inputSchema: archiveProjectInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = archiveProjectInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(serializeProject(archiveProject(context, parsed.project)))
+      return withMcpContext({ ...options, requireActor: false, tool: "archive_project" }, ({ context }) =>
+        toolResult("archive_project", serializeProject(archiveProject(context, parsed.project)))
       );
     })
   );
@@ -107,14 +107,14 @@ export function registerProjectTools(
     "unarchive_project",
     {
       _meta: toolGroups("admin"),
-      title: "Unarchive project",
+      ...toolConfig("unarchive_project"),
       description: "Restore an archived project.",
       inputSchema: unarchiveProjectInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = unarchiveProjectInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(serializeProject(unarchiveProject(context, parsed.project)))
+      return withMcpContext({ ...options, requireActor: false, tool: "unarchive_project" }, ({ context }) =>
+        toolResult("unarchive_project", serializeProject(unarchiveProject(context, parsed.project)))
       );
     })
   );

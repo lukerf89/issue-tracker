@@ -45,27 +45,27 @@ import {
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { OpenMcpContextOptions } from "../context.js";
-import { jsonResult, mcpToolResult, withMcpContext } from "./result.js";
+import { mcpToolResult, toolConfig, toolResult, withMcpContext } from "./result.js";
 
 export function registerIssueTools(
   server: McpServer,
   options: Omit<OpenMcpContextOptions, "requireActor">
 ): void {
   server.registerTool("get_issues", {
-      _meta: toolGroups("coding"), title: "Read selected issues", description: "Read up to ten known issues under a total JSON byte budget. Omitted fields remain retrievable with read_issue_section.", inputSchema: getIssuesInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: false }, ({ context }) => jsonResult(getIssuesResponse(context, input)))));
+      _meta: toolGroups("coding"), ...toolConfig("get_issues"), description: "Read up to ten known issues under a total JSON byte budget. Omitted fields remain retrievable with read_issue_section.", inputSchema: getIssuesInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: false, tool: "get_issues" }, ({ context }) => toolResult("get_issues", getIssuesResponse(context, input)))));
   server.registerTool("read_issue_section", {
-      _meta: toolGroups("coding"), title: "Read issue section", description: "Page a string or collection independently. Follow nextCursor; retrieve oversized values through omittedPaths. Pass snapshot to reject changed source content.", inputSchema: readIssueSectionInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: false }, ({ context }) => jsonResult(readIssueSection(context, input)))));
+      _meta: toolGroups("coding"), ...toolConfig("read_issue_section"), description: "Page a string or collection independently. Follow nextCursor; retrieve oversized values through omittedPaths. Pass snapshot to reject changed source content.", inputSchema: readIssueSectionInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: false, tool: "read_issue_section" }, ({ context }) => toolResult("read_issue_section", readIssueSection(context, input)))));
 
   server.registerTool("get_work_context", {
-      _meta: toolGroups("coding"), title: "Read work context", description: "Deterministic, bounded work context for an issue: task, full acceptance criteria (Done when / Acceptance criteria lists), blockers, parent, repository routing, decisions (comments starting \"Decision:\" or \"Decided:\") and recent comments. Every section has provenance and a retrieval path; omissions list what the byte budget or selection limits left out. Pass run to read the immutable snapshot a run launched with plus stale source revisions (maxBytes is live-only).", inputSchema: getWorkContextInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: false }, ({ context }) => jsonResult(getWorkContext(context, input)))));
+      _meta: toolGroups("coding"), ...toolConfig("get_work_context"), description: "Deterministic, bounded work context for an issue: task, full acceptance criteria (Done when / Acceptance criteria lists), blockers, parent, repository routing, decisions (comments starting \"Decision:\" or \"Decided:\") and recent comments. Every section has provenance and a retrieval path; omissions list what the byte budget or selection limits left out. Pass run to read the immutable snapshot a run launched with plus stale source revisions (maxBytes is live-only).", inputSchema: getWorkContextInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: false, tool: "get_work_context" }, ({ context }) => toolResult("get_work_context", getWorkContext(context, input)))));
   server.registerTool("claim_issue", {
-      _meta: toolGroups("coding"), title: "Claim issue", description: "Atomically claim active unassigned backlog/unstarted work for the current actor. Claims have no lease; release through assign_issue with actor:null. Conflicts require a fresh read.", inputSchema: claimIssueInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: true }, ({ context }) => jsonResult(serializeIssue(claimIssue(context, input.identifier, input))))));
+      _meta: toolGroups("coding"), ...toolConfig("claim_issue"), description: "Atomically claim active unassigned backlog/unstarted work for the current actor. Claims have no lease; release through assign_issue with actor:null. Conflicts require a fresh read.", inputSchema: claimIssueInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: true, tool: "claim_issue" }, ({ context }) => toolResult("claim_issue", serializeIssue(claimIssue(context, input.identifier, input))))));
 
   server.registerTool(
     "list_issues",
     {
       _meta: toolGroups("coding"),
-      title: "List issues",
+      ...toolConfig("list_issues"),
       description:
         "Query issues with optional filters. Returns a compact summary page " +
         "({issues, nextCursor}); each issue carries identifier, title, stateId, " +
@@ -77,9 +77,9 @@ export function registerIssueTools(
     (input) => mcpToolResult(() => {
       const { view, cursor, fields, ...filters } =
         listIssuesPageWithViewToolInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: false }, ({ context }) => {
+      return withMcpContext({ ...options, requireActor: false, tool: "list_issues" }, ({ context }) => {
         const page = listIssuesPageWithView(context, { view, filters, cursor, fields });
-        return jsonResult({
+        return toolResult("list_issues", {
           issues: page.rows.map((row) => serializeIssueSummary(row.issue, row.fields, row.snippet)),
           nextCursor: page.nextCursor
         });
@@ -91,7 +91,7 @@ export function registerIssueTools(
     "search",
     {
       _meta: toolGroups("coding"),
-      title: "Search issues",
+      ...toolConfig("search"),
       description:
         "Search issues by full-text (FTS5) over identifier, title, and " +
         "description. Returns a compact summary page ({issues, nextCursor}) " +
@@ -103,9 +103,9 @@ export function registerIssueTools(
     },
     (input) => mcpToolResult(() => {
       const { cursor, fields, ...rest } = searchPageInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: false }, ({ context }) => {
+      return withMcpContext({ ...options, requireActor: false, tool: "search" }, ({ context }) => {
         const page = searchIssuesPage(context, rest, { cursor, fields });
-        return jsonResult({
+        return toolResult("search", {
           issues: page.rows.map((row) => serializeIssueSummary(row.issue, row.fields, row.snippet)),
           nextCursor: page.nextCursor
         });
@@ -117,14 +117,14 @@ export function registerIssueTools(
     "get_issue",
     {
       _meta: toolGroups("coding"),
-      title: "Get issue",
+      ...toolConfig("get_issue"),
       description: "Read one issue by identifier. Use fields/maxBytes for bounded selection with explicit omissions. For independently paged complete comments use read_issue_section path:[comments]. Legacy comments default to the latest 10; use comments: 'all' for full fidelity or commentCursor/commentLimit to page oldest to newest.",
       inputSchema: getIssueInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = getIssueInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(getIssueResponse(context, parsed))
+      return withMcpContext({ ...options, requireActor: false, tool: "get_issue" }, ({ context }) =>
+        toolResult("get_issue", getIssueResponse(context, parsed))
       );
     })
   );
@@ -133,7 +133,7 @@ export function registerIssueTools(
     "list_activity",
     {
       _meta: toolGroups("admin"),
-      title: "List issue activity",
+      ...toolConfig("list_activity"),
       description:
         "Read one issue's activity trail as a bounded page in append order: " +
         "{issue, entries, cursor, hasMore}. Default limit 50 (max 500). Pass `after: cursor` " +
@@ -144,8 +144,8 @@ export function registerIssueTools(
     },
     (input) => mcpToolResult(() => {
       const parsed = listActivityPageInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(
+      return withMcpContext({ ...options, requireActor: false, tool: "list_activity" }, ({ context }) =>
+        toolResult("list_activity", 
           parsed.full === true
             ? listActivity(context, { issue: parsed.issue }).map(serializeActivity)
             : serializeActivityPage(listIssueActivityPage(context, parsed))
@@ -158,7 +158,7 @@ export function registerIssueTools(
     "list_activity_feed",
     {
       _meta: toolGroups("coding"),
-      title: "List activity feed",
+      ...toolConfig("list_activity_feed"),
       description:
         "Incremental activity feed across issues in append order: {events, cursor, hasMore}. " +
         "Default limit 100 (max 500). Persist `cursor` and call again with it while hasMore is " +
@@ -172,8 +172,8 @@ export function registerIssueTools(
     },
     (input) => mcpToolResult(() => {
       const parsed = listActivitySinceInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(serializeActivityFeed(listActivitySince(context, parsed)))
+      return withMcpContext({ ...options, requireActor: false, tool: "list_activity_feed" }, ({ context }) =>
+        toolResult("list_activity_feed", serializeActivityFeed(listActivitySince(context, parsed)))
       );
     })
   );
@@ -182,7 +182,7 @@ export function registerIssueTools(
     "create_issue",
     {
       _meta: toolGroups("coding"),
-      title: "Create issue",
+      ...toolConfig("create_issue"),
       description:
         "Create an issue. Pass an optional global `idempotencyKey` to make retries safe: " +
         "re-submitting the same key returns the original issue with `alreadyExisted: true` " +
@@ -192,9 +192,9 @@ export function registerIssueTools(
     },
     (input) => mcpToolResult(() => {
       const parsed = createIssueInputSchema.parse(withoutResponse(input));
-      return withMcpContext({ ...options, requireActor: true }, ({ context }) => {
+      return withMcpContext({ ...options, requireActor: true, tool: "create_issue" }, ({ context }) => {
         const created = withIssueMutationReceipt(context, null, (tx) => createIssue(tx, parsed));
-        return jsonResult(serializeIssueMutation(created, input.response));
+        return toolResult("create_issue", serializeIssueMutation(created, input.response));
       });
     })
   );
@@ -203,14 +203,14 @@ export function registerIssueTools(
     "update_issue",
     {
       _meta: toolGroups("coding"),
-      title: "Update issue",
+      ...toolConfig("update_issue"),
       description: "Update issue fields.",
       inputSchema: updateIssueToolInputSchema.safeExtend({ response: issueResponseSchema.optional() })
     },
     (input) => mcpToolResult(() => {
       const { identifier, ...update } = updateIssueToolInputSchema.parse(withoutResponse(input));
-      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeIssueMutation(withIssueMutationReceipt(context, identifier, (tx) => updateIssue(tx, identifier, update)), input.response))
+      return withMcpContext({ ...options, requireActor: true, tool: "update_issue" }, ({ context }) =>
+        toolResult("update_issue", serializeIssueMutation(withIssueMutationReceipt(context, identifier, (tx) => updateIssue(tx, identifier, update)), input.response))
       );
     })
   );
@@ -219,14 +219,14 @@ export function registerIssueTools(
     "move_issue",
     {
       _meta: toolGroups("coding"),
-      title: "Move issue",
+      ...toolConfig("move_issue"),
       description: "Move an issue to another workflow state.",
       inputSchema: moveIssueInputSchema.safeExtend({ response: issueResponseSchema.optional() })
     },
     (input) => mcpToolResult(() => {
       const parsed = moveIssueInputSchema.parse(withoutResponse(input));
-      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeIssueMutation(withIssueMutationReceipt(context, parsed.identifier, (tx) => moveIssue(tx, parsed.identifier, parsed.state, parsed)), input.response))
+      return withMcpContext({ ...options, requireActor: true, tool: "move_issue" }, ({ context }) =>
+        toolResult("move_issue", serializeIssueMutation(withIssueMutationReceipt(context, parsed.identifier, (tx) => moveIssue(tx, parsed.identifier, parsed.state, parsed)), input.response))
       );
     })
   );
@@ -235,14 +235,14 @@ export function registerIssueTools(
     "assign_issue",
     {
       _meta: toolGroups("coding"),
-      title: "Assign issue",
+      ...toolConfig("assign_issue"),
       description: "Assign or clear an issue assignee.",
       inputSchema: assignIssueInputSchema.safeExtend({ response: issueResponseSchema.optional() })
     },
     (input) => mcpToolResult(() => {
       const parsed = assignIssueInputSchema.parse(withoutResponse(input));
-      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeIssueMutation(withIssueMutationReceipt(context, parsed.identifier, (tx) => assignIssue(tx, parsed.identifier, parsed.actor, parsed)), input.response))
+      return withMcpContext({ ...options, requireActor: true, tool: "assign_issue" }, ({ context }) =>
+        toolResult("assign_issue", serializeIssueMutation(withIssueMutationReceipt(context, parsed.identifier, (tx) => assignIssue(tx, parsed.identifier, parsed.actor, parsed)), input.response))
       );
     })
   );
@@ -251,14 +251,14 @@ export function registerIssueTools(
     "archive_issue",
     {
       _meta: toolGroups("admin"),
-      title: "Archive issue",
+      ...toolConfig("archive_issue"),
       description: "Archive an issue without deleting it.",
       inputSchema: archiveIssueInputSchema.safeExtend({ response: issueResponseSchema.optional() })
     },
     (input) => mcpToolResult(() => {
       const parsed = archiveIssueInputSchema.parse(withoutResponse(input));
-      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeIssueMutation(withIssueMutationReceipt(context, parsed.identifier, (tx) => archiveIssue(tx, parsed.identifier, parsed)), input.response))
+      return withMcpContext({ ...options, requireActor: true, tool: "archive_issue" }, ({ context }) =>
+        toolResult("archive_issue", serializeIssueMutation(withIssueMutationReceipt(context, parsed.identifier, (tx) => archiveIssue(tx, parsed.identifier, parsed)), input.response))
       );
     })
   );
@@ -267,14 +267,14 @@ export function registerIssueTools(
     "unarchive_issue",
     {
       _meta: toolGroups("admin"),
-      title: "Unarchive issue",
+      ...toolConfig("unarchive_issue"),
       description: "Restore an archived issue.",
       inputSchema: unarchiveIssueInputSchema.safeExtend({ response: issueResponseSchema.optional() })
     },
     (input) => mcpToolResult(() => {
       const parsed = unarchiveIssueInputSchema.parse(withoutResponse(input));
-      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeIssueMutation(withIssueMutationReceipt(context, parsed.identifier, (tx) => unarchiveIssue(tx, parsed.identifier, parsed)), input.response))
+      return withMcpContext({ ...options, requireActor: true, tool: "unarchive_issue" }, ({ context }) =>
+        toolResult("unarchive_issue", serializeIssueMutation(withIssueMutationReceipt(context, parsed.identifier, (tx) => unarchiveIssue(tx, parsed.identifier, parsed)), input.response))
       );
     })
   );
@@ -283,7 +283,7 @@ export function registerIssueTools(
     "comment_on_issue",
     {
       _meta: toolGroups("coding"),
-      title: "Comment on issue",
+      ...toolConfig("comment_on_issue"),
       description:
         "Add a comment to an issue. Optional idempotencyKey (global to comments; trimmed; blank means no key): " +
         "a retry with the same key and the same issue/author/body/parent returns the stored comment with " +
@@ -293,8 +293,8 @@ export function registerIssueTools(
     },
     (input) => mcpToolResult(() => {
       const parsed = addCommentInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeCommentMutation(addComment(context, parsed)))
+      return withMcpContext({ ...options, requireActor: true, tool: "comment_on_issue" }, ({ context }) =>
+        toolResult("comment_on_issue", serializeCommentMutation(addComment(context, parsed)))
       );
     })
   );
@@ -303,7 +303,7 @@ export function registerIssueTools(
     "link_issue",
     {
       _meta: toolGroups("coding"),
-      title: "Link issue",
+      ...toolConfig("link_issue"),
       description:
         "Attach a branch, PR, commit, or URL to an issue. Optional idempotencyKey (global to attachments; " +
         "trimmed; blank means no key): a retry with the same key and the same issue/kind/title/url/repoPath/" +
@@ -314,8 +314,8 @@ export function registerIssueTools(
     },
     (input) => mcpToolResult(() => {
       const parsed = linkIssueInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeAttachmentMutation(addAttachment(context, parsed)))
+      return withMcpContext({ ...options, requireActor: true, tool: "link_issue" }, ({ context }) =>
+        toolResult("link_issue", serializeAttachmentMutation(addAttachment(context, parsed)))
       );
     })
   );

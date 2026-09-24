@@ -11,7 +11,7 @@ import {
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { OpenMcpContextOptions } from "../context.js";
-import { jsonResult, mcpToolResult, withMcpContext } from "./result.js";
+import { mcpToolResult, toolConfig, toolResult, withMcpContext } from "./result.js";
 
 export function registerActorTools(
   server: McpServer,
@@ -24,14 +24,14 @@ export function registerActorTools(
     "create_actor",
     {
       _meta: toolGroups("admin"),
-      title: "Create actor",
+      ...toolConfig("create_actor"),
       description: "Create a human or agent actor.",
       inputSchema: createActorInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = createActorInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(serializeActor(createActor(context, parsed)))
+      return withMcpContext({ ...options, requireActor: false, tool: "create_actor" }, ({ context }) =>
+        toolResult("create_actor", serializeActor(createActor(context, parsed)))
       );
     })
   );
@@ -40,14 +40,14 @@ export function registerActorTools(
     "list_actors",
     {
       _meta: toolGroups("admin"),
-      title: "List actors",
+      ...toolConfig("list_actors"),
       description: "List actors.",
       inputSchema: listActorsInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = listActorsInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(listActors(context, parsed).map(serializeActor))
+      return withMcpContext({ ...options, requireActor: false, tool: "list_actors" }, ({ context }) =>
+        toolResult("list_actors", listActors(context, parsed).map(serializeActor))
       );
     })
   );
@@ -62,12 +62,12 @@ function registerCurrentActorTool(
     name,
     {
       _meta: toolGroups(name === "whoami" ? "coding" : "admin"),
-      title: "Get current actor",
+      ...toolConfig(name),
       description: "Return the resolved calling actor.",
       inputSchema: {}
     },
     () => mcpToolResult(() =>
-      withMcpContext({ ...options, requireActor: true }, ({ context }) => {
+      withMcpContext({ ...options, requireActor: true, tool: name }, ({ context }) => {
         if (!context.actor) {
           throw new AppError(
             AppErrorCode.ACTOR_NOT_FOUND,
@@ -75,7 +75,7 @@ function registerCurrentActorTool(
           );
         }
 
-        return jsonResult(serializeActor(context.actor));
+        return toolResult(name, serializeActor(context.actor));
       })
     )
   );

@@ -26,6 +26,11 @@ export interface OpenMcpContextOptions {
   actor?: McpActorContext;
   clock?: Clock;
   requireActor?: boolean;
+  /**
+   * Whether an unknown agent handle is created on first use (default true). Read-only tools pass
+   * false: the handle is looked up, and a miss leaves `context.actor` null instead of writing.
+   */
+  provisionActor?: boolean;
 }
 
 export interface McpContext {
@@ -47,7 +52,9 @@ export function openMcpContext(options: OpenMcpContextOptions): McpContext {
   };
 
   if (options.actor) {
-    context.actor = resolveMcpActor(context, options.actor);
+    context.actor = options.provisionActor === false
+      ? findMcpActor(context, options.actor)
+      : resolveMcpActor(context, options.actor);
   } else if (options.requireActor ?? true) {
     throw new AppError(
       AppErrorCode.ACTOR_NOT_FOUND,
@@ -62,17 +69,22 @@ export function openMcpContext(options: OpenMcpContextOptions): McpContext {
   };
 }
 
+/** Looks up the caller's actor without creating it; null when the handle is unknown. */
+export function findMcpActor(context: ServiceContext, actorContext: McpActorContext): Actor | null {
+  try {
+    return getActor(context, actorContext.handle);
+  } catch (error) {
+    if (error instanceof AppError && error.code === AppErrorCode.ACTOR_NOT_FOUND) return null;
+    throw error;
+  }
+}
+
 export function resolveMcpActor(
   context: ServiceContext,
   actorContext: McpActorContext
 ): Actor {
-  try {
-    return getActor(context, actorContext.handle);
-  } catch (error) {
-    if (!(error instanceof AppError) || error.code !== AppErrorCode.ACTOR_NOT_FOUND) {
-      throw error;
-    }
-  }
+  const existing = findMcpActor(context, actorContext);
+  if (existing) return existing;
 
   if (actorContext.type === "human") {
     throw new AppError(

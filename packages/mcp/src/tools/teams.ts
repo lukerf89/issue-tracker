@@ -13,7 +13,7 @@ import {
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { OpenMcpContextOptions } from "../context.js";
-import { jsonResult, mcpToolResult, withMcpContext } from "./result.js";
+import { mcpToolResult, toolConfig, toolResult, withMcpContext } from "./result.js";
 
 export function registerTeamTools(
   server: McpServer,
@@ -23,14 +23,14 @@ export function registerTeamTools(
     "create_team",
     {
       _meta: toolGroups("admin"),
-      title: "Create team",
+      ...toolConfig("create_team"),
       description: "Create a team with default workflow states.",
       inputSchema: createTeamInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = createTeamInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: true }, ({ context }) =>
-        jsonResult(serializeTeam(createTeam(context, parsed)))
+      return withMcpContext({ ...options, requireActor: true, tool: "create_team" }, ({ context }) =>
+        toolResult("create_team", serializeTeam(createTeam(context, parsed)))
       );
     })
   );
@@ -39,14 +39,14 @@ export function registerTeamTools(
     "list_teams",
     {
       _meta: toolGroups("admin"),
-      title: "List teams",
+      ...toolConfig("list_teams"),
       description: "List teams.",
       inputSchema: listTeamsInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = listTeamsInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(listTeams(context, parsed).map(serializeTeam))
+      return withMcpContext({ ...options, requireActor: false, tool: "list_teams" }, ({ context }) =>
+        toolResult("list_teams", listTeams(context, parsed).map(serializeTeam))
       );
     })
   );
@@ -55,14 +55,14 @@ export function registerTeamTools(
     "archive_team",
     {
       _meta: toolGroups("admin"),
-      title: "Archive team",
+      ...toolConfig("archive_team"),
       description: "Archive a team without deleting it.",
       inputSchema: archiveTeamInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = archiveTeamInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(serializeTeam(archiveTeam(context, parsed.team)))
+      return withMcpContext({ ...options, requireActor: false, tool: "archive_team" }, ({ context }) =>
+        toolResult("archive_team", serializeTeam(archiveTeam(context, parsed.team)))
       );
     })
   );
@@ -71,14 +71,14 @@ export function registerTeamTools(
     "unarchive_team",
     {
       _meta: toolGroups("admin"),
-      title: "Unarchive team",
+      ...toolConfig("unarchive_team"),
       description: "Restore an archived team.",
       inputSchema: unarchiveTeamInputSchema.strict()
     },
     (input) => mcpToolResult(() => {
       const parsed = unarchiveTeamInputSchema.parse(input);
-      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(serializeTeam(unarchiveTeam(context, parsed.team)))
+      return withMcpContext({ ...options, requireActor: false, tool: "unarchive_team" }, ({ context }) =>
+        toolResult("unarchive_team", serializeTeam(unarchiveTeam(context, parsed.team)))
       );
     })
   );
