@@ -1002,7 +1002,7 @@ describe("tracker CLI", () => {
     });
     expect(createdIssue.labels.map((label) => label.name)).toEqual(["Bug"]);
 
-    const activity = await tracker(dbPath, ["issue", "history", "ENG-2", "--json"]);
+    const activity = await tracker(dbPath, ["issue", "history", "ENG-2", "--json", "--full"]);
     expect(activity.status).toBe(0);
     expect(
       (JSON.parse(activity.stdout) as Array<{ action: string }>).map((entry) => entry.action)
@@ -1664,7 +1664,7 @@ describe("tracker CLI", () => {
       (await tracker(dbPath, ["issue", "comment", "ENG-1", "History covered."])).status
     ).toBe(0);
 
-    const historyJson = await tracker(dbPath, ["issue", "history", "ENG-1", "--json"]);
+    const historyJson = await tracker(dbPath, ["issue", "history", "ENG-1", "--json", "--full"]);
     expect(historyJson.status).toBe(0);
 
     const history = JSON.parse(historyJson.stdout) as Array<{

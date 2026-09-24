@@ -370,7 +370,8 @@ describe("MCP server", () => {
       expect(fetched).toEqual(archived);
 
       const activity = (await callJsonTool(client, "list_activity", {
-        issue: created.identifier
+        issue: created.identifier,
+        full: true
       })) as unknown as Array<{
         action: string;
         actor: { handle: string };
@@ -429,7 +430,8 @@ describe("MCP server", () => {
       expect(fetched).toEqual(unarchived);
 
       const activity = (await callJsonTool(client, "list_activity", {
-        issue: created.identifier
+        issue: created.identifier,
+        full: true
       })) as unknown as Array<{
         action: string;
         actor: { handle: string };
@@ -481,13 +483,14 @@ describe("MCP server", () => {
       });
 
       const activity = (await callJsonTool(client, "list_activity", {
-        issue: created.identifier
+        issue: created.identifier,
+        full: true
       })) as unknown as Array<{
         action: string;
         actor: { handle: string };
         data: Record<string, unknown>;
       }>;
-      const cliOutput = tracker(dbPath, ["issue", "history", created.identifier, "--json"]);
+      const cliOutput = tracker(dbPath, ["issue", "history", created.identifier, "--json", "--full"]);
 
       expect(activity.map((entry) => entry.action)).toEqual([
         "created",
@@ -1624,7 +1627,8 @@ describe("MCP server", () => {
       ]);
 
       const activity = (await callJsonTool(client, "list_activity", {
-        issue: created.identifier
+        issue: created.identifier,
+        full: true
       })) as unknown as Array<{
         action: string;
         actor: { handle: string };

@@ -16,7 +16,10 @@ import {
   createIssueInputSchema,
   getIssueInputSchema,
   listActivity,
-  listActivityInputSchema,
+  listActivityPageInputSchema,
+  listActivitySince,
+  listActivitySinceInputSchema,
+  listIssueActivityPage,
   linkIssueInputSchema,
   linkIssueToolInputSchema,
   listIssuesPageWithView,
@@ -26,6 +29,8 @@ import {
   moveIssue,
   moveIssueInputSchema,
   serializeActivity,
+  serializeActivityFeed,
+  serializeActivityPage,
   serializeAttachmentMutation,
   serializeCommentMutation,
   serializeIssue,
@@ -126,13 +131,46 @@ export function registerIssueTools(
     {
       _meta: toolGroups("admin"),
       title: "List issue activity",
-      description: "Read the ordered activity trail for an issue.",
-      inputSchema: listActivityInputSchema.strict()
+      description:
+        "Read one issue's activity trail as a bounded page in append order: " +
+        "{issue, entries, cursor, hasMore}. Default limit 50 (max 500). Pass `after: cursor` " +
+        "and call again while hasMore is true; pages never skip or duplicate entries. " +
+        "`full: true` returns the legacy complete bare array (createdAt then append order) " +
+        "and cannot be combined with after or limit.",
+      inputSchema: listActivityPageInputSchema
     },
     (input) => mcpToolResult(() => {
-      const parsed = listActivityInputSchema.parse(input);
+      const parsed = listActivityPageInputSchema.parse(input);
       return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
-        jsonResult(listActivity(context, parsed).map(serializeActivity))
+        jsonResult(
+          parsed.full === true
+            ? listActivity(context, { issue: parsed.issue }).map(serializeActivity)
+            : serializeActivityPage(listIssueActivityPage(context, parsed))
+        )
+      );
+    })
+  );
+
+  server.registerTool(
+    "list_activity_feed",
+    {
+      _meta: toolGroups("coding"),
+      title: "List activity feed",
+      description:
+        "Incremental activity feed across issues in append order: {events, cursor, hasMore}. " +
+        "Default limit 100 (max 500). Persist `cursor` and call again with it while hasMore is " +
+        "true; resuming from a persisted cursor with the same filters yields no gaps and no " +
+        "duplicates. Filters (team, assignee, issue, project) apply to CURRENT issue attributes " +
+        "at query time. The cursor is a high-water mark: every event at or below it is " +
+        "permanently skipped, including events that did not match the filters then. A cursor " +
+        "ahead of the log fails with VALIDATION_FAILED (details.latestCursor); after an import, " +
+        "restart without a cursor.",
+      inputSchema: listActivitySinceInputSchema.strict()
+    },
+    (input) => mcpToolResult(() => {
+      const parsed = listActivitySinceInputSchema.parse(input);
+      return withMcpContext({ ...options, requireActor: false }, ({ context }) =>
+        jsonResult(serializeActivityFeed(listActivitySince(context, parsed)))
       );
     })
   );

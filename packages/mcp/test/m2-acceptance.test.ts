@@ -103,7 +103,8 @@ describe("M2 acceptance", () => {
       });
 
       const activity = await callJsonTool<SerializedActivity[]>(client, "list_activity", {
-        issue: issueIdentifier
+        issue: issueIdentifier,
+        full: true
       });
       expect(activity.map((entry) => entry.action)).toEqual([
         "created",
