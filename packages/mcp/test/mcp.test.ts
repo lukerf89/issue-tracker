@@ -273,7 +273,8 @@ describe("MCP server", () => {
         Array.from({ length: 10 }, (_, index) => `Comment ${index + 3}`)
       );
       expect(latest.hasMoreComments).toBe(true);
-      expect(latest.nextCommentCursor).toBeNull();
+      // Truncated latest view points at the oldest comment to page the full history.
+      expect(latest.nextCommentCursor).toBe("0");
 
       const all = await callJsonTool(client, "get_issue", {
         identifier: issue.identifier,
@@ -294,7 +295,7 @@ describe("MCP server", () => {
       expect(none).toMatchObject({ comments: [], commentCount: 12 });
 
       const seen: string[] = [];
-      let cursor: string | null | undefined = "0";
+      let cursor: string | null | undefined = latest.nextCommentCursor;
       do {
         const page = await callJsonTool(client, "get_issue", {
           identifier: issue.identifier,
