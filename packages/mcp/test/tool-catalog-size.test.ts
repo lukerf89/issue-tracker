@@ -4,6 +4,7 @@ import { toolContract, toolProfileSchema } from "@issue-tracker/core";
 import { expect, it } from "vitest";
 
 import { agentFixture } from "./agent-fixture.js";
+import { BUDGETS } from "./budgets.js";
 import { contractFixture } from "./contract-fixture.js";
 
 /** Budgeted or unbounded outputs: never duplicated into structuredContent. */
@@ -38,6 +39,11 @@ it("measures catalog and response sizes without duplicating budgeted outputs", a
   for (const [profile, size] of Object.entries(catalog)) {
     expect(size.bytes / size.withoutContractsBytes, profile).toBeLessThan(1.7);
   }
+  // LF-145 per-profile ceilings (budgets.ts).
+  for (const profile of ["coding", "full"] as const) {
+    expect(catalog[profile]!.bytes, `${profile} catalog bytes`).toBeLessThanOrEqual(BUDGETS.catalog[profile].bytes);
+    expect(catalog[profile]!.tools, `${profile} tool count`).toBeLessThanOrEqual(BUDGETS.catalog[profile].tools);
+  }
 
   const f = await contractFixture();
   try {
@@ -61,6 +67,11 @@ it("measures catalog and response sizes without duplicating budgeted outputs", a
     await measure("get_run full", "get_run", { run: f.seed.run });
     await measure("list_activity_feed", "list_activity_feed", {});
     await measure("describe", "describe", {}, true);
+    // LF-145 response ceilings (budgets.ts), text and structured measured separately.
+    for (const [label, budget] of Object.entries(BUDGETS.responses)) {
+      expect(responses[label]!.textBytes, `${label} textBytes`).toBeLessThanOrEqual(budget.textBytes);
+      expect(responses[label]!.structuredBytes, `${label} structuredBytes`).toBeLessThanOrEqual(budget.structuredBytes);
+    }
 
     // Large payloads: an opted-in description projection is duplicated (the caller controls it);
     // a large run event payload is not.
