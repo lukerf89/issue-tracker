@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 
 import {
   assertContained, claimRunAction, completeParticipantAction, completeParticipantActionInputSchema, completeRunAction, confirmRunStopped, engineHealthFingerprint, failRunAction, getEngineHealth, getRun, heartbeatRunAction, heartbeatRunParticipant, heartbeatSupervisor, listRuns, markRunStalled, recordArtifact, recordEngineHealth,
-  recordParticipantProcess, recordProcessExit, recordProviderEvent, recordReviewFinding, recordVerification, registerSupervisor, releaseExpiredRunActions, resolveReviewFindings, startRunParticipant,
+  recordParticipantProcess, recordProcessExit, recordProviderEvent, recordReviewFinding, recordVerification, registerSupervisor, releaseExpiredRunActions, resolveReviewFindings, startRunParticipant, workContextForPrompt,
   type EngineDefinition, type ServiceContext
 } from "@issue-tracker/core";
 
@@ -184,7 +184,7 @@ export class Supervisor {
     let participant = run.participants.find((candidate) => candidate.attemptId === action.attemptId && candidate.role === role && !candidate.completedAt);
     if (!participant) participant = startRunParticipant(this.options.context, { run: run.id, attemptId: action.attemptId!, role, actor: engineName, adapter: engine.adapter, requestedModel: engine.model, capabilities: { ...adapter.capabilities } });
     const resolved = run.resolvedConfiguration as { issue: unknown; repositories: Array<{ baseCommit: string; instructions?: Record<string, string> }> };
-    const prompt = `Execute this Issue Tracker work order. Your final response must be one JSON object (not Markdown) with role, summary, files, tests, risks, findings, verifiedTestsPassed, and riskNotes fields. Planner results must also include risk (low, medium, or high) and estimatedSize.\n${JSON.stringify({ workflow: run.workflow, phase: run.phase, role, issue: resolved.issue, immutableBaseCommit: resolved.repositories[0]?.baseCommit, repositoryInstructions: resolved.repositories[0]?.instructions ?? {}, input: action.payload })}`;
+    const prompt = `Execute this Issue Tracker work order. Your final response must be one JSON object (not Markdown) with role, summary, files, tests, risks, findings, verifiedTestsPassed, and riskNotes fields. Planner results must also include risk (low, medium, or high) and estimatedSize.\n${JSON.stringify({ workflow: run.workflow, phase: run.phase, role, issue: resolved.issue, workContext: workContextForPrompt(run.resolvedConfiguration), immutableBaseCommit: resolved.repositories[0]?.baseCommit, repositoryInstructions: resolved.repositories[0]?.instructions ?? {}, input: action.payload })}`;
     let result: ProviderResult;
     try {
       result = await adapter.run({ participantId: participant.id, role, executable: engine.executable, model: engine.model, workingDirectory: run.worktreePath, prompt, options: engine, env: inheritedEnvironment(engine.envNames), permissionHook: this.permissionHook(run.id, adapter), onProcess: (pid) => recordParticipantProcess(this.options.context, { run: run.id, participantId: participant!.id, pid }) }, signal);

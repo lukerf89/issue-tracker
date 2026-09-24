@@ -22,6 +22,7 @@ const tempDirs: string[] = [];
 const EXPECTED_RETAINED_TOOL_NAMES = [
   "get_issues",
   "read_issue_section",
+  "get_work_context",
   "claim_issue",
   "whoami",
   "get_current_actor",

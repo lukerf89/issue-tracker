@@ -4,6 +4,7 @@ import { engineDefinitionSchema } from "./engine.js";
 import { orchestrationRoleSchema, profileConfigurationSchema } from "./profile.js";
 import { commandSpecSchema } from "./repository.js";
 import { participantResultSchema, runPhaseSchema, runStateSchema, verificationClassificationSchema } from "./run.js";
+import { workContextSchema } from "./work-context.js";
 
 const timestamp = z.string().datetime({ offset: true });
 const nullableTimestamp = timestamp.nullable();
@@ -45,6 +46,8 @@ const resolvedRepositorySchema = z.strictObject({
 export const resolvedRunConfigurationSnapshotSchema = z.strictObject({
   schemaVersion: z.number().int().positive(), workflow: z.string().min(1), workflowVersion: z.number().int().positive(),
   issue: z.strictObject({ id: z.string().min(1), identifier: z.string().min(1), title: z.string(), description: nullableString }),
+  // Absent on runs launched before LF-144; such runs still import and read as legacy.
+  workContext: workContextSchema.optional(),
   profile: z.strictObject({ id: z.string().min(1), name: z.string().min(1), configuration: profileConfigurationSchema }),
   roleAssignments: z.record(z.string(), z.strictObject({
     engineName: z.string().min(1), adapter: z.string().min(1), executable: nullableString, requestedModel: z.string().min(1),

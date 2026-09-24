@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 
 import { and, asc, desc, eq, gt, isNull } from "drizzle-orm";
@@ -17,6 +16,8 @@ import { getIssue } from "./issue.js";
 import { getProfile } from "./profile.js";
 import { engineHealthFingerprint, engineHealthProblem, getEngineHealth } from "./engine-health.js";
 import { resolveIssueRepositories, type RepositoryInspector } from "./repository.js";
+import { stableHash } from "./stable-hash.js";
+import { buildWorkContext, RUN_WORK_CONTEXT_MAX_BYTES, WorkContextMinimumExceededError } from "./work-context.js";
 
 const TERMINAL_STATES = new Set<RunState>(["succeeded", "partial", "failed", "canceled", "crashed"]);
 const TRANSITIONS: Record<RunState, readonly RunState[]> = {
@@ -37,13 +38,58 @@ export interface RunResolutionRuntime {
   engineHealthTtlMs?: number;
 }
 
-export function previewRun(context: ServiceContext, input: PreviewRunInput, runtime: RunResolutionRuntime) {
-  const issue = getIssue(context, input.issue);
-  const profile = getProfile(context, input.profile);
+/**
+ * The run snapshot has a fixed budget and no caller-supplied maxBytes, so "increase maxBytes" is not
+ * actionable here: an issue whose mandatory minimum cannot fit fails with a run-specific error.
+ */
+function buildRunWorkContext(context: ServiceContext, identifier: string) {
+  try {
+    return buildWorkContext(context, identifier, RUN_WORK_CONTEXT_MAX_BYTES);
+  } catch (error) {
+    if (!(error instanceof WorkContextMinimumExceededError)) throw error;
+    throw new AppError(
+      AppErrorCode.RUN_WORK_CONTEXT_TOO_LARGE,
+      `Issue ${error.identifier} work context needs ${error.minimumBytes} bytes; the run snapshot budget is ${error.maxBytes}. Shorten the acceptance criteria or split the issue.`,
+      { identifier: error.identifier, minimumBytes: error.minimumBytes, maxBytes: error.maxBytes }
+    );
+  }
+}
+
+/**
+ * Every database-derived input of a preview. The caller owns the transaction, so the issue, routing,
+ * run ordinal, engine health and the frozen work context describe the same source state.
+ */
+function readRunSources(tx: ServiceContext, input: PreviewRunInput, runtime: RunResolutionRuntime) {
+  const issue = getIssue(tx, input.issue);
+  const profile = getProfile(tx, input.profile);
   if (profile.archivedAt) throw new AppError(AppErrorCode.CONSTRAINT_VIOLATION, `Profile ${profile.name} is archived.`);
-  const repositories = resolveIssueRepositories(context, issue.identifier);
+  const repositories = resolveIssueRepositories(tx, issue.identifier);
   if (repositories.length === 0) throw new AppError(AppErrorCode.REPOSITORY_NOT_FOUND, `Issue ${issue.identifier} has no resolved repository.`);
-  const priorRunCount = context.db.query.agentRuns.findMany({ where: eq(agentRuns.issueId, issue.id) }).sync().length;
+  const priorRunCount = tx.db.query.agentRuns.findMany({ where: eq(agentRuns.issueId, issue.id) }).sync().length;
+  const engineHealth = new Map<string, ReturnType<typeof getEngineHealth>>();
+  if (runtime.requireEngineHealth) {
+    for (const engineName of new Set(Object.values(profile.configuration.roles))) {
+      const definition = runtime.engineCatalog?.engines[engineName];
+      if (definition) engineHealth.set(engineName, getEngineHealth(tx, engineName, engineHealthFingerprint(engineName, definition)));
+    }
+  }
+  const workContext = buildRunWorkContext(tx, issue.identifier);
+  return { issue, profile, repositories, priorRunCount, engineHealth, workContext };
+}
+
+function runSourcesDigest(sources: ReturnType<typeof readRunSources>) {
+  return stableHash({ ...sources, engineHealth: Object.fromEntries(sources.engineHealth) });
+}
+
+export function previewRun(context: ServiceContext, input: PreviewRunInput, runtime: RunResolutionRuntime) {
+  return resolveRunPreview(context, input, runtime).preview;
+}
+
+function resolveRunPreview(context: ServiceContext, input: PreviewRunInput, runtime: RunResolutionRuntime) {
+  // Phase A: every database read happens in one read transaction.
+  const sources = context.db.transaction((db) => readRunSources({ ...context, db }, input, runtime));
+  const { issue, profile, repositories, priorRunCount, engineHealth, workContext } = sources;
+  // Phase B: filesystem inspection and snapshot assembly, outside the database transaction.
   const runSeed = stableHash({ issueId: issue.id, ordinal: priorRunCount + 1, parallelGroup: input.parallelGroup ?? null }).slice(0, 12);
   const resolvedRepositories = repositories.map((repository, position) => {
     const baseRef = input.baseRef ?? repository.defaultBranch;
@@ -78,8 +124,7 @@ export function previewRun(context: ServiceContext, input: PreviewRunInput, runt
       if (runtime.engineCatalog && assignment.adapter === "unresolved") return [`Engine ${assignment.engineName} is not configured.`];
       if (assignment.executable && runtime.executableAvailable && !runtime.executableAvailable(assignment.executable)) return [`Executable ${assignment.executable} for engine ${assignment.engineName} is unavailable.`];
       if (runtime.requireEngineHealth && assignment.options) {
-        const fingerprint = assignment.healthFingerprint!;
-        const problem = engineHealthProblem(getEngineHealth(context, assignment.engineName, fingerprint), context.clock.now(), runtime.engineHealthTtlMs ?? 15 * 60_000);
+        const problem = engineHealthProblem(engineHealth.get(assignment.engineName) ?? null, context.clock.now(), runtime.engineHealthTtlMs ?? 15 * 60_000);
         if (problem) return [`${problem.code}: Engine ${assignment.engineName}: ${problem.message} ${problem.remediation}`];
       }
       return assignment.validationErrors.map((message) => `Engine ${assignment.engineName}: ${message}`);
@@ -95,6 +140,7 @@ export function previewRun(context: ServiceContext, input: PreviewRunInput, runt
   const snapshot = {
     schemaVersion: 1, workflow: profile.workflow, workflowVersion: 1,
     issue: { id: issue.id, identifier: issue.identifier, title: issue.title, description: issue.description },
+    workContext,
     profile: { id: profile.id, name: profile.name, configuration: profileConfigurationSchema.parse(profile.configuration) },
     roleAssignments,
     repositories: resolvedRepositories,
@@ -109,7 +155,7 @@ export function previewRun(context: ServiceContext, input: PreviewRunInput, runt
     errors,
     previewIssuedAt
   };
-  return { ...snapshot, previewFingerprint: `${previewIssuedAt}.${stableHash(snapshot)}` };
+  return { preview: { ...snapshot, previewFingerprint: `${previewIssuedAt}.${stableHash(snapshot)}` }, sourcesDigest: runSourcesDigest(sources) };
 }
 
 export function startRun(context: ServiceContext, input: StartRunInput, runtime: RunResolutionRuntime) {
@@ -117,7 +163,7 @@ export function startRun(context: ServiceContext, input: StartRunInput, runtime:
   const issuedAt = separator > 0 ? input.previewFingerprint.slice(0, separator) : "";
   const issuedTime = Date.parse(issuedAt);
   if (!Number.isFinite(issuedTime) || context.clock.now().getTime() - issuedTime > 5 * 60_000 || issuedTime - context.clock.now().getTime() > 5_000) throw new AppError(AppErrorCode.RUN_PREVIEW_STALE, "Run preview has expired; preview again before starting.");
-  const preview = previewRun(context, input, { ...runtime, fingerprintIssuedAt: issuedAt });
+  const { preview, sourcesDigest } = resolveRunPreview(context, input, { ...runtime, fingerprintIssuedAt: issuedAt });
   if (preview.previewFingerprint !== input.previewFingerprint) {
     throw new AppError(AppErrorCode.RUN_PREVIEW_STALE, "Run preview is stale; preview again before starting.", { expected: preview.previewFingerprint, received: input.previewFingerprint });
   }
@@ -126,6 +172,18 @@ export function startRun(context: ServiceContext, input: StartRunInput, runtime:
   if (missingConfirmations.length) throw new AppError(AppErrorCode.CONSTRAINT_VIOLATION, "Run warnings require explicit confirmation.", { warnings: missingConfirmations });
   if (!context.actor) throw new AppError(AppErrorCode.ACTOR_NOT_FOUND, "Starting a run requires an actor.");
   return inTransaction(context, (txContext) => {
+    // Repository inspection ran outside any transaction, so a write may have landed since the
+    // preview's reads. Re-read the database-derived inputs here and refuse to store a stale snapshot.
+    const stale = (details?: Record<string, unknown>) => new AppError(AppErrorCode.RUN_PREVIEW_STALE, "Run sources changed while the preview was being resolved; preview again before starting.", details);
+    let currentDigest: string;
+    try {
+      currentDigest = runSourcesDigest(readRunSources(txContext, input, runtime));
+    } catch (error) {
+      // The same reads succeeded moments ago, so a failure now means a concurrent write invalidated them.
+      if (error instanceof AppError) throw stale({ cause: { code: error.code, message: error.message } });
+      throw error;
+    }
+    if (currentDigest !== sourcesDigest) throw stale();
     const active = txContext.db.query.agentRuns.findMany({ where: and(eq(agentRuns.issueId, preview.issue.id), isNull(agentRuns.completedAt)) }).sync();
     if (!preview.parallelGroup && active.some((candidate) => candidate.parallelGroup === null)) throw new AppError(AppErrorCode.CONSTRAINT_VIOLATION, `Issue ${preview.issue.identifier} already has an active run.`, { runId: active.find((candidate) => candidate.parallelGroup === null)?.id });
     if (preview.parallelGroup && active.some((candidate) => candidate.parallelGroup === preview.parallelGroup)) throw new AppError(AppErrorCode.CONSTRAINT_VIOLATION, `Parallel group ${preview.parallelGroup} is already active for ${preview.issue.identifier}.`, { parallelGroup: preview.parallelGroup });
@@ -251,10 +309,6 @@ function hydrateRun(context: ServiceContext, run: AgentRun) {
   };
 }
 
-function stableHash(value: unknown): string {
-  return createHash("sha256").update(stableStringify(value)).digest("hex");
-}
-
 function breadcrumbAction(type: string, data: Record<string, unknown>) {
   if (type === "phase.changed") return "run_phase_changed";
   if (type === "input.requested" || type === "permission.requested") return "run_waiting_for_input";
@@ -265,8 +319,3 @@ function breadcrumbAction(type: string, data: Record<string, unknown>) {
   return null;
 }
 
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  if (value && typeof value === "object") return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => `${JSON.stringify(key)}:${stableStringify(child)}`).join(",")}}`;
-  return JSON.stringify(value);
-}
