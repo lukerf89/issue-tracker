@@ -178,6 +178,14 @@ import { runStdioServer } from "@issue-tracker/mcp";
 import { runLinekeeperTui } from "@issue-tracker/tui";
 import { Command, InvalidArgumentError, Option } from "commander";
 
+import {
+  LIST_FILTER_KEYS,
+  SEARCH_FILTER_KEYS,
+  VIEW_SAVE_FILTER_KEYS,
+  addIssueFilterOptions,
+  parseInteger
+} from "./filter-options.js";
+
 import { openCliContext, resolveDbPath, type CliGlobalOptions } from "./context.js";
 import {
   handleCliError,
@@ -647,35 +655,13 @@ export function createProgram(): Command {
         printIssue(cli.context, created, options, { alreadyExisted: created.alreadyExisted });
       })
     );
-  issue
+  const issueListCommand = issue
     .command("list")
     .option("--view <name>", "saved or builtin view reference")
-    .option("--query <text>", "search within these filters")
-    .option("--state-types <types>", "comma-separated workflow types")
-    .option("--ready", "only ready backlog/unstarted work")
-    .option("--not-ready", "only work that is not ready")
-    .option("--parent <issue>", "parent issue identifier or ID")
-    .option("--no-parent", "only issues without a parent")
-    .option("--blocked-by <issue>", "issues blocked by this issue")
-    .option("--blocks <issue>", "issues blocking this issue")
-    .option("--repository <repository>", "effective repository ID/name")
-    .option("--updated-since <timestamp>", "inclusive ISO timestamp")
-    .option("--due-from <date>", "inclusive due date YYYY-MM-DD")
-    .option("--due-to <date>", "inclusive due date YYYY-MM-DD")
-    .option("--sort <field>", "identifier, priority, or updatedAt")
-    .option("--state <state>", "workflow state")
-    .option("--assignee <actor>", "assignee id or handle")
-    .option("--unassigned", "only unassigned issues")
-    .option("--project <project>", "project id or name")
-    .option("--no-project", "only issues without a project")
-    .option("--cycle <cycle>", "cycle number or id")
-    .option("--label <label>", "label name")
-    .option("--priority <number>", "priority", parseInteger)
-    .option("--team <key>", "team key")
-    .option("--limit <number>", "maximum number of issues per page", parseInteger)
+    .option("--query <text>", "search within these filters");
+  addIssueFilterOptions(issueListCommand, LIST_FILTER_KEYS)
     .option("--cursor <cursor>", "pagination cursor from a prior page")
     .option("--fields <list>", "comma-separated extra fields to project")
-    .option("--include-archived", "include archived issues")
     .option("--json", "print JSON output")
     .action((_options, command) =>
       withContext(command, { requireActor: false }, (cli) => {
@@ -696,32 +682,10 @@ export function createProgram(): Command {
         );
       })
     );
-  issue
+  const issueSearchCommand = issue
     .command("search")
-    .option("--ready", "only ready backlog/unstarted work")
-    .option("--not-ready", "only work that is not ready")
-    .option("--parent <issue>", "parent issue identifier or ID")
-    .option("--no-parent", "only issues without a parent")
-    .option("--blocked-by <issue>", "issues blocked by this issue")
-    .option("--blocks <issue>", "issues blocking this issue")
-    .option("--repository <repository>", "effective repository ID/name")
-    .option("--updated-since <timestamp>", "inclusive ISO timestamp")
-    .option("--due-from <date>", "inclusive due date YYYY-MM-DD")
-    .option("--due-to <date>", "inclusive due date YYYY-MM-DD")
-    .option("--sort <field>", "identifier, priority, or updatedAt")
-    .argument("<query>")
-    .option("--state <state>", "workflow state")
-    .option("--state-types <types>", "comma-separated workflow types")
-    .option("--assignee <actor>", "assignee id or handle")
-    .option("--unassigned", "only unassigned issues")
-    .option("--project <project>", "project id or name")
-    .option("--no-project", "only issues without a project")
-    .option("--cycle <cycle>", "cycle number or id")
-    .option("--label <label>", "label name")
-    .option("--priority <number>", "priority", parseInteger)
-    .option("--include-archived", "include archived issues")
-    .option("--team <key>", "team key")
-    .option("--limit <number>", "maximum number of issues per page", parseInteger)
+    .argument("<query>");
+  addIssueFilterOptions(issueSearchCommand, SEARCH_FILTER_KEYS)
     .option("--cursor <cursor>", "pagination cursor from a prior page")
     .option("--fields <list>", "comma-separated extra fields to project")
     .option("--json", "print JSON output")
@@ -1054,32 +1018,11 @@ export function createProgram(): Command {
 
   const view = program.command("view").description("manage saved issue views");
   view.command("builtins").description("list built-in references and their query semantics").option("--json").action(() => printJson(builtinIssueViews));
-  view
+  const viewSaveCommand = view
     .command("save")
-    .option("--ready", "only ready backlog/unstarted work")
-    .option("--not-ready", "only work that is not ready")
-    .option("--parent <issue>", "parent issue identifier or ID")
-    .option("--no-parent", "only issues without a parent")
-    .option("--blocked-by <issue>", "issues blocked by this issue")
-    .option("--blocks <issue>", "issues blocking this issue")
-    .option("--repository <repository>", "effective repository ID/name")
-    .option("--updated-since <timestamp>", "inclusive ISO timestamp")
-    .option("--due-from <date>", "inclusive due date YYYY-MM-DD")
-    .option("--due-to <date>", "inclusive due date YYYY-MM-DD")
-    .option("--sort <field>", "identifier, priority, or updatedAt")
     .argument("<name>")
-    .option("--query <text>", "saved search text")
-    .option("--state-types <types>", "comma-separated workflow types")
-    .option("--state <state>", "workflow state")
-    .option("--assignee <actor>", "assignee id or handle")
-    .option("--unassigned", "only unassigned issues")
-    .option("--project <project>", "project id or name")
-    .option("--no-project", "only issues without a project")
-    .option("--cycle <cycle>", "cycle number or id")
-    .option("--label <label>", "label name")
-    .option("--priority <number>", "priority", parseInteger)
-    .option("--team <key>", "team key")
-    .option("--include-archived", "include archived issues")
+    .option("--query <text>", "saved search text");
+  addIssueFilterOptions(viewSaveCommand, VIEW_SAVE_FILTER_KEYS)
     .option("--desc <description>", "view description")
     .option("--description <description>", "view description")
     .option("--json", "print JSON output")
@@ -1495,7 +1438,8 @@ function issueListFilters(options: Record<string, unknown>, defaultTeam?: string
   const project = options.project === false ? null : nullableStringOption(options.project);
   const assignee = options.unassigned === true ? null : nullableStringOption(options.assignee);
 
-  if (options.ready && options.notReady) throw new InvalidArgumentError("choose --ready or --not-ready");
+  // Paired flags (--assignee/--unassigned, --project/--no-project, --parent/--no-parent,
+  // --ready/--not-ready) are rejected together before the action by filter-options.ts.
   return listIssueFiltersSchema.parse(omitUndefined({
     query: stringOption(options.query),
     stateTypes: stringOption(options.stateTypes)?.split(",").map(value => value.trim()),
@@ -1790,15 +1734,6 @@ function runRuntime() {
     executableAvailable: engineRuntime.executableAvailable,
     requireEngineHealth: true
   };
-}
-
-function parseInteger(value: string): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || String(parsed) !== value) {
-    throw new InvalidArgumentError("expected an integer");
-  }
-
-  return parsed;
 }
 
 function parsePositiveInteger(value: string): number {
