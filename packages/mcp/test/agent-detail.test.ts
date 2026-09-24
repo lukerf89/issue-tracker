@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { addComment, createIssue, updateIssue } from "@issue-tracker/core";
 import { agentFixture } from "./agent-fixture.js";
+import { walkSection } from "./traversal.js";
 
 it("bounds selections and reconstructs complete Unicode requirements through section pages", async () => {
   const f = await agentFixture();
@@ -57,21 +58,6 @@ it("pages comments independently and exposes oversized nested values and bounded
   } finally { await f.close(); }
 });
 
-type SectionPage = { data: { value: unknown[]; omittedPaths: unknown[]; nextCursor: string | null } };
-
-async function walkSection(f: Awaited<ReturnType<typeof agentFixture>>, identifier: string, path: Array<string | number>, limit: number) {
-  const entries: unknown[] = [];
-  let cursor: string | undefined;
-  let last: SectionPage | undefined;
-  do {
-    last = await f.call("read_issue_section", { identifier, path, cursor, limit, maxBytes: 4096 }) as SectionPage;
-    entries.push(...last.data.value);
-    cursor = last.data.nextCursor ?? undefined;
-  } while (cursor);
-  expect(last!.data.nextCursor).toBeNull();
-  return entries;
-}
-
 it("pages large relationship sections to completion", async () => {
   const f = await agentFixture();
   try {
@@ -79,9 +65,9 @@ it("pages large relationship sections to completion", async () => {
     for (let n = 0; n < 5; n++) createIssue(f.context, { title: `Child ${n}`, parent: "ENG-1" });
     for (let n = 0; n < 3; n++) createIssue(f.context, { title: `Blocker ${n}`, blocks: ["ENG-1"] });
     const identifiers = (entries: unknown[]) => entries.map((entry) => (entry as { identifier: string }).identifier);
-    expect(identifiers(await walkSection(f, "ENG-1", ["children"], 2))).toEqual(["ENG-2", "ENG-3", "ENG-4", "ENG-5", "ENG-6"]);
-    expect(identifiers(await walkSection(f, "ENG-1", ["blockedBy"], 2))).toEqual(["ENG-7", "ENG-8", "ENG-9"]);
-    expect(identifiers(await walkSection(f, "ENG-7", ["blocks"], 2))).toEqual(["ENG-1"]);
+    expect(identifiers(await walkSection(f.call, "ENG-1", ["children"], 2))).toEqual(["ENG-2", "ENG-3", "ENG-4", "ENG-5", "ENG-6"]);
+    expect(identifiers(await walkSection(f.call, "ENG-1", ["blockedBy"], 2))).toEqual(["ENG-7", "ENG-8", "ENG-9"]);
+    expect(identifiers(await walkSection(f.call, "ENG-7", ["blocks"], 2))).toEqual(["ENG-1"]);
   } finally { await f.close(); }
 });
 
@@ -93,7 +79,7 @@ it("walks every comment, canonicalizes string indexes, and matches the CLI", asy
       f.context.clock = { now: () => new Date(Date.UTC(2026, 0, 2, 0, n)) };
       addComment(f.context, { issue: "ENG-1", body: `Comment ${n}` });
     }
-    const comments = await walkSection(f, "ENG-1", ["comments"], 5);
+    const comments = await walkSection(f.call, "ENG-1", ["comments"], 5);
     expect(comments.map((comment) => (comment as { body: string }).body)).toEqual(Array.from({ length: 12 }, (_, n) => `Comment ${n}`));
 
     const numeric = await f.call("read_issue_section", { identifier: "ENG-1", path: ["comments", 3, "body"] });

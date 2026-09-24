@@ -10,10 +10,11 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   addComment, addAttachment, addProfile, addRepository, applyMigrations, assignIssue, associateRepository, builtinProfileInput,
   createIssue, createLabel, createNodeRepositoryInspector, createProject, createSavedView, createTeam, createTemplate, init, openDb,
-  previewRun, startRun, whoami, type Clock, type ServiceContext
+  previewRun, startRun, whoami, type Clock, type ServiceContext, type ToolProfile
 } from "@issue-tracker/core";
 
 import { createServer } from "../src/index.js";
+import { seedWorkload, type Workload } from "./workload-seed.js";
 
 const builtCliPath = resolve(dirname(fileURLToPath(import.meta.url)), "../../cli/dist/index.js");
 
@@ -34,12 +35,18 @@ type RawDb = ReturnType<typeof openDb>["$client"];
 type Snapshot = Record<string, string[]>;
 export interface AuditEntry { table: string; op: "UPDATE" | "DELETE"; changed: string[] }
 
+export interface ContractFixtureOptions {
+  /** Also seed the heavy LF-145 workload (long bodies/comments, many relations, run events). */
+  workload?: boolean;
+}
+
 /**
  * Seeded fictional workspace for contract tests: every entity kind the tool catalog touches, two
  * MCP clients on the same database (a reader whose agent handle is absent from the database and a
  * writer), an advancing clock, and full-content snapshots plus an UPDATE/DELETE audit trail.
+ * Every client's server-to-client JSON-RPC bytes are counted (observation only).
  */
-export async function contractFixture() {
+export async function contractFixture(options: ContractFixtureOptions = {}) {
   const directory = mkdtempSync(join(tmpdir(), "tracker-tool-contracts-"));
   const previousEnv = { XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, XDG_DATA_HOME: process.env.XDG_DATA_HOME };
   process.env.XDG_CONFIG_HOME = join(directory, "config");
@@ -58,13 +65,24 @@ export async function contractFixture() {
   init(context);
   context.actor = whoami(context);
   const seed = seedWorkspace(context, directory);
+  const workload: Workload | undefined = options.workload ? seedWorkload(context, seed.run) : undefined;
 
   const clock = advancingClock();
   const servers: Array<{ server: { close(): Promise<void> }; client: Client }> = [];
-  const connect = async (actor: string | { handle: string; type?: "agent" | "human" }) => {
-    const server = createServer({ dbPath, actor: typeof actor === "string" ? { handle: actor } : actor, clock });
+  const wireBytes = new WeakMap<Client, { bytes: number }>();
+  const connect = async (actor: string | { handle: string; type?: "agent" | "human" }, connectOptions: { toolProfile?: ToolProfile } = {}) => {
+    const server = createServer({ dbPath, actor: typeof actor === "string" ? { handle: actor } : actor, clock, toolProfile: connectOptions.toolProfile });
     const client = new Client({ name: "tool-contract-test", version: "1" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    // Count every JSON-RPC message the server sends this client (the envelope as serialized;
+    // the in-memory transport has no stdio framing, so stdio's newline per message is excluded).
+    const counter = { bytes: 0 };
+    const send = serverTransport.send.bind(serverTransport);
+    serverTransport.send = (message, sendOptions) => {
+      counter.bytes += Buffer.byteLength(JSON.stringify(message));
+      return send(message, sendOptions);
+    };
+    wireBytes.set(client, counter);
     await server.connect(serverTransport);
     await client.connect(clientTransport);
     servers.push({ server, client });
@@ -74,6 +92,13 @@ export async function contractFixture() {
   const writer = await connect("fictional-agent");
   const raw = openDb(dbPath).$client;
   installAuditTriggers(raw);
+
+  /** A client not created by connect() has no counter; measuring it would silently read 0. */
+  const wireCounter = (client: Client) => {
+    const counter = wireBytes.get(client);
+    if (!counter) throw new Error("jsonRpcBytes: client was not registered via the fixture's connect(); its JSON-RPC bytes are not counted");
+    return counter;
+  };
 
   const call = async (client: Client, name: string, args: Record<string, unknown>): Promise<ToolCall> => {
     const result = await client.callTool({ name, arguments: args });
@@ -88,13 +113,19 @@ export async function contractFixture() {
 
   return {
     directory, dbPath, context, seed, engineConfig,
+    /** The heavy workload's seeded content (only with `{ workload: true }`). */
+    workload,
     reader: reader.client,
     writer: writer.client,
     read: (name: string, args: Record<string, unknown>) => call(reader.client, name, args),
     write: (name: string, args: Record<string, unknown>) => call(writer.client, name, args),
     call,
     /** Another client on the same database and clock, as the given caller (closed with the fixture). */
-    connect: async (actor: { handle: string; type?: "agent" | "human" }) => (await connect(actor)).client,
+    connect: async (actor: { handle: string; type?: "agent" | "human" }, connectOptions: { toolProfile?: ToolProfile } = {}) =>
+      (await connect(actor, connectOptions)).client,
+    /** Server-to-client JSON-RPC bytes this client has received since connecting (or the last reset). */
+    jsonRpcBytes: (client: Client) => wireCounter(client).bytes,
+    resetJsonRpcBytes: (client: Client) => { wireCounter(client).bytes = 0; },
     /** Every table's content (order-insensitive), excluding FTS internals and test bookkeeping. */
     snapshot(): Snapshot {
       const snapshot: Snapshot = {};
