@@ -55,27 +55,40 @@ function buildRunWorkContext(context: ServiceContext, identifier: string) {
   }
 }
 
-export function previewRun(context: ServiceContext, input: PreviewRunInput, runtime: RunResolutionRuntime) {
-  // Phase A: every database read happens in one read transaction, so the issue, routing, run
-  // ordinal, engine health and the frozen work context describe the same source state.
-  const { issue, profile, repositories, priorRunCount, engineHealth, workContext } = context.db.transaction((db) => {
-    const tx = { ...context, db };
-    const issue = getIssue(tx, input.issue);
-    const profile = getProfile(tx, input.profile);
-    if (profile.archivedAt) throw new AppError(AppErrorCode.CONSTRAINT_VIOLATION, `Profile ${profile.name} is archived.`);
-    const repositories = resolveIssueRepositories(tx, issue.identifier);
-    if (repositories.length === 0) throw new AppError(AppErrorCode.REPOSITORY_NOT_FOUND, `Issue ${issue.identifier} has no resolved repository.`);
-    const priorRunCount = tx.db.query.agentRuns.findMany({ where: eq(agentRuns.issueId, issue.id) }).sync().length;
-    const engineHealth = new Map<string, ReturnType<typeof getEngineHealth>>();
-    if (runtime.requireEngineHealth) {
-      for (const engineName of new Set(Object.values(profile.configuration.roles))) {
-        const definition = runtime.engineCatalog?.engines[engineName];
-        if (definition) engineHealth.set(engineName, getEngineHealth(tx, engineName, engineHealthFingerprint(engineName, definition)));
-      }
+/**
+ * Every database-derived input of a preview. The caller owns the transaction, so the issue, routing,
+ * run ordinal, engine health and the frozen work context describe the same source state.
+ */
+function readRunSources(tx: ServiceContext, input: PreviewRunInput, runtime: RunResolutionRuntime) {
+  const issue = getIssue(tx, input.issue);
+  const profile = getProfile(tx, input.profile);
+  if (profile.archivedAt) throw new AppError(AppErrorCode.CONSTRAINT_VIOLATION, `Profile ${profile.name} is archived.`);
+  const repositories = resolveIssueRepositories(tx, issue.identifier);
+  if (repositories.length === 0) throw new AppError(AppErrorCode.REPOSITORY_NOT_FOUND, `Issue ${issue.identifier} has no resolved repository.`);
+  const priorRunCount = tx.db.query.agentRuns.findMany({ where: eq(agentRuns.issueId, issue.id) }).sync().length;
+  const engineHealth = new Map<string, ReturnType<typeof getEngineHealth>>();
+  if (runtime.requireEngineHealth) {
+    for (const engineName of new Set(Object.values(profile.configuration.roles))) {
+      const definition = runtime.engineCatalog?.engines[engineName];
+      if (definition) engineHealth.set(engineName, getEngineHealth(tx, engineName, engineHealthFingerprint(engineName, definition)));
     }
-    const workContext = buildRunWorkContext(tx, issue.identifier);
-    return { issue, profile, repositories, priorRunCount, engineHealth, workContext };
-  });
+  }
+  const workContext = buildRunWorkContext(tx, issue.identifier);
+  return { issue, profile, repositories, priorRunCount, engineHealth, workContext };
+}
+
+function runSourcesDigest(sources: ReturnType<typeof readRunSources>) {
+  return stableHash({ ...sources, engineHealth: Object.fromEntries(sources.engineHealth) });
+}
+
+export function previewRun(context: ServiceContext, input: PreviewRunInput, runtime: RunResolutionRuntime) {
+  return resolveRunPreview(context, input, runtime).preview;
+}
+
+function resolveRunPreview(context: ServiceContext, input: PreviewRunInput, runtime: RunResolutionRuntime) {
+  // Phase A: every database read happens in one read transaction.
+  const sources = context.db.transaction((db) => readRunSources({ ...context, db }, input, runtime));
+  const { issue, profile, repositories, priorRunCount, engineHealth, workContext } = sources;
   // Phase B: filesystem inspection and snapshot assembly, outside the database transaction.
   const runSeed = stableHash({ issueId: issue.id, ordinal: priorRunCount + 1, parallelGroup: input.parallelGroup ?? null }).slice(0, 12);
   const resolvedRepositories = repositories.map((repository, position) => {
@@ -142,7 +155,7 @@ export function previewRun(context: ServiceContext, input: PreviewRunInput, runt
     errors,
     previewIssuedAt
   };
-  return { ...snapshot, previewFingerprint: `${previewIssuedAt}.${stableHash(snapshot)}` };
+  return { preview: { ...snapshot, previewFingerprint: `${previewIssuedAt}.${stableHash(snapshot)}` }, sourcesDigest: runSourcesDigest(sources) };
 }
 
 export function startRun(context: ServiceContext, input: StartRunInput, runtime: RunResolutionRuntime) {
@@ -150,7 +163,7 @@ export function startRun(context: ServiceContext, input: StartRunInput, runtime:
   const issuedAt = separator > 0 ? input.previewFingerprint.slice(0, separator) : "";
   const issuedTime = Date.parse(issuedAt);
   if (!Number.isFinite(issuedTime) || context.clock.now().getTime() - issuedTime > 5 * 60_000 || issuedTime - context.clock.now().getTime() > 5_000) throw new AppError(AppErrorCode.RUN_PREVIEW_STALE, "Run preview has expired; preview again before starting.");
-  const preview = previewRun(context, input, { ...runtime, fingerprintIssuedAt: issuedAt });
+  const { preview, sourcesDigest } = resolveRunPreview(context, input, { ...runtime, fingerprintIssuedAt: issuedAt });
   if (preview.previewFingerprint !== input.previewFingerprint) {
     throw new AppError(AppErrorCode.RUN_PREVIEW_STALE, "Run preview is stale; preview again before starting.", { expected: preview.previewFingerprint, received: input.previewFingerprint });
   }
@@ -159,6 +172,11 @@ export function startRun(context: ServiceContext, input: StartRunInput, runtime:
   if (missingConfirmations.length) throw new AppError(AppErrorCode.CONSTRAINT_VIOLATION, "Run warnings require explicit confirmation.", { warnings: missingConfirmations });
   if (!context.actor) throw new AppError(AppErrorCode.ACTOR_NOT_FOUND, "Starting a run requires an actor.");
   return inTransaction(context, (txContext) => {
+    // Repository inspection ran outside any transaction, so a write may have landed since the
+    // preview's reads. Re-read the database-derived inputs here and refuse to store a stale snapshot.
+    if (runSourcesDigest(readRunSources(txContext, input, runtime)) !== sourcesDigest) {
+      throw new AppError(AppErrorCode.RUN_PREVIEW_STALE, "Run sources changed while the preview was being resolved; preview again before starting.");
+    }
     const active = txContext.db.query.agentRuns.findMany({ where: and(eq(agentRuns.issueId, preview.issue.id), isNull(agentRuns.completedAt)) }).sync();
     if (!preview.parallelGroup && active.some((candidate) => candidate.parallelGroup === null)) throw new AppError(AppErrorCode.CONSTRAINT_VIOLATION, `Issue ${preview.issue.identifier} already has an active run.`, { runId: active.find((candidate) => candidate.parallelGroup === null)?.id });
     if (preview.parallelGroup && active.some((candidate) => candidate.parallelGroup === preview.parallelGroup)) throw new AppError(AppErrorCode.CONSTRAINT_VIOLATION, `Parallel group ${preview.parallelGroup} is already active for ${preview.issue.identifier}.`, { parallelGroup: preview.parallelGroup });

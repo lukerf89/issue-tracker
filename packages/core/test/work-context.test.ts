@@ -157,6 +157,35 @@ describe("work context contract", () => {
     } finally { f.close(); }
   });
 
+  it("admits the complete item set when it fits exactly, even though a partial set would not", () => {
+    // No repositories or description: the blockers are the only optional content, so completing them is the end.
+    const f = setup({ repositories: 0 });
+    try {
+      createIssue(f.context, { title: "Fictional runner", projectId: f.project.id });
+      createIssue(f.context, { title: "Fictional cache", projectId: f.project.id });
+      updateIssue(f.context, "ENG-1", { description: null, blockedBy: ["ENG-2", "ENG-3"] });
+      // Built directly: this exact budget is below get_work_context's minimum maxBytes.
+      const build = (maxBytes: number) => f.db.transaction((db) => buildWorkContext({ ...f.context, db }, "ENG-1", maxBytes));
+      const complete = build(65536);
+      expect(complete.omissions).toEqual([]);
+      // Shape: one blocker (item + provenance id + separators) costs less than the omission entry,
+      // two cost at least as much. So the minimum fits, one of two does not, and both fit exactly.
+      const item = (index: number) => bytes(complete.sections.blockers.items[index]) + bytes(complete.sections.blockers.provenance.ids[index]) + 2;
+      const omission = bytes({ section: "blockers", reason: "budget", unit: "items", omittedCount: 1, retrieval: complete.sections.blockers.retrieval });
+      expect(item(1)).toBeLessThan(omission);
+      expect(item(0) + item(1)).toBeGreaterThanOrEqual(omission);
+      // Same-digit-count maxBytes makes the complete rendering exactly this many bytes.
+      const exact = complete.budget.usedBytes - 1;
+      expect(String(exact).length).toBe(String(complete.budget.usedBytes).length);
+      const context = build(exact);
+      expect(context.sections.blockers.items.map((blocker) => blocker.identifier)).toEqual(["ENG-2", "ENG-3"]);
+      expect(context.sections.blockers.truncated).toBe(false);
+      expect(context.omissions).toEqual([]);
+      expect(context.budget.usedBytes).toBe(exact);
+      expect(context.budget.usedBytes).toBe(bytes(context));
+    } finally { f.close(); }
+  });
+
   it("reports characters cut from long decision and comment bodies as limit omissions", () => {
     const f = setup();
     try {
@@ -393,6 +422,27 @@ describe("run launch freezes the work context", () => {
       const preview = previewRun(f.context, { issue: "ENG-1" }, f.runtime);
       addComment(f.context, { issue: "ENG-1", body: "Decision: switch fictional runners" });
       expect(captureError(() => startRun(f.context, { issue: "ENG-1", previewFingerprint: preview.previewFingerprint, confirmWarnings: preview.warnings }, f.runtime)).code).toBe("RUN_PREVIEW_STALE");
+    } finally { f.close(); }
+  });
+
+  it("raises RUN_PREVIEW_STALE and writes nothing when a write lands during start's repository inspection", () => {
+    const f = setup();
+    try {
+      let interfere: (() => void) | null = null;
+      const runtime = { ...f.runtime, inspector: { inspect: (path: string, baseRef?: string) => {
+        const write = interfere; interfere = null; write?.();
+        return fakeInspector.inspect(path, baseRef);
+      } } satisfies RepositoryInspector };
+      const preview = previewRun(f.context, { issue: "ENG-1" }, runtime);
+      // startRun's own preview reads the database first, then inspects: this write lands in between.
+      interfere = () => addComment(f.context, { issue: "ENG-1", body: "Decision: switch fictional runners" });
+      const activityBefore = f.db.$client.prepare("SELECT count(*) AS n FROM activity").get() as { n: number };
+      expect(captureError(() => startRun(f.context, { issue: "ENG-1", previewFingerprint: preview.previewFingerprint, confirmWarnings: preview.warnings }, runtime)).code).toBe("RUN_PREVIEW_STALE");
+      expect(interfere).toBeNull();
+      expect(f.db.$client.prepare("SELECT count(*) AS n FROM agent_runs").get()).toEqual({ n: 0 });
+      // Only the interfering comment's own activity was appended; no run_launched entry.
+      expect(f.db.$client.prepare("SELECT count(*) AS n FROM activity WHERE action = 'run_launched'").get()).toEqual({ n: 0 });
+      expect((f.db.$client.prepare("SELECT count(*) AS n FROM activity").get() as { n: number }).n).toBe(activityBefore.n + 1);
     } finally { f.close(); }
   });
 

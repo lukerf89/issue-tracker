@@ -268,13 +268,20 @@ export function buildWorkContext(context: ServiceContext, identifier: string, ma
   if (minimumBytes > maxBytes) {
     throw new WorkContextMinimumExceededError(sources.issue.identifier, minimumBytes, maxBytes);
   }
-  // Reaching the end of a text drops (or re-labels) its omission entry, so the output can shrink
-  // there: fits is not monotone at that point. Try the complete text before binary searching.
-  const fitPrefix = (text: string, fitsAt: (end: number) => boolean) => fitsAt(text.length) ? text.length : fitStringPrefix(text, 0, (slice) => fitsAt(slice.length));
+  // Completing a section (a whole text, or every admissible item) drops or re-labels its omission
+  // entry, so the output can shrink there: fits is not monotone at that point. Every fill tries the
+  // complete amount first and only then searches for the largest partial amount that fits.
+  const fillTo = (complete: number, fitsAt: (amount: number) => boolean, partial: () => number) => fitsAt(complete) ? complete : partial();
+  const fitPrefix = (text: string, fitsAt: (end: number) => boolean) => fillTo(text.length, fitsAt, () => fitStringPrefix(text, 0, (slice) => fitsAt(slice.length)));
   const description = sources.issue.description;
   if (description) fill.descriptionEnd = fitPrefix(description, (end) => fits({ ...fill, descriptionEnd: end }));
   const admit = (key: "blockers" | "candidates" | "decisions" | "comments", available: number) => {
-    while (fill[key] < available && fits({ ...fill, [key]: fill[key] + 1 })) fill[key] += 1;
+    const fitsAt = (count: number) => fits({ ...fill, [key]: count });
+    fill[key] = fillTo(available, fitsAt, () => {
+      let count = fill[key];
+      while (count + 1 < available && fitsAt(count + 1)) count += 1;
+      return count;
+    });
   };
   admit("blockers", sources.blockers.length);
   if (sources.parent && fits({ ...fill, parent: true })) {
