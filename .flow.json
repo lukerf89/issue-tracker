@@ -1,0 +1,31 @@
+{
+  "component": "issue-tracker",
+  "preflightCmd": "npm ci --prefer-offline --no-audit --no-fund",
+  "testCmd": "npm run typecheck && npm test",
+  "lintCmd": "npm run lint && npm run build",
+  "baseRef": "origin/main",
+  "prBase": "main",
+  "contextFiles": [
+    "AGENTS.md",
+    "AGENT_GUIDE.md",
+    "docs/SPEC.md"
+  ],
+  "codexEligible": true,
+  "codexProfile": "organic-implement",
+  "codexGithubReviewer": true,
+  "commitSubject": "{issue}: {summary}",
+  "mergeMethod": "squash",
+  "migrationGlobs": [
+    "packages/*/migrations/**"
+  ],
+  "e2eCmd": null,
+  "envGates": [],
+  "deploy": null,
+  "mergePolicy": "on-green",
+  "manualTests": [],
+  "recordDir": "docs/validation",
+  "linearTextRules": [
+    "Write full PR URLs; bare #N or bare issue keys auto-link to unrelated items."
+  ],
+  "notes": "Run typecheck FIRST: tsc -b rebuilds core dist; tests otherwise run against stale dist. main requires green `ci` and resolved review threads."
+}
