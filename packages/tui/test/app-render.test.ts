@@ -26,6 +26,7 @@ import {
 } from "@issue-tracker/core";
 
 import { highlightSnippet, LinekeeperApp } from "../src/app.js";
+import { prepareLinekeeperStartup } from "../src/data.js";
 
 const tempDirs: string[] = [];
 
@@ -144,6 +145,60 @@ describe("LinekeeperApp render", () => {
       view.stdin.write("1"); await tick();
       expect(stripAnsi(view.lastFrame() ?? "")).toContain("/cursor");
       view.unmount();
+    } finally { setup.close(); }
+  });
+
+  it("starts with the same scope from startup options as from interactive view, search and filter", async () => {
+    const setup = initializedContext();
+    try {
+      createProject(setup.context, { name: "Demo Project" });
+      createSavedView(setup.context, { name: "Demo work", filters: { project: "Demo Project" } });
+      createIssue(setup.context, { title: "CI pipeline", project: "Demo Project" });
+      const docs = createIssue(setup.context, { title: "CI docs", project: "Demo Project" });
+      moveIssue(setup.context, docs.identifier, "Done");
+      createIssue(setup.context, { title: "Deploy checklist", project: "Demo Project" });
+
+      const fromOptions = render(createElement(LinekeeperApp, {
+        context: setup.context, dbPath: setup.dbPath, defaultTeam: "ENG",
+        startup: prepareLinekeeperStartup(setup.context, {
+          defaultTeam: "ENG", startup: { view: "Demo work", search: "ci", filterText: 'state="Todo"' }
+        })
+      }));
+      await tick();
+      const optionFrame = stripAnsi(fromOptions.lastFrame() ?? "");
+
+      const interactive = render(createElement(LinekeeperApp, { context: setup.context, dbPath: setup.dbPath, defaultTeam: "ENG" }));
+      for (const input of ["v", "Demo work", "\r", "/", "ci", "\r", ":", "state=Todo", "\r"]) {
+        await tick(); interactive.stdin.write(input);
+      }
+      await tick();
+      const interactiveFrame = stripAnsi(interactive.lastFrame() ?? "");
+
+      const rows = (frame: string) => frame.split("\n").filter(line => /ENG-\d+/.test(line)).map(line => line.trim());
+      for (const frame of [optionFrame, interactiveFrame]) {
+        expect(frame).toContain("Demo work (Modified)");
+        expect(frame).toContain("/ci");
+        expect(frame).toContain("state=Todo");
+        expect(frame).toContain("| 1 loaded");
+        expect(frame).toContain("CI pipeline");
+        expect(frame).not.toContain("CI docs");
+        expect(frame).not.toContain("Deploy checklist");
+      }
+      expect(rows(optionFrame)).toEqual(rows(interactiveFrame));
+      expect(optionFrame).toContain("Started from command-line options.");
+      fromOptions.unmount();
+      interactive.unmount();
+
+      const multiword = render(createElement(LinekeeperApp, {
+        context: setup.context, dbPath: setup.dbPath, defaultTeam: "ENG",
+        startup: prepareLinekeeperStartup(setup.context, { defaultTeam: "ENG", startup: { filterText: 'project="Demo Project"' } })
+      }));
+      await tick();
+      const multiwordFrame = stripAnsi(multiword.lastFrame() ?? "");
+      expect(multiwordFrame).toContain("project:Demo Project");
+      expect(multiwordFrame).toContain("| ENG |");
+      expect(multiwordFrame).toContain("| 3 loaded");
+      multiword.unmount();
     } finally { setup.close(); }
   });
 

@@ -78,6 +78,12 @@ export const VIEW_SAVE_FILTER_KEYS: readonly FilterKey[] = ALL_FILTER_KEYS.filte
   (key) => key !== "query" && key !== "limit"
 );
 
+/**
+ * `tracker tui`: the launch-scope subset — the filters the TUI's `:` picker edits, so
+ * `--search`/`--view`/`--filter` plus these flags start the UI in a scope typed at the shell.
+ */
+export const TUI_FILTER_KEYS: readonly FilterKey[] = ["team", "project", "state", "assignee", "label", "priority"];
+
 /** Value flag name → its null-alias flag name, for mutual-exclusion checks. */
 const ALIAS_PAIRS: ReadonlyArray<readonly [string, string]> = ALL_FILTER_KEYS.flatMap((key) => {
   const spec = ISSUE_FILTER_OPTIONS[key];

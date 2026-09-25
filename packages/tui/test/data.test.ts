@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  AppError,
+  AppErrorCode,
   applyMigrations,
+  createProject,
+  getLastSelectedView,
   createActor,
   createIssue,
   createLabel,
@@ -28,9 +32,11 @@ import {
   executeLinekeeperCommand,
   loadLinekeeperData,
   loadMoreLinekeeperData,
+  prepareLinekeeperStartup,
   restoreLinekeeperData,
   parseFilterInput,
-  removeFilterKey
+  removeFilterKey,
+  startupLoadOptions
 } from "../src/data.js";
 import { formatLastAgentActivity, issueAssignee, issueState } from "../src/format.js";
 
@@ -341,3 +347,71 @@ function initializedContext(timestamp = "2026-07-01T00:00:00.000Z"): {
 function fixedClock(timestamp: string): Clock {
   return { now: () => new Date(timestamp) };
 }
+
+describe("Linekeeper command-line startup", () => {
+  it("returns null load options when nothing explicit was given", () => {
+    expect(startupLoadOptions(undefined, "ENG")).toBeNull();
+    expect(startupLoadOptions({}, "ENG")).toBeNull();
+    expect(startupLoadOptions({ search: undefined, filters: undefined }, "ENG")).toBeNull();
+  });
+
+  it("composes view, filter text, named filters and search with the documented precedence", () => {
+    expect(startupLoadOptions({
+      view: "Urgent", filterText: 'project="Demo Project" team=all', filters: { state: "Todo" }, search: "ci"
+    }, "ENG")).toEqual({ view: "Urgent", team: null, search: "ci", filters: { project: "Demo Project", state: "Todo" } });
+    // Named flags win over the same key in the filter text.
+    expect(startupLoadOptions({ filterText: "state=Todo", filters: { state: "Done" } })).toMatchObject({ filters: { state: "Done" } });
+    expect(startupLoadOptions({ filterText: "team=all", filters: { team: "ENG" } })).toMatchObject({ team: "ENG", filters: { team: "ENG" } });
+    // The default team survives search-only and filter-only launches, but a view drops it.
+    expect(startupLoadOptions({ search: "ci" }, "ENG")).toEqual({ view: null, team: "ENG", search: "ci", filters: {} });
+    expect(startupLoadOptions({ filterText: "label=ci" }, "ENG")).toEqual({ view: null, team: "ENG", filters: { label: "ci" } });
+    expect(startupLoadOptions({ view: "Urgent" }, "ENG")).toEqual({ view: "Urgent", filters: {} });
+    expect(startupLoadOptions({ search: "ci" })).toEqual({ view: null, search: "ci", filters: {} });
+  });
+
+  it("starts from explicit options without touching the remembered view", () => {
+    const setup = initializedContext();
+    try {
+      createTeam(setup.context, { key: "OPS", name: "Operations" });
+      createProject(setup.context, { name: "Demo Project" });
+      const pipeline = createIssue(setup.context, { title: "CI pipeline", project: "Demo Project" });
+      createIssue(setup.context, { title: "Deploy checklist", project: "Demo Project" });
+      createIssue(setup.context, { title: "CI runners", team: "OPS" });
+      createSavedView(setup.context, { name: "Demo work", filters: { project: "Demo Project" } });
+      setLastSelectedView(setup.context, "Demo work");
+
+      const started = prepareLinekeeperStartup(setup.context, { defaultTeam: "ENG", startup: { search: "ci" } });
+      expect(getLastSelectedView(setup.context)).toBe("Demo work");
+      expect(started.message).toBe("Ignored remembered view Demo work; using command-line options.");
+      expect(started.options).toEqual({ view: null, team: "ENG", search: "ci", filters: {} });
+      const expected = loadLinekeeperData(setup.context, { search: "ci", team: "ENG" });
+      expect(started.data.issues.map(issue => issue.id)).toEqual([pipeline.id]);
+      expect(started.data.issues.map(issue => issue.id)).toEqual(expected.issues.map(issue => issue.id));
+      expect(started.data.search).toBe(expected.search);
+      expect(started.data.activeTeamKey).toBe("ENG");
+      expect(started.data.activeView).toBeNull();
+
+      const viewed = prepareLinekeeperStartup(setup.context, { defaultTeam: "ENG", startup: { view: "Demo work", filterText: "team=OPS" } });
+      expect(viewed.data.activeView).toBe("Demo work");
+      expect(viewed.data.modifiedView).toBe(true);
+      expect(viewed.data.activeTeamKey).toBe("OPS");
+      expect(viewed.data.issues).toHaveLength(0);
+
+      // With nothing explicit, the legacy restore path is used as-is.
+      const restored = prepareLinekeeperStartup(setup.context, { defaultTeam: "ENG" });
+      const legacy = restoreLinekeeperData(setup.context, "ENG");
+      expect(restored.options).toEqual(legacy.options);
+      expect(restored.message).toBe("Restored view Demo work.");
+      expect(restored.data.issues.map(issue => issue.id)).toEqual(legacy.data.issues.map(issue => issue.id));
+      expect(prepareLinekeeperStartup(setup.context, { defaultTeam: "ENG", startup: {} }).message).toBe("Restored view Demo work.");
+
+      // Invalid explicit input fails loudly instead of falling back.
+      expect(() => prepareLinekeeperStartup(setup.context, { startup: { filterText: "bogus=1" } }))
+        .toThrow(expect.objectContaining({ code: AppErrorCode.VALIDATION_FAILED }));
+      let caught: unknown;
+      try { prepareLinekeeperStartup(setup.context, { startup: { view: "nope" } }); } catch (error) { caught = error; }
+      expect(caught).toBeInstanceOf(AppError);
+      expect((caught as AppError).code).toBe(AppErrorCode.SAVED_VIEW_NOT_FOUND);
+    } finally { setup.close(); }
+  });
+});

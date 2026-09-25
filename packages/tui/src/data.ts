@@ -60,6 +60,20 @@ export interface LinekeeperLoadOptions {
   cursor?: string;
 }
 
+/** Scope typed on the command line; core validates it before the UI renders. */
+export interface LinekeeperStartupOptions {
+  search?: string;
+  view?: string;
+  filterText?: string;
+  filters?: ListIssueFilters;
+}
+
+export interface LinekeeperStartup {
+  data: LinekeeperData;
+  options: LinekeeperLoadOptions;
+  message: string | null;
+}
+
 export interface LinekeeperData {
   issues: IssueWithDetails[];
   nextCursor: string | null;
@@ -179,9 +193,7 @@ export function loadLinekeeperData(
 // that selection into the options the list is loaded with. undefined means
 // nothing was ever selected, so the frontend's default team scope applies;
 // null means "All issues" was chosen deliberately and must survive a restart.
-export function restoreLinekeeperData(context: ServiceContext, defaultTeam?: string): {
-  data: LinekeeperData; options: LinekeeperLoadOptions; message: string | null;
-} {
+export function restoreLinekeeperData(context: ServiceContext, defaultTeam?: string): LinekeeperStartup {
   const view = getLastSelectedView(context);
   const options: LinekeeperLoadOptions =
     view === undefined ? { team: defaultTeam } : view === null ? {} : { view };
@@ -192,6 +204,51 @@ export function restoreLinekeeperData(context: ServiceContext, defaultTeam?: str
     return { data: loadLinekeeperData(context, fallback), options: fallback,
       message: `Could not restore view ${view}: ${error instanceof Error ? error.message : String(error)}. Showing default scope.` };
   }
+}
+
+// Turn command-line startup options into one load: `view` supplies the base filters
+// (core resolves it), `filterText` is merged on top through the same grammar as the
+// TUI's `:` prompt, named `filters` override the same key from the text, and `search`
+// runs within the result. Team scope: a named team wins; `team=all` in the text clears
+// it; a view alone drops the default team (as `issue list --view` does); otherwise the
+// frontend's default team applies, exactly as an interactive search would keep it.
+// Returns null when nothing explicit was given, so the caller restores the last view.
+export function startupLoadOptions(
+  startup: LinekeeperStartupOptions | undefined,
+  defaultTeam?: string
+): LinekeeperLoadOptions | null {
+  if (!startup || Object.values(startup).every(value => value === undefined)) return null;
+  const parsed = startup.filterText ? parseIssueFilterText(startup.filterText) : { filters: {}, clear: [] };
+  const named = omitUndefined({ ...(startup.filters ?? {}) }) as ListIssueFilters;
+  let filters = listIssueFiltersSchema.parse({ ...parsed.filters, ...named });
+  for (const key of parsed.clear) {
+    if (!(key in named)) filters = removeFilterKey(filters, key);
+  }
+  const team = named.team !== undefined
+    ? named.team
+    : parsed.clear.includes("team")
+      ? null
+      : startup.view
+        ? undefined
+        : defaultTeam;
+  return omitUndefined({ view: startup.view ?? null, team, search: startup.search, filters });
+}
+
+// Startup for the UI. Explicit options are validated by core here, before Ink renders,
+// so bad input surfaces as a CLI error rather than a half-drawn screen; they replace the
+// remembered view for this launch only and are never saved as the last selection.
+export function prepareLinekeeperStartup(
+  context: ServiceContext,
+  { defaultTeam, startup }: { defaultTeam?: string; startup?: LinekeeperStartupOptions }
+): LinekeeperStartup {
+  const options = startupLoadOptions(startup, defaultTeam);
+  if (!options) return restoreLinekeeperData(context, defaultTeam);
+  const data = loadLinekeeperData(context, options);
+  const remembered = getLastSelectedView(context);
+  const message = typeof remembered === "string"
+    ? `Ignored remembered view ${remembered}; using command-line options.`
+    : "Started from command-line options.";
+  return { data, options, message };
 }
 
 // Fetch before replacing the usable list; callers can show an error and retry.

@@ -182,6 +182,7 @@ import { Command, InvalidArgumentError, Option } from "commander";
 import {
   LIST_FILTER_KEYS,
   SEARCH_FILTER_KEYS,
+  TUI_FILTER_KEYS,
   VIEW_SAVE_FILTER_KEYS,
   addIssueFilterOptions,
   parseInteger
@@ -1208,17 +1209,52 @@ export function createProgram(): Command {
       })
     );
 
-  program
+  const tuiCommand = program
     .command("tui")
     .description("open the Linekeeper terminal UI")
+    .option("--search <text>", "start with this search within the resulting scope")
+    .option("--view <name>", "saved or builtin view to start in")
+    .option("--filter <text>", 'filter text in the TUI : grammar, e.g. state="In Progress" label=ci (team=all clears the team)');
+  addIssueFilterOptions(tuiCommand, TUI_FILTER_KEYS)
+    .addHelpText("after", `
+Startup scope:
+  With no options the last selected view (or the default --team scope) is restored, as
+  before. Any of --search, --view, --filter or a filter flag other than --team replaces
+  that remembered scope for this launch only; it is validated before the UI opens and is
+  not saved as the last selected view.
+  Precedence: --view supplies the base filters (and drops the default team unless --team
+  is given); --filter overrides the view; named flags (--team, --project, --state,
+  --assignee, --label, --priority, --unassigned, --no-project) override the same key in
+  --filter; --search searches within the result.
+  --team may be given before or after "tui": alone it is the default team scope; with
+  any other startup option it pins the team for this launch (like issue list --team).`)
     .action((_options, command) =>
-      withContextAsync(command, {}, (cli) =>
-        runLinekeeperTui({
+      withContextAsync(command, {}, (cli) => {
+        // Commander resolves the global --team wherever it appears, so its position is
+        // not observable here. --team alone keeps the restore path (default team scope);
+        // with another startup option it is a named filter and wins like issue list.
+        const options = optionsWithGlobals(command);
+        for (const key of ["search", "view", "filter"] as const) {
+          if (typeof options[key] === "string" && options[key].trim().length === 0) {
+            throw new InvalidArgumentError(`--${key} requires a non-empty value`);
+          }
+        }
+        const filters = issueListFilters(options);
+        const startup = omitUndefined({
+          search: stringOption(options.search),
+          view: stringOption(options.view),
+          filterText: stringOption(options.filter),
+          filters: Object.keys(filters).length ? filters : undefined
+        });
+        const explicit = Object.keys(startup).some((key) => key !== "filters") ||
+          Object.keys(filters).some((key) => key !== "team");
+        return runLinekeeperTui({
           context: cli.context,
           dbPath: cli.dbPath,
-          defaultTeam: cli.defaultTeam
-        })
-      )
+          defaultTeam: cli.defaultTeam,
+          startup: explicit ? startup : undefined
+        });
+      })
     );
 
   program

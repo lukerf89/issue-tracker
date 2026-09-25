@@ -18,7 +18,8 @@ import {
   type LinekeeperCommand,
   type LinekeeperCoreCommand,
   type LinekeeperData,
-  type LinekeeperLoadOptions
+  type LinekeeperLoadOptions,
+  type LinekeeperStartup
 } from "./data.js";
 import {
   buildFilterChips,
@@ -51,18 +52,20 @@ export interface LinekeeperAppProps {
   context: ServiceContext;
   dbPath: string;
   defaultTeam?: string;
+  /** Already-loaded startup scope (command-line options); defaults to the remembered view. */
+  startup?: LinekeeperStartup;
 }
 
-export function LinekeeperApp({ context, dbPath, defaultTeam }: LinekeeperAppProps) {
+export function LinekeeperApp({ context, dbPath, defaultTeam, startup }: LinekeeperAppProps) {
   const { exit } = useApp();
-  const [startup] = useState(() => restoreLinekeeperData(context, defaultTeam));
-  const [loadOptions, setLoadOptions] = useState<LinekeeperLoadOptions>(startup.options);
-  const [data, setData] = useState<LinekeeperData>(startup.data);
+  const [initial] = useState(() => startup ?? restoreLinekeeperData(context, defaultTeam));
+  const [loadOptions, setLoadOptions] = useState<LinekeeperLoadOptions>(initial.options);
+  const [data, setData] = useState<LinekeeperData>(initial.data);
   const [uiState, dispatchBase] = useReducer(
     (state: LinekeeperUiState, action: Parameters<typeof reduceLinekeeperState>[1]) =>
       reduceLinekeeperState(state, action, data.issues.length),
     undefined,
-    () => ({ ...initialLinekeeperState(), statusMessage: startup.message })
+    () => ({ ...initialLinekeeperState(), statusMessage: initial.message })
   );
   const selectedIssue = useMemo(
     () => data.issues[Math.min(uiState.selectedIndex, Math.max(0, data.issues.length - 1))] ?? null,
