@@ -1234,11 +1234,6 @@ Startup scope:
         // not observable here. Core decides whether the input is an explicit scope or
         // the remembered view should be restored (--team alone is the default scope).
         const options = optionsWithGlobals(command);
-        for (const key of ["search", "view", "filter"] as const) {
-          if (typeof options[key] === "string" && options[key].trim().length === 0) {
-            throw new InvalidArgumentError(`--${key} requires a non-empty value`);
-          }
-        }
         const filters = issueListFilters(options);
         const startup = omitUndefined({
           search: stringOption(options.search),

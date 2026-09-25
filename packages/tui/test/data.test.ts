@@ -416,6 +416,12 @@ describe("Linekeeper command-line startup", () => {
       // Invalid explicit input fails loudly instead of falling back.
       expect(() => prepareLinekeeperStartup(setup.context, { startup: { filterText: "bogus=1" } }))
         .toThrow(expect.objectContaining({ code: AppErrorCode.VALIDATION_FAILED }));
+      // Blank text is a validation error for every caller, not a silent fallback that
+      // skips the remembered view (or, for a blank view, drops the default team).
+      for (const startup of [{ search: "  " }, { view: "" }, { filterText: " " }]) {
+        expect(() => prepareLinekeeperStartup(setup.context, { defaultTeam: "ENG", startup }))
+          .toThrow(expect.objectContaining({ code: AppErrorCode.VALIDATION_FAILED }));
+      }
       let caught: unknown;
       try { prepareLinekeeperStartup(setup.context, { startup: { view: "nope" } }); } catch (error) { caught = error; }
       expect(caught).toBeInstanceOf(AppError);

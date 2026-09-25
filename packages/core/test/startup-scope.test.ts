@@ -30,4 +30,13 @@ describe("resolveStartupScope", () => {
     expect(() => resolveStartupScope({ filterText: "bogus=1" }))
       .toThrow(expect.objectContaining({ code: AppErrorCode.VALIDATION_FAILED }));
   });
+
+  it("rejects blank search, view and filter text instead of silently skipping the remembered view", () => {
+    for (const input of [{ search: "" }, { search: "   " }, { view: " " }, { filterText: "" }, { view: "Urgent", search: "" }]) {
+      expect(() => resolveStartupScope(input, "ENG"))
+        .toThrow(expect.objectContaining({ code: AppErrorCode.VALIDATION_FAILED, message: expect.stringContaining("requires a non-empty value") }));
+      expect(() => isExplicitStartupScope(input))
+        .toThrow(expect.objectContaining({ code: AppErrorCode.VALIDATION_FAILED }));
+    }
+  });
 });

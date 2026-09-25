@@ -114,8 +114,9 @@ describe("tracker tui startup scope", () => {
     [["tui", "--view", "nope"], "SAVED_VIEW_NOT_FOUND", /nope/],
     [["tui", "--priority", "7"], "VALIDATION_FAILED", /Input validation failed/],
     [["tui", "--project", "x", "--no-project"], "VALIDATION_FAILED", /choose --project or --no-project/],
-    [["tui", "--search", ""], "VALIDATION_FAILED", /--search requires a non-empty value/],
-    [["tui", "--filter", "   "], "VALIDATION_FAILED", /--filter requires a non-empty value/]
+    [["tui", "--search", ""], "VALIDATION_FAILED", /search requires a non-empty value/],
+    [["tui", "--view", " "], "VALIDATION_FAILED", /view requires a non-empty value/],
+    [["tui", "--filter", "   "], "VALIDATION_FAILED", /filterText requires a non-empty value/]
   ])("rejects %j before rendering", async (args, code, message) => {
     const dbPath = seed();
     const result = await tracker(dbPath, args);

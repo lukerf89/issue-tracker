@@ -1,3 +1,4 @@
+import { AppError, AppErrorCode } from "../errors.js";
 import { listIssueFiltersSchema } from "../schemas/issue.js";
 import { parseIssueFilterText } from "./filterText.js";
 import type { ListIssueFilters } from "./issue.js";
@@ -30,6 +31,7 @@ export interface StartupScope {
  */
 export function isExplicitStartupScope(input: StartupScopeInput | undefined): boolean {
   if (!input) return false;
+  assertStartupScopeText(input);
   if (input.search !== undefined || input.view !== undefined || input.filterText !== undefined) return true;
   return Object.entries(input.filters ?? {}).some(([key, value]) => key !== "team" && value !== undefined);
 }
@@ -47,7 +49,9 @@ export function resolveStartupScope(
   input: StartupScopeInput | undefined,
   defaultTeam?: string
 ): StartupScope | null {
-  if (!input || !isExplicitStartupScope(input)) return null;
+  if (!input) return null;
+  assertStartupScopeText(input);
+  if (!isExplicitStartupScope(input)) return null;
   const parsed = input.filterText ? parseIssueFilterText(input.filterText) : { filters: {}, clear: [] };
   const named = Object.fromEntries(
     Object.entries(input.filters ?? {}).filter(([, value]) => value !== undefined)
@@ -68,4 +72,24 @@ export function resolveStartupScope(
   if (team !== undefined) scope.team = team;
   if (input.search !== undefined) scope.search = input.search;
   return scope;
+}
+
+const STARTUP_TEXT_KEYS = ["search", "view", "filterText"] as const;
+
+/**
+ * A blank `search`, `view` or `filterText` is neither a scope nor "nothing given": loading
+ * would normalise it away and silently skip the remembered view (a blank view would also
+ * drop the default team), so every caller gets the same validation error instead.
+ */
+export function assertStartupScopeText(input: StartupScopeInput): void {
+  for (const key of STARTUP_TEXT_KEYS) {
+    const value = input[key];
+    if (value !== undefined && (typeof value !== "string" || value.trim().length === 0)) {
+      throw new AppError(
+        AppErrorCode.VALIDATION_FAILED,
+        `Startup ${key} requires a non-empty value`,
+        { field: key }
+      );
+    }
+  }
 }
