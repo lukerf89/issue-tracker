@@ -1,7 +1,7 @@
 {
   "component": "issue-tracker",
   "preflightCmd": "npm ci --prefer-offline --no-audit --no-fund",
-  "testCmd": "npm run typecheck && npm test",
+  "testCmd": "npm run typecheck && CI=true npm test",
   "lintCmd": "npm run lint && npm run build",
   "baseRef": "origin/main",
   "prBase": "main",
@@ -16,7 +16,7 @@
   "commitSubject": "{issue}: {summary}",
   "mergeMethod": "squash",
   "migrationGlobs": [
-    "packages/*/migrations/**"
+    "packages/core/src/migrations/**"
   ],
   "e2eCmd": null,
   "envGates": [],
