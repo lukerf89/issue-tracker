@@ -353,6 +353,10 @@ describe("Linekeeper command-line startup", () => {
     expect(startupLoadOptions(undefined, "ENG")).toBeNull();
     expect(startupLoadOptions({}, "ENG")).toBeNull();
     expect(startupLoadOptions({ search: undefined, filters: undefined }, "ENG")).toBeNull();
+    // A team alone is the default scope, so the remembered view is still restored (core rule,
+    // so every caller of the startup API behaves like `tracker tui --team ENG`).
+    expect(startupLoadOptions({ filters: { team: "ENG" } }, "ENG")).toBeNull();
+    expect(startupLoadOptions({ filters: { team: "OPS" } }, "ENG")).toBeNull();
   });
 
   it("composes view, filter text, named filters and search with the documented precedence", () => {
@@ -404,6 +408,10 @@ describe("Linekeeper command-line startup", () => {
       expect(restored.message).toBe("Restored view Demo work.");
       expect(restored.data.issues.map(issue => issue.id)).toEqual(legacy.data.issues.map(issue => issue.id));
       expect(prepareLinekeeperStartup(setup.context, { defaultTeam: "ENG", startup: {} }).message).toBe("Restored view Demo work.");
+      const teamOnly = prepareLinekeeperStartup(setup.context, { defaultTeam: "OPS", startup: { filters: { team: "OPS" } } });
+      expect(teamOnly.message).toBe("Restored view Demo work.");
+      expect(teamOnly.data.activeView).toBe("Demo work");
+      expect(teamOnly.options).toEqual(legacy.options);
 
       // Invalid explicit input fails loudly instead of falling back.
       expect(() => prepareLinekeeperStartup(setup.context, { startup: { filterText: "bogus=1" } }))

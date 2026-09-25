@@ -1231,8 +1231,8 @@ Startup scope:
     .action((_options, command) =>
       withContextAsync(command, {}, (cli) => {
         // Commander resolves the global --team wherever it appears, so its position is
-        // not observable here. --team alone keeps the restore path (default team scope);
-        // with another startup option it is a named filter and wins like issue list.
+        // not observable here. Core decides whether the input is an explicit scope or
+        // the remembered view should be restored (--team alone is the default scope).
         const options = optionsWithGlobals(command);
         for (const key of ["search", "view", "filter"] as const) {
           if (typeof options[key] === "string" && options[key].trim().length === 0) {
@@ -1246,13 +1246,11 @@ Startup scope:
           filterText: stringOption(options.filter),
           filters: Object.keys(filters).length ? filters : undefined
         });
-        const explicit = Object.keys(startup).some((key) => key !== "filters") ||
-          Object.keys(filters).some((key) => key !== "team");
         return runLinekeeperTui({
           context: cli.context,
           dbPath: cli.dbPath,
           defaultTeam: cli.defaultTeam,
-          startup: explicit ? startup : undefined
+          startup
         });
       })
     );

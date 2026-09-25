@@ -11,6 +11,7 @@ import {
   listActors,
   listLabels,
   parseIssueFilterText,
+  resolveStartupScope,
   listCycles,
   listIssuesPageWithView,
   resolveIssueListFilters,
@@ -42,6 +43,7 @@ import {
   type ListIssueFilters,
   type Project,
   type SavedViewWithFilters,
+  type StartupScopeInput,
   type ServiceContext,
   type Team,
   type WorkflowState
@@ -60,13 +62,8 @@ export interface LinekeeperLoadOptions {
   cursor?: string;
 }
 
-/** Scope typed on the command line; core validates it before the UI renders. */
-export interface LinekeeperStartupOptions {
-  search?: string;
-  view?: string;
-  filterText?: string;
-  filters?: ListIssueFilters;
-}
+/** Scope typed on the command line; core resolves and validates it before the UI renders. */
+export type LinekeeperStartupOptions = StartupScopeInput;
 
 export interface LinekeeperStartup {
   data: LinekeeperData;
@@ -206,32 +203,15 @@ export function restoreLinekeeperData(context: ServiceContext, defaultTeam?: str
   }
 }
 
-// Turn command-line startup options into one load: `view` supplies the base filters
-// (core resolves it), `filterText` is merged on top through the same grammar as the
-// TUI's `:` prompt, named `filters` override the same key from the text, and `search`
-// runs within the result. Team scope: a named team wins; `team=all` in the text clears
-// it; a view alone drops the default team (as `issue list --view` does); otherwise the
-// frontend's default team applies, exactly as an interactive search would keep it.
+// Core owns the launch-scope rules (`resolveStartupScope`): what counts as an explicit
+// scope, how view, filter text, named filters and search compose, and the team scope.
 // Returns null when nothing explicit was given, so the caller restores the last view.
 export function startupLoadOptions(
   startup: LinekeeperStartupOptions | undefined,
   defaultTeam?: string
 ): LinekeeperLoadOptions | null {
-  if (!startup || Object.values(startup).every(value => value === undefined)) return null;
-  const parsed = startup.filterText ? parseIssueFilterText(startup.filterText) : { filters: {}, clear: [] };
-  const named = omitUndefined({ ...(startup.filters ?? {}) }) as ListIssueFilters;
-  let filters = listIssueFiltersSchema.parse({ ...parsed.filters, ...named });
-  for (const key of parsed.clear) {
-    if (!(key in named)) filters = removeFilterKey(filters, key);
-  }
-  const team = named.team !== undefined
-    ? named.team
-    : parsed.clear.includes("team")
-      ? null
-      : startup.view
-        ? undefined
-        : defaultTeam;
-  return omitUndefined({ view: startup.view ?? null, team, search: startup.search, filters });
+  const scope = resolveStartupScope(startup, defaultTeam);
+  return scope ? omitUndefined({ ...scope }) : null;
 }
 
 // Startup for the UI. Explicit options are validated by core here, before Ink renders,
