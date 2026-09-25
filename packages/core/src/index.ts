@@ -488,6 +488,7 @@ export type {
 } from "./db/schema.js";
 
 export { parseIssueFilterText } from "./services/filterText.js";
+export { assertStartupScopeText, isExplicitStartupScope, resolveStartupScope, type StartupScope, type StartupScopeInput } from "./services/startup-scope.js";
 export { claimIssue } from "./services/issue.js";
 export { claimIssueInputSchema } from "./schemas/issue.js";
 export { assertIssueRevision, type IssueWriteOptions } from "./services/issue-revision.js";

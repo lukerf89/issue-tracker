@@ -11,6 +11,7 @@ import {
   listActors,
   listLabels,
   parseIssueFilterText,
+  resolveStartupScope,
   listCycles,
   listIssuesPageWithView,
   resolveIssueListFilters,
@@ -42,6 +43,7 @@ import {
   type ListIssueFilters,
   type Project,
   type SavedViewWithFilters,
+  type StartupScopeInput,
   type ServiceContext,
   type Team,
   type WorkflowState
@@ -58,6 +60,15 @@ export interface LinekeeperLoadOptions {
   filters?: ListIssueFilters;
   limit?: number;
   cursor?: string;
+}
+
+/** Scope typed on the command line; core resolves and validates it before the UI renders. */
+export type LinekeeperStartupOptions = StartupScopeInput;
+
+export interface LinekeeperStartup {
+  data: LinekeeperData;
+  options: LinekeeperLoadOptions;
+  message: string | null;
 }
 
 export interface LinekeeperData {
@@ -179,9 +190,7 @@ export function loadLinekeeperData(
 // that selection into the options the list is loaded with. undefined means
 // nothing was ever selected, so the frontend's default team scope applies;
 // null means "All issues" was chosen deliberately and must survive a restart.
-export function restoreLinekeeperData(context: ServiceContext, defaultTeam?: string): {
-  data: LinekeeperData; options: LinekeeperLoadOptions; message: string | null;
-} {
+export function restoreLinekeeperData(context: ServiceContext, defaultTeam?: string): LinekeeperStartup {
   const view = getLastSelectedView(context);
   const options: LinekeeperLoadOptions =
     view === undefined ? { team: defaultTeam } : view === null ? {} : { view };
@@ -192,6 +201,34 @@ export function restoreLinekeeperData(context: ServiceContext, defaultTeam?: str
     return { data: loadLinekeeperData(context, fallback), options: fallback,
       message: `Could not restore view ${view}: ${error instanceof Error ? error.message : String(error)}. Showing default scope.` };
   }
+}
+
+// Core owns the launch-scope rules (`resolveStartupScope`): what counts as an explicit
+// scope, how view, filter text, named filters and search compose, and the team scope.
+// Returns null when nothing explicit was given, so the caller restores the last view.
+export function startupLoadOptions(
+  startup: LinekeeperStartupOptions | undefined,
+  defaultTeam?: string
+): LinekeeperLoadOptions | null {
+  const scope = resolveStartupScope(startup, defaultTeam);
+  return scope ? omitUndefined({ ...scope }) : null;
+}
+
+// Startup for the UI. Explicit options are validated by core here, before Ink renders,
+// so bad input surfaces as a CLI error rather than a half-drawn screen; they replace the
+// remembered view for this launch only and are never saved as the last selection.
+export function prepareLinekeeperStartup(
+  context: ServiceContext,
+  { defaultTeam, startup }: { defaultTeam?: string; startup?: LinekeeperStartupOptions }
+): LinekeeperStartup {
+  const options = startupLoadOptions(startup, defaultTeam);
+  if (!options) return restoreLinekeeperData(context, defaultTeam);
+  const data = loadLinekeeperData(context, options);
+  const remembered = getLastSelectedView(context);
+  const message = typeof remembered === "string"
+    ? `Ignored remembered view ${remembered}; using command-line options.`
+    : "Started from command-line options.";
+  return { data, options, message };
 }
 
 // Fetch before replacing the usable list; callers can show an error and retry.
