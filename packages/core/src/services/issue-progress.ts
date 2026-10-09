@@ -1,4 +1,5 @@
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNull, notInArray, or } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import { inTransaction, type ServiceContext } from "../context.js";
 import { attachments, issueBlockers, issueCriteria, issueDependencies, issues, workflowStates } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
@@ -96,31 +97,46 @@ export function getIssueProgress(context: ServiceContext, input: GetIssueProgres
     const tx = { ...context, db };
     const issue = issueRow(tx, parsed.identifier);
     const own = progressFor(tx, issue.id);
-    const children = tx.db.query.issues.findMany({ where: eq(issues.parentId, issue.id), orderBy: [asc(issues.teamId), asc(issues.number), asc(issues.id)] }).sync();
-    const states = tx.db.query.workflowStates.findMany({ where: inArray(workflowStates.id, [issue, ...children].map((row) => row.stateId)) }).sync();
-    const names = new Map(states.map((state) => [state.id, state.name]));
-    const counts: Record<string, number> = {};
-    let remainingCriteria = own.criteria.filter((row) => row.status === "pending" || row.status === "failed").length;
-    let unresolvedBlockers = own.blockers.filter((row) => row.resolvedAt === null).length + own.dependencyBlockers.length;
-    const summaries = children.map((child) => {
+    const inFamily = or(eq(issues.id, issue.id), eq(issues.parentId, issue.id));
+    const groupedStates = tx.db.select({ state: workflowStates.name, total: count() }).from(issues)
+      .innerJoin(workflowStates, eq(workflowStates.id, issues.stateId))
+      .where(eq(issues.parentId, issue.id)).groupBy(workflowStates.name).all();
+    const counts = Object.fromEntries(groupedStates.map((row) => [row.state, row.total]).sort(([a], [b]) => String(a).localeCompare(String(b))));
+    const childCount = groupedStates.reduce((total, row) => total + row.total, 0);
+    const remainingCriteria = tx.db.select({ total: count() }).from(issueCriteria)
+      .innerJoin(issues, eq(issues.id, issueCriteria.issueId))
+      .where(and(inFamily, isNull(issueCriteria.archivedAt), inArray(issueCriteria.status, ["pending", "failed"]))).get()?.total ?? 0;
+    const structuredBlockers = tx.db.select({ total: count() }).from(issueBlockers)
+      .innerJoin(issues, eq(issues.id, issueBlockers.issueId))
+      .where(and(inFamily, isNull(issueBlockers.resolvedAt))).get()?.total ?? 0;
+    const blocking = alias(issues, "blocking_issue");
+    const blockingState = alias(workflowStates, "blocking_state");
+    const dependencyBlockers = tx.db.select({ total: count() }).from(issueDependencies)
+      .innerJoin(issues, eq(issues.id, issueDependencies.blockedIssueId))
+      .innerJoin(blocking, eq(blocking.id, issueDependencies.blockingIssueId))
+      .innerJoin(blockingState, eq(blockingState.id, blocking.stateId))
+      .where(and(inFamily, isNull(blocking.archivedAt), notInArray(blockingState.type, ["completed", "canceled"]))).get()?.total ?? 0;
+    const unresolvedBlockers = structuredBlockers + dependencyBlockers;
+    const children = tx.db.select({ id: issues.id, identifier: issues.identifier, revision: issues.revision, state: workflowStates.name })
+      .from(issues).innerJoin(workflowStates, eq(workflowStates.id, issues.stateId))
+      .where(eq(issues.parentId, issue.id))
+      .orderBy(asc(issues.teamId), asc(issues.number), asc(issues.id))
+      .limit(parsed.childLimit).offset(parsed.childOffset).all();
+    const page = children.map((child) => {
       const progress = progressFor(tx, child.id);
-      const state = names.get(child.stateId) ?? child.stateId;
-      counts[state] = (counts[state] ?? 0) + 1;
       const remaining = progress.criteria.filter((row) => row.status === "pending" || row.status === "failed").length;
       const blocked = progress.blockers.filter((row) => row.resolvedAt === null).length + progress.dependencyBlockers.length;
-      remainingCriteria += remaining;
-      unresolvedBlockers += blocked;
-      return { id: child.id, identifier: child.identifier, state, revision: child.revision, remainingCriteria: remaining, unresolvedBlockers: blocked };
+      return { identifier: child.identifier, state: child.state, revision: child.revision, remainingCriteria: remaining, unresolvedBlockers: blocked, links: deliveryLinks(tx, child.id) };
     });
     const links = deliveryLinks(tx, issue.id);
-    const page = summaries.slice(parsed.childOffset, parsed.childOffset + parsed.childLimit).map(({ id, ...summary }) => ({ ...summary, links: deliveryLinks(tx, id) }));
+    const state = tx.db.query.workflowStates.findFirst({ where: eq(workflowStates.id, issue.stateId) }).sync();
     return {
-      identifier: issue.identifier, state: names.get(issue.stateId) ?? issue.stateId, revision: issue.revision,
+      identifier: issue.identifier, state: state?.name ?? issue.stateId, revision: issue.revision,
       criteria: own.criteria.map((row) => ({ id: row.id, text: row.text, status: row.status, evidenceUrl: row.evidenceUrl })),
       blockers: own.blockers.map((row) => ({ id: row.id, kind: row.kind, description: row.description, unblockAction: row.unblockAction, owner: row.owner, resolvedAt: row.resolvedAt })),
       dependencyBlockers: own.dependencyBlockers,
-      children: page, childCount: children.length, nextChildOffset: parsed.childOffset + page.length < summaries.length ? parsed.childOffset + page.length : null,
-      statusCounts: Object.fromEntries(Object.entries(counts).sort(([a], [b]) => a.localeCompare(b))),
+      children: page, childCount, nextChildOffset: parsed.childOffset + page.length < childCount ? parsed.childOffset + page.length : null,
+      statusCounts: counts,
       remainingCriteria, unresolvedBlockers, links
     };
   });

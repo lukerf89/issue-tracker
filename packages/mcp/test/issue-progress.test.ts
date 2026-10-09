@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { addAttachment, createIssue, exportSnapshot, getIssueProgress, importSnapshot, listActivity, listStatesForTeam, moveIssue } from "@issue-tracker/core";
 import { agentFixture } from "./agent-fixture.js";
 
@@ -86,4 +86,31 @@ it("counts unresolved issue dependencies and child delivery links", async () => 
   const unchanged = await f.call("update_issue_progress", { identifier: child.identifier, expectedRevision: first.data.revision, operations: [{ type: "criterion", action: "update", id, status: "pending" }] });
   expect(unchanged.data).toMatchObject({ revision: first.data.revision, changes: [] });
   expect(listActivity(f.context, { issue: child.identifier })).toEqual(before);
+});
+
+it("restores the review state when importing a snapshot created before it existed", async () => {
+  const source = await fixture();
+  const target = await fixture();
+  const issue = createIssue(source.context, { title: "Fictional legacy work" });
+  const snapshot = exportSnapshot(source.context);
+  snapshot.workflowStates = snapshot.workflowStates.filter((state) => state.name !== "Ready for Review");
+  const summary = importSnapshot(target.context, snapshot, { force: true });
+  expect(summary.workflowStates).toBe(snapshot.workflowStates.length + 1);
+  expect(listStatesForTeam(target.context, "ENG").map((state) => state.name)).toContain("Ready for Review");
+  const moved = await target.call("batch_move_issues", { moves: [{ identifier: issue.identifier, state: "Ready for Review" }] });
+  expect(moved.error).toBe(false);
+});
+
+it("rolls up all children while hydrating only the requested child page", async () => {
+  const f = await fixture();
+  const parent = createIssue(f.context, { title: "Fictional release parent" });
+  const children = Array.from({ length: 40 }, (_, index) => createIssue(f.context, { title: `Fictional child ${index}`, parent: parent.identifier }));
+  const added = await f.call("update_issue_progress", { identifier: children.at(-1)!.identifier, operations: [{ type: "criterion", action: "add", text: "Validate final child" }] });
+  expect(added.error).toBe(false);
+  const prepare = vi.spyOn(f.context.db.$client, "prepare");
+  try {
+    const result = getIssueProgress(f.context, { identifier: parent.identifier, childLimit: 1 });
+    expect(result).toMatchObject({ childCount: 40, remainingCriteria: 1, children: [{ identifier: children[0]!.identifier }], nextChildOffset: 1 });
+    expect(prepare.mock.calls.length).toBeLessThan(25);
+  } finally { prepare.mockRestore(); }
 });

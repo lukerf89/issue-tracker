@@ -39,6 +39,7 @@ import {
   workspace
 } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
+import { uuid } from "../ids.js";
 import { attachmentKindSchema } from "../schemas/attachment.js";
 import { actorTypeSchema } from "../schemas/actor.js";
 import {
@@ -352,6 +353,15 @@ export function importSnapshot(
     if (parsed.workflowStates.length > 0) {
       txContext.db.insert(workflowStates).values(parsed.workflowStates).run();
     }
+    // A pre-review snapshot predates migration 0013. Force import clears the migration seed,
+    // so restore that state for every imported team before issues are inserted.
+    let reviewStatesAdded = 0;
+    const reviewTeams = new Set(parsed.workflowStates.filter((state) => state.name === "Ready for Review").map((state) => state.teamId));
+    for (const team of parsed.teams) {
+      if (reviewTeams.has(team.id)) continue;
+      txContext.db.insert(workflowStates).values({ id: uuid(), teamId: team.id, name: "Ready for Review", type: "started", color: "#8B5CF6", position: 2.5 }).run();
+      reviewStatesAdded += 1;
+    }
     if (parsed.projects.length > 0) txContext.db.insert(projects).values(parsed.projects).run();
     if (parsed.repositories.length > 0) txContext.db.insert(repositories).values(parsed.repositories as Array<typeof repositories.$inferInsert>).run();
     if (parsed.orchestrationProfiles.length > 0) txContext.db.insert(orchestrationProfiles).values(parsed.orchestrationProfiles as Array<typeof orchestrationProfiles.$inferInsert>).run();
@@ -400,7 +410,7 @@ export function importSnapshot(
 
     // Restore snapshot revisions after relation triggers run during import.
     for (const issue of parsed.issues) txContext.db.update(issues).set({ revision: issue.revision }).where(eq(issues.id, issue.id)).run();
-    return summarizeSnapshot(parsed);
+    return summarizeSnapshot(parsed, reviewStatesAdded);
   });
 }
 
@@ -649,12 +659,12 @@ function visitParentFirst<T extends { id: string; parentId: string | null }>(
   ordered.push(row);
 }
 
-function summarizeSnapshot(snapshot: ImportSnapshot): ImportSnapshotSummary {
+function summarizeSnapshot(snapshot: ImportSnapshot, reviewStatesAdded: number): ImportSnapshotSummary {
   return {
     workspace: snapshot.workspace ? 1 : 0,
     config: snapshot.config.length,
     teams: snapshot.teams.length,
-    workflowStates: snapshot.workflowStates.length,
+    workflowStates: snapshot.workflowStates.length + reviewStatesAdded,
     projects: snapshot.projects.length,
     milestones: snapshot.milestones.length,
     cycles: snapshot.cycles.length,
