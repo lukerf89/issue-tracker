@@ -34,7 +34,7 @@ export const getIssueInputSchema = z.strictObject({
   comments: z.enum(["none", "latest", "all"]).optional(),
   commentCursor: cursorSchema.optional(),
   commentLimit: z.number().int().positive().max(100).optional()
-}).refine((input) => !(input.fields !== undefined || input.maxBytes !== undefined) || (input.comments === undefined && input.commentCursor === undefined && input.commentLimit === undefined), { message: "Bounded reads use independent section paging; omit legacy comment options." });
+}).refine((input) => !(input.fields !== undefined || input.maxBytes !== undefined) || ((input.comments === undefined || input.comments === "none") && input.commentCursor === undefined && input.commentLimit === undefined), { message: "Bounded reads use independent section paging; omit legacy comment paging options." });
 
 export const createIssueInputSchema = z.strictObject({
   title: nonEmptyStringSchema,

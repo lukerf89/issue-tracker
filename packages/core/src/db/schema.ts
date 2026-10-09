@@ -201,6 +201,35 @@ export const issueDependencies = sqliteTable(
   (table) => [primaryKey({ columns: [table.blockingIssueId, table.blockedIssueId] })]
 );
 
+export const issueCriteria = sqliteTable("issue_criteria", {
+  id: text("id").primaryKey(),
+  issueId: text("issue_id").notNull().references(() => issues.id),
+  text: text("text").notNull(),
+  status: text("status", { enum: ["pending", "passed", "failed", "waived"] }).notNull(),
+  evidenceUrl: text("evidence_url"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+  archivedAt: text("archived_at")
+}, (table) => [
+  index("issue_criteria_issue_idx").on(table.issueId),
+  check("issue_criteria_status_check", sql`${table.status} IN ('pending', 'passed', 'failed', 'waived')`)
+]);
+
+export const issueBlockers = sqliteTable("issue_blockers", {
+  id: text("id").primaryKey(),
+  issueId: text("issue_id").notNull().references(() => issues.id),
+  kind: text("kind", { enum: ["network", "dependency", "human_review", "evaluation_data", "other"] }).notNull(),
+  description: text("description").notNull(),
+  unblockAction: text("unblock_action").notNull(),
+  owner: text("owner").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+  resolvedAt: text("resolved_at")
+}, (table) => [
+  index("issue_blockers_issue_idx").on(table.issueId),
+  check("issue_blockers_kind_check", sql`${table.kind} IN ('network', 'dependency', 'human_review', 'evaluation_data', 'other')`)
+]);
+
 export const comments = sqliteTable(
   "comments",
   {

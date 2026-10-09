@@ -365,6 +365,8 @@ describe("tracker CLI", () => {
       "labels",
       "issueLabels",
       "issueDependencies",
+      "issueCriteria",
+      "issueBlockers",
       "comments",
       "actors",
       "attachments",
@@ -2005,6 +2007,21 @@ describe("tracker CLI", () => {
         message: "Input validation failed."
       }
     });
+  });
+
+  it("reports malformed progress and batch JSON as validation errors", async () => {
+    const dbPath = tempDbPath();
+    expect((await tracker(dbPath, ["init"])).status).toBe(0);
+    expect((await tracker(dbPath, ["issue", "create", "--title", "Fictional CI"])).status).toBe(0);
+    for (const args of [
+      ["issue", "progress-update", "ENG-1", "--operations", "[", "--json"],
+      ["issue", "move-batch", "--moves", "[", "--json"]
+    ]) {
+      const result = await tracker(dbPath, args);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toBe("");
+      expect(JSON.parse(result.stderr)).toMatchObject({ error: { code: "VALIDATION_FAILED" } });
+    }
   });
 
   it("rejects invalid issue and project date values", async () => {

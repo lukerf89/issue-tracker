@@ -37,7 +37,7 @@ function nonBookkeeping(audit: AuditEntry[]): AuditEntry[] {
 describe("tool catalog", () => {
   it("advertises core-owned annotations and output schemas for every registered tool in every profile", async () => {
     const names = toolContractNames();
-    expect(names).toHaveLength(77);
+    expect(names).toHaveLength(80);
     expect(names).toEqual(expect.arrayContaining(["whoami", "get_current_actor", "list_run_events", "get_work_context"]));
 
     for (const profile of toolProfileSchema.options) {

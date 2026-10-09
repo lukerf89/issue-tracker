@@ -52,11 +52,8 @@ describe("MCP server", () => {
       createLabel(setup.context, { name: "Untriaged", color: "#6B7280" });
       createLabel(setup.context, { name: "Incident", color: "#EF4444", group: "type" });
       createProject(setup.context, { name: "Operations refresh", status: "planned" });
-      setup.context.db.$client
-        .prepare(
-          "insert into workflow_states (id, team_id, name, type, color, position) values (?, ?, ?, ?, ?, ?)"
-        )
-        .run("ops-review", operations.id, "Ready for Review", "started", "#0F766E", 2.5);
+      setup.context.db.$client.prepare("update workflow_states set id = ?, color = ? where team_id = ? and name = ?")
+        .run("ops-review", "#0F766E", operations.id, "Ready for Review");
     } finally {
       setup.close();
     }

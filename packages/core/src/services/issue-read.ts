@@ -13,9 +13,9 @@ function source(context: ServiceContext, identifier: string) {
   const data = serializeIssue(getIssue(context, identifier, { comments: "all" }));
   return { data, snapshot: fingerprint(data) };
 }
-function selection(context: ServiceContext, identifier: string, fields: string[] | undefined, maxBytes: number) {
+function selection(context: ServiceContext, identifier: string, fields: string[] | undefined, maxBytes: number, excludeComments = false) {
   const { data, snapshot } = source(context, identifier);
-  const wanted = [...new Set(fields ?? Object.keys(data))];
+  const wanted = [...new Set(fields ?? Object.keys(data))].filter((field) => !excludeComments || field !== "comments");
   const result = { identifier, revision: data.revision, snapshot, data: {} as Record<string, unknown>, omittedFields: [...wanted], sectionTool: "read_issue_section" };
   for (const field of wanted) {
     result.data[field] = data[field as keyof typeof data];
@@ -35,7 +35,7 @@ export function getIssueResponse(context: ServiceContext, input: z.input<typeof 
   return context.db.transaction((db) => {
     const tx = { ...context, db };
     return parsed.fields !== undefined || parsed.maxBytes !== undefined
-      ? selection(tx, parsed.identifier, parsed.fields, parsed.maxBytes ?? 16384)
+      ? selection(tx, parsed.identifier, parsed.fields, parsed.maxBytes ?? 16384, parsed.comments === "none")
       : serializeIssue(getIssue(tx, parsed.identifier, parsed));
   });
 }

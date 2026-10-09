@@ -12,12 +12,14 @@ const builtCliPath = resolve(dirname(fileURLToPath(import.meta.url)), "../../cli
 // instead of silently changing what agents are offered.
 const CODING_TOOLS = [
   "assign_issue",
+  "batch_move_issues",
   "claim_issue",
   "comment_on_issue",
   "create_issue",
   "create_issue_from_template",
   "describe",
   "get_issue",
+  "get_issue_progress",
   "get_issues",
   "get_work_context",
   "link_issue",
@@ -30,6 +32,7 @@ const CODING_TOOLS = [
   "read_issue_section",
   "search",
   "update_issue",
+  "update_issue_progress",
   "whoami"
 ];
 const ORCHESTRATION_ONLY_TOOLS = [

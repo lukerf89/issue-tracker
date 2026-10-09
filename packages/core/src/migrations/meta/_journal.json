@@ -92,6 +92,13 @@
       "when": 1790222276121,
       "tag": "0012_comment_attachment_idempotency_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1791580000000,
+      "tag": "0013_issue_progress",
+      "breakpoints": true
     }
   ]
 }
