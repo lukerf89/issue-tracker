@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { addAttachment, createIssue, exportSnapshot, getIssueProgress, importSnapshot, listActivity, listStatesForTeam, moveIssue } from "@issue-tracker/core";
+import { addAttachment, archiveIssue, createIssue, exportSnapshot, getIssueProgress, importSnapshot, listActivity, listStatesForTeam, moveIssue } from "@issue-tracker/core";
 import { agentFixture } from "./agent-fixture.js";
 
 const fixtures: Array<Awaited<ReturnType<typeof agentFixture>>> = [];
@@ -113,4 +113,18 @@ it("rolls up all children while hydrating only the requested child page", async 
     expect(result).toMatchObject({ childCount: 40, remainingCriteria: 1, children: [{ identifier: children[0]!.identifier }], nextChildOffset: 1 });
     expect(prepare.mock.calls.length).toBeLessThan(25);
   } finally { prepare.mockRestore(); }
+});
+
+it("excludes archived children from every parent progress total", async () => {
+  const f = await fixture();
+  const parent = createIssue(f.context, { title: "Fictional parent" });
+  const child = createIssue(f.context, { title: "Fictional retired child", parent: parent.identifier });
+  const result = await f.call("update_issue_progress", { identifier: child.identifier, operations: [
+    { type: "criterion", action: "add", text: "Run retired evaluation" },
+    { type: "blocker", action: "add", kind: "evaluation_data", description: "Sample unavailable", unblockAction: "Collect sample", owner: "QA" }
+  ] });
+  expect(result.error).toBe(false);
+  expect(getIssueProgress(f.context, { identifier: parent.identifier })).toMatchObject({ childCount: 1, remainingCriteria: 1, unresolvedBlockers: 1 });
+  archiveIssue(f.context, child.identifier);
+  expect(getIssueProgress(f.context, { identifier: parent.identifier })).toMatchObject({ childCount: 0, statusCounts: {}, remainingCriteria: 0, unresolvedBlockers: 0, children: [], nextChildOffset: null });
 });

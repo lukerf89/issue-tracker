@@ -97,10 +97,11 @@ export function getIssueProgress(context: ServiceContext, input: GetIssueProgres
     const tx = { ...context, db };
     const issue = issueRow(tx, parsed.identifier);
     const own = progressFor(tx, issue.id);
-    const inFamily = or(eq(issues.id, issue.id), eq(issues.parentId, issue.id));
+    const activeChild = and(eq(issues.parentId, issue.id), isNull(issues.archivedAt));
+    const inFamily = or(eq(issues.id, issue.id), activeChild);
     const groupedStates = tx.db.select({ state: workflowStates.name, total: count() }).from(issues)
       .innerJoin(workflowStates, eq(workflowStates.id, issues.stateId))
-      .where(eq(issues.parentId, issue.id)).groupBy(workflowStates.name).all();
+      .where(activeChild).groupBy(workflowStates.name).all();
     const counts = Object.fromEntries(groupedStates.map((row) => [row.state, row.total]).sort(([a], [b]) => String(a).localeCompare(String(b))));
     const childCount = groupedStates.reduce((total, row) => total + row.total, 0);
     const remainingCriteria = tx.db.select({ total: count() }).from(issueCriteria)
@@ -119,7 +120,7 @@ export function getIssueProgress(context: ServiceContext, input: GetIssueProgres
     const unresolvedBlockers = structuredBlockers + dependencyBlockers;
     const children = tx.db.select({ id: issues.id, identifier: issues.identifier, revision: issues.revision, state: workflowStates.name })
       .from(issues).innerJoin(workflowStates, eq(workflowStates.id, issues.stateId))
-      .where(eq(issues.parentId, issue.id))
+      .where(activeChild)
       .orderBy(asc(issues.teamId), asc(issues.number), asc(issues.id))
       .limit(parsed.childLimit).offset(parsed.childOffset).all();
     const page = children.map((child) => {
