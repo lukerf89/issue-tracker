@@ -6,6 +6,8 @@ import {
   withIssueMutationReceipt,
   getIssueResponse, getIssuesResponse, readIssueSection, getIssuesInputSchema, readIssueSectionInputSchema,
   getWorkContext, getWorkContextInputSchema,
+  getIssueProgress, getIssueProgressInputSchema, updateIssueProgress, updateIssueProgressInputSchema,
+  batchMoveIssues, batchMoveIssuesInputSchema,
   addAttachment,
   addComment,
   addCommentInputSchema,
@@ -58,6 +60,15 @@ export function registerIssueTools(
 
   server.registerTool("get_work_context", {
       _meta: toolGroups("coding"), ...toolConfig("get_work_context"), description: "Deterministic, bounded work context for an issue: task, full acceptance criteria (Done when / Acceptance criteria lists), blockers, parent, repository routing, decisions (comments starting \"Decision:\" or \"Decided:\") and recent comments. Every section has provenance and a retrieval path; omissions list what the byte budget or selection limits left out. Pass run to read the immutable snapshot a run launched with plus stale source revisions (maxBytes is live-only).", inputSchema: getWorkContextInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: false, tool: "get_work_context" }, ({ context }) => toolResult("get_work_context", getWorkContext(context, input)))));
+  server.registerTool("get_issue_progress", {
+    _meta: toolGroups("coding"), ...toolConfig("get_issue_progress"), description: "Read structured criteria and blockers, child status counts and progress, and linked branch/commit/PR. Page children with childOffset and childLimit.", inputSchema: getIssueProgressInputSchema
+  }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: false, tool: "get_issue_progress" }, ({ context }) => toolResult("get_issue_progress", getIssueProgress(context, input)))));
+  server.registerTool("update_issue_progress", {
+    _meta: toolGroups("coding"), ...toolConfig("update_issue_progress"), description: "Atomically add or update individual acceptance criteria and structured blockers. Use expectedRevision to reject stale edits.", inputSchema: updateIssueProgressInputSchema
+  }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: true, tool: "update_issue_progress" }, ({ context }) => toolResult("update_issue_progress", updateIssueProgress(context, input)))));
+  server.registerTool("batch_move_issues", {
+    _meta: toolGroups("coding"), ...toolConfig("batch_move_issues"), description: "Move up to 100 issues. Roll back all changes on error by default; onError: continue returns a result or error per issue. Each move accepts expectedRevision.", inputSchema: batchMoveIssuesInputSchema
+  }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: true, tool: "batch_move_issues" }, ({ context }) => toolResult("batch_move_issues", batchMoveIssues(context, input)))));
   server.registerTool("claim_issue", {
       _meta: toolGroups("coding"), ...toolConfig("claim_issue"), description: "Atomically claim active unassigned backlog/unstarted work for the current actor. Claims have no lease; release through assign_issue with actor:null. Conflicts require a fresh read.", inputSchema: claimIssueInputSchema }, (input) => mcpToolResult(() => withMcpContext({ ...options, requireActor: true, tool: "claim_issue" }, ({ context }) => toolResult("claim_issue", serializeIssue(claimIssue(context, input.identifier, input))))));
 

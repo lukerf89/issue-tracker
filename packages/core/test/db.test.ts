@@ -28,6 +28,8 @@ const tableNames = [
   "labels",
   "issue_labels",
   "issue_dependencies",
+  "issue_criteria",
+  "issue_blockers",
   "repositories",
   "project_repositories",
   "issue_repositories",
@@ -308,6 +310,7 @@ describe("core database foundation", () => {
         { name: "Backlog", type: "backlog", position: 0 },
         { name: "Todo", type: "unstarted", position: 1 },
         { name: "In Progress", type: "started", position: 2 },
+        { name: "Ready for Review", type: "started", position: 2.5 },
         { name: "Blocked", type: "blocked", position: 3 },
         { name: "Done", type: "completed", position: 4 },
         { name: "Canceled", type: "canceled", position: 5 }

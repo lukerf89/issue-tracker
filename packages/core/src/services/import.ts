@@ -11,6 +11,8 @@ import {
   config,
   cycles,
   issueDependencies,
+  issueCriteria,
+  issueBlockers,
   issueRepositories,
   issueLabels,
   issues,
@@ -78,6 +80,8 @@ export interface ImportSnapshotSummary {
   labels: number;
   issueLabels: number;
   issueDependencies: number;
+  issueCriteria: number;
+  issueBlockers: number;
   comments: number;
   actors: number;
   attachments: number;
@@ -209,6 +213,15 @@ const issueDependencySnapshotSchema = z.strictObject({
   createdAt: isoTimestampSchema
 });
 
+const issueCriterionSnapshotSchema = z.strictObject({
+  id: z.string(), issueId: z.string(), text: z.string(), status: z.enum(["pending", "passed", "failed", "waived"]),
+  evidenceUrl: nullableStringSchema, createdAt: isoTimestampSchema, updatedAt: isoTimestampSchema, archivedAt: nullableIsoTimestampSchema
+});
+const issueBlockerSnapshotSchema = z.strictObject({
+  id: z.string(), issueId: z.string(), kind: z.enum(["network", "dependency", "human_review", "evaluation_data", "other"]),
+  description: z.string(), unblockAction: z.string(), owner: z.string(), createdAt: isoTimestampSchema, updatedAt: isoTimestampSchema, resolvedAt: nullableIsoTimestampSchema
+});
+
 const commentSnapshotSchema = z.strictObject({
   id: z.string(),
   issueId: z.string(),
@@ -286,6 +299,8 @@ export const importSnapshotSchema = z.strictObject({
   labels: z.array(labelSnapshotSchema),
   issueLabels: z.array(issueLabelSnapshotSchema),
   issueDependencies: z.array(issueDependencySnapshotSchema).default([]),
+  issueCriteria: z.array(issueCriterionSnapshotSchema).default([]),
+  issueBlockers: z.array(issueBlockerSnapshotSchema).default([]),
   comments: z.array(commentSnapshotSchema),
   actors: z.array(actorSnapshotSchema),
   attachments: z.array(attachmentSnapshotSchema),
@@ -360,6 +375,8 @@ export function importSnapshot(
     if (parsed.issueDependencies.length > 0) {
       txContext.db.insert(issueDependencies).values(parsed.issueDependencies).run();
     }
+    if (parsed.issueCriteria.length > 0) txContext.db.insert(issueCriteria).values(parsed.issueCriteria).run();
+    if (parsed.issueBlockers.length > 0) txContext.db.insert(issueBlockers).values(parsed.issueBlockers).run();
     if (parsed.projectRepositories.length > 0) txContext.db.insert(projectRepositories).values(parsed.projectRepositories as Array<typeof projectRepositories.$inferInsert>).run();
     if (parsed.issueRepositories.length > 0) txContext.db.insert(issueRepositories).values(parsed.issueRepositories as Array<typeof issueRepositories.$inferInsert>).run();
 
@@ -532,6 +549,8 @@ function existingWorkspaceTables(context: ServiceContext & { db: ServiceTransact
     ["labels", context.db.query.labels.findFirst().sync()],
     ["issue_labels", context.db.query.issueLabels.findFirst().sync()],
     ["issue_dependencies", context.db.query.issueDependencies.findFirst().sync()],
+    ["issue_criteria", context.db.query.issueCriteria.findFirst().sync()],
+    ["issue_blockers", context.db.query.issueBlockers.findFirst().sync()],
     ["comments", context.db.query.comments.findFirst().sync()],
     ["actors", context.db.query.actors.findFirst().sync()],
     ["attachments", context.db.query.attachments.findFirst().sync()],
@@ -564,6 +583,8 @@ function clearWorkspace(context: ServiceContext & { db: ServiceTransaction }): v
   context.db.delete(comments).run();
   context.db.delete(issueLabels).run();
   context.db.delete(issueDependencies).run();
+  context.db.delete(issueCriteria).run();
+  context.db.delete(issueBlockers).run();
   context.db.delete(issues).run();
   context.db.delete(templates).run();
   context.db.delete(savedViews).run();
@@ -641,6 +662,8 @@ function summarizeSnapshot(snapshot: ImportSnapshot): ImportSnapshotSummary {
     labels: snapshot.labels.length,
     issueLabels: snapshot.issueLabels.length,
     issueDependencies: snapshot.issueDependencies.length,
+    issueCriteria: snapshot.issueCriteria.length,
+    issueBlockers: snapshot.issueBlockers.length,
     comments: snapshot.comments.length,
     actors: snapshot.actors.length,
     attachments: snapshot.attachments.length,

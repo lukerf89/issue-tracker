@@ -491,6 +491,10 @@ export { parseIssueFilterText } from "./services/filterText.js";
 export { assertStartupScopeText, isExplicitStartupScope, resolveStartupScope, type StartupScope, type StartupScopeInput } from "./services/startup-scope.js";
 export { claimIssue } from "./services/issue.js";
 export { claimIssueInputSchema } from "./schemas/issue.js";
+export { batchMoveIssues } from "./services/issue-batch.js";
+export { batchMoveIssuesInputSchema, type BatchMoveIssuesInput } from "./schemas/issue-batch.js";
+export { getIssueProgress, updateIssueProgress } from "./services/issue-progress.js";
+export { getIssueProgressInputSchema, updateIssueProgressInputSchema, type GetIssueProgressInput, type UpdateIssueProgressInput } from "./schemas/issue-progress.js";
 export { assertIssueRevision, type IssueWriteOptions } from "./services/issue-revision.js";
 
 export { withIssueMutationReceipt, serializeIssueMutation, issueResponseSchema, type IssueWithReceipt } from "./services/issue-receipt.js";

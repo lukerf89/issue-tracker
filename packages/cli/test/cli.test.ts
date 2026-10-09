@@ -365,6 +365,8 @@ describe("tracker CLI", () => {
       "labels",
       "issueLabels",
       "issueDependencies",
+      "issueCriteria",
+      "issueBlockers",
       "comments",
       "actors",
       "attachments",

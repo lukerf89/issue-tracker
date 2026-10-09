@@ -15,6 +15,8 @@ import {
   config,
   cycles,
   issueDependencies,
+  issueCriteria,
+  issueBlockers,
   issueRepositories,
   issueLabels,
   issues,
@@ -77,6 +79,8 @@ export interface ExportSnapshot {
   labels: ReturnType<typeof serializeLabel>[];
   issueLabels: SerializedIssueLabel[];
   issueDependencies: SerializedIssueDependency[];
+  issueCriteria: Array<typeof issueCriteria.$inferSelect>;
+  issueBlockers: Array<typeof issueBlockers.$inferSelect>;
   comments: SerializedComment[];
   actors: ReturnType<typeof serializeActor>[];
   attachments: SerializedAttachment[];
@@ -245,6 +249,8 @@ export function exportSnapshot(context: ServiceContext, options: { includeRawLog
     issueDependencies: context.db.query.issueDependencies.findMany({
       orderBy: [asc(issueDependencies.blockingIssueId), asc(issueDependencies.blockedIssueId)]
     }).sync().map(serializeIssueDependency),
+    issueCriteria: context.db.query.issueCriteria.findMany({ orderBy: [asc(issueCriteria.issueId), asc(issueCriteria.createdAt), asc(issueCriteria.id)] }).sync(),
+    issueBlockers: context.db.query.issueBlockers.findMany({ orderBy: [asc(issueBlockers.issueId), asc(issueBlockers.createdAt), asc(issueBlockers.id)] }).sync(),
     comments: context.db.query.comments.findMany({
       orderBy: [asc(comments.issueId), asc(comments.createdAt), asc(comments.id)]
     }).sync().map(serializeCommentRow),

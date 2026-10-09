@@ -18,6 +18,8 @@ import {
   withIssueMutationReceipt,
   getIssueResponse, getIssuesResponse, readIssueSection, getIssuesInputSchema, readIssueSectionInputSchema,
   getWorkContext, getWorkContextInputSchema,
+  getIssueProgress, getIssueProgressInputSchema, updateIssueProgress, updateIssueProgressInputSchema,
+  batchMoveIssues, batchMoveIssuesInputSchema,
   toolProfileSchema,
   addAttachment,
   archiveIssue,
@@ -612,6 +614,33 @@ export function createProgram(): Command {
     );
 
   const issue = program.command("issue").description("manage issues");
+  issue.command("progress").argument("<identifier>")
+    .option("--child-limit <number>", "children per page", parseInteger)
+    .option("--child-offset <number>", "starting child index", parseInteger)
+    .option("--json", "print JSON output")
+    .action((identifier, _options, command) => withContext(command, { requireActor: false }, (cli) => {
+      const options = optionsWithGlobals(command);
+      const input = getIssueProgressInputSchema.parse(omitUndefined({ identifier, childLimit: numberOption(options.childLimit), childOffset: numberOption(options.childOffset) }));
+      printJson(getIssueProgress(cli.context, input));
+    }));
+  issue.command("progress-update").argument("<identifier>")
+    .requiredOption("--operations <json>", "JSON array of criterion and blocker operations")
+    .option("--expected-revision <number>", "fail if issue revision changed", parsePositiveInteger)
+    .option("--json", "print JSON output")
+    .action((identifier, _options, command) => withContext(command, {}, (cli) => {
+      const options = optionsWithGlobals(command);
+      const input = updateIssueProgressInputSchema.parse({ identifier, expectedRevision: numberOption(options.expectedRevision), operations: JSON.parse(String(options.operations)) });
+      printJson(updateIssueProgress(cli.context, input));
+    }));
+  issue.command("move-batch")
+    .requiredOption("--moves <json>", "JSON array of {identifier,state,expectedRevision?}")
+    .option("--on-error <mode>", "rollback or continue", "rollback")
+    .option("--json", "print JSON output")
+    .action((_options, command) => withContext(command, {}, (cli) => {
+      const options = optionsWithGlobals(command);
+      const input = batchMoveIssuesInputSchema.parse({ moves: JSON.parse(String(options.moves)), onError: options.onError });
+      printJson(batchMoveIssues(cli.context, input));
+    }));
   issue
     .command("create")
     .addOption(responseOption())
