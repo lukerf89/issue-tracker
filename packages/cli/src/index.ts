@@ -629,7 +629,7 @@ export function createProgram(): Command {
     .option("--json", "print JSON output")
     .action((identifier, _options, command) => withContext(command, {}, (cli) => {
       const options = optionsWithGlobals(command);
-      const input = updateIssueProgressInputSchema.parse({ identifier, expectedRevision: numberOption(options.expectedRevision), operations: JSON.parse(String(options.operations)) });
+      const input = updateIssueProgressInputSchema.parse({ identifier, expectedRevision: numberOption(options.expectedRevision), operations: jsonOption(options.operations) });
       printJson(updateIssueProgress(cli.context, input));
     }));
   issue.command("move-batch")
@@ -638,7 +638,7 @@ export function createProgram(): Command {
     .option("--json", "print JSON output")
     .action((_options, command) => withContext(command, {}, (cli) => {
       const options = optionsWithGlobals(command);
-      const input = batchMoveIssuesInputSchema.parse({ moves: JSON.parse(String(options.moves)), onError: options.onError });
+      const input = batchMoveIssuesInputSchema.parse({ moves: jsonOption(options.moves), onError: options.onError });
       printJson(batchMoveIssues(cli.context, input));
     }));
   issue
