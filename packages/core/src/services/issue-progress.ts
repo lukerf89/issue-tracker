@@ -9,6 +9,14 @@ import { appendActivityInTransaction } from "./activity.js";
 import { assertIssueRevision } from "./issue-revision.js";
 
 type Operation = ReturnType<typeof updateIssueProgressInputSchema.parse>["operations"][number];
+type ProgressRecord = typeof issueCriteria.$inferSelect | typeof issueBlockers.$inferSelect;
+type ProgressChange = {
+  type: Operation["type"];
+  action: Operation["action"];
+  id: string;
+  before: ProgressRecord | null;
+  after: ProgressRecord;
+};
 
 function issueRow(context: ServiceContext, identifier: string) {
   const issue = context.db.query.issues.findFirst({ where: eq(issues.identifier, identifier) }).sync();
@@ -16,12 +24,13 @@ function issueRow(context: ServiceContext, identifier: string) {
   return issue;
 }
 
-function applyOperation(context: ServiceContext, issueId: string, operation: Operation, now: string): string | null {
+function applyOperation(context: ServiceContext, issueId: string, operation: Operation, now: string): ProgressChange | null {
   if (operation.type === "criterion") {
     if (operation.action === "add") {
       const id = uuid();
-      context.db.insert(issueCriteria).values({ id, issueId, text: operation.text, status: operation.status, evidenceUrl: operation.evidenceUrl ?? null, createdAt: now, updatedAt: now, archivedAt: null }).run();
-      return id;
+      const row = { id, issueId, text: operation.text, status: operation.status, evidenceUrl: operation.evidenceUrl ?? null, createdAt: now, updatedAt: now, archivedAt: null };
+      context.db.insert(issueCriteria).values(row).run();
+      return { type: operation.type, action: operation.action, id, before: null, after: row };
     }
     const row = context.db.query.issueCriteria.findFirst({ where: and(eq(issueCriteria.id, operation.id), eq(issueCriteria.issueId, issueId)) }).sync();
     if (!row) throw new AppError(AppErrorCode.VALIDATION_FAILED, "Criterion does not belong to this issue.", { id: operation.id });
@@ -33,12 +42,13 @@ function applyOperation(context: ServiceContext, issueId: string, operation: Ope
     };
     if (Object.entries(changes).every(([key, value]) => row[key as keyof typeof changes] === value)) return null;
     context.db.update(issueCriteria).set({ ...changes, updatedAt: now }).where(eq(issueCriteria.id, row.id)).run();
-    return row.id;
+    return { type: operation.type, action: operation.action, id: row.id, before: row, after: { ...row, ...changes, updatedAt: now } };
   }
   if (operation.action === "add") {
     const id = uuid();
-    context.db.insert(issueBlockers).values({ id, issueId, kind: operation.kind, description: operation.description, unblockAction: operation.unblockAction, owner: operation.owner, createdAt: now, updatedAt: now, resolvedAt: null }).run();
-    return id;
+    const row = { id, issueId, kind: operation.kind, description: operation.description, unblockAction: operation.unblockAction, owner: operation.owner, createdAt: now, updatedAt: now, resolvedAt: null };
+    context.db.insert(issueBlockers).values(row).run();
+    return { type: operation.type, action: operation.action, id, before: null, after: row };
   }
   const row = context.db.query.issueBlockers.findFirst({ where: and(eq(issueBlockers.id, operation.id), eq(issueBlockers.issueId, issueId)) }).sync();
   if (!row) throw new AppError(AppErrorCode.VALIDATION_FAILED, "Blocker does not belong to this issue.", { id: operation.id });
@@ -51,7 +61,7 @@ function applyOperation(context: ServiceContext, issueId: string, operation: Ope
   };
   if (Object.entries(changes).every(([key, value]) => row[key as keyof typeof changes] === value)) return null;
   context.db.update(issueBlockers).set({ ...changes, updatedAt: now }).where(eq(issueBlockers.id, row.id)).run();
-  return row.id;
+  return { type: operation.type, action: operation.action, id: row.id, before: row, after: { ...row, ...changes, updatedAt: now } };
 }
 
 export function updateIssueProgress(context: ServiceContext, input: UpdateIssueProgressInput) {
@@ -61,17 +71,17 @@ export function updateIssueProgress(context: ServiceContext, input: UpdateIssueP
     assertIssueRevision(tx, parsed.identifier, parsed.expectedRevision);
     const issue = issueRow(tx, parsed.identifier);
     const now = tx.clock.now().toISOString();
-    const changes: Array<{ type: "criterion" | "blocker"; id: string }> = [];
+    const changes: ProgressChange[] = [];
     for (const operation of parsed.operations) {
-      const id = applyOperation(tx, issue.id, operation, now);
-      if (id) changes.push({ type: operation.type, id });
+      const change = applyOperation(tx, issue.id, operation, now);
+      if (change) changes.push(change);
     }
     if (changes.length) {
       tx.db.update(issues).set({ updatedAt: now }).where(eq(issues.id, issue.id)).run();
       appendActivityInTransaction(tx, { issueId: issue.id, actorId: context.actor!.id, action: "progress_updated", data: { changes } });
     }
     const current = issueRow(tx, parsed.identifier);
-    return { identifier: current.identifier, revision: current.revision, changes };
+    return { identifier: current.identifier, revision: current.revision, changes: changes.map(({ type, id }) => ({ type, id })) };
   });
 }
 
