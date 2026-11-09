@@ -14,7 +14,7 @@ import { engineDefinitionSchema, type EngineCatalog, type EngineDefinition } fro
 import { type PreviewRunInput, type RunPhase, type RunState, type StartRunInput } from "../schemas/run.js";
 import { getIssue } from "./issue.js";
 import { getProfile } from "./profile.js";
-import { engineHealthFingerprint, engineHealthProblem, getEngineHealth } from "./engine-health.js";
+import { engineHealthFingerprint, engineHealthProblem, getEngineHealth, resolveEngineHealthTtlMs } from "./engine-health.js";
 import { resolveIssueRepositories, type RepositoryInspector } from "./repository.js";
 import { stableHash } from "./stable-hash.js";
 import { buildWorkContext, RUN_WORK_CONTEXT_MAX_BYTES, WorkContextMinimumExceededError } from "./work-context.js";
@@ -124,7 +124,7 @@ function resolveRunPreview(context: ServiceContext, input: PreviewRunInput, runt
       if (runtime.engineCatalog && assignment.adapter === "unresolved") return [`Engine ${assignment.engineName} is not configured.`];
       if (assignment.executable && runtime.executableAvailable && !runtime.executableAvailable(assignment.executable)) return [`Executable ${assignment.executable} for engine ${assignment.engineName} is unavailable.`];
       if (runtime.requireEngineHealth && assignment.options) {
-        const problem = engineHealthProblem(engineHealth.get(assignment.engineName) ?? null, context.clock.now(), runtime.engineHealthTtlMs ?? 15 * 60_000);
+        const problem = engineHealthProblem(engineHealth.get(assignment.engineName) ?? null, context.clock.now(), runtime.engineHealthTtlMs ?? resolveEngineHealthTtlMs());
         if (problem) return [`${problem.code}: Engine ${assignment.engineName}: ${problem.message} ${problem.remediation}`];
       }
       return assignment.validationErrors.map((message) => `Engine ${assignment.engineName}: ${message}`);

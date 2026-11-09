@@ -78,7 +78,7 @@ describe("autonomous coding run control plane", () => {
       expect(previewRun(fixture.context, { issue: fixture.issue.identifier }, runtime).errors).toEqual(expect.arrayContaining([expect.stringContaining("provider_authentication_failed")]));
       recordEngineHealth(fixture.context, { engineName: "claude-default", fingerprint, installed: true, authenticated: true, modelAccessible: false, diagnosticCode: "provider_model_unavailable", remediation: "Choose a fictional model.", checkedAt: "2026-07-17T12:00:00.000Z" });
       expect(previewRun(fixture.context, { issue: fixture.issue.identifier }, runtime).errors).toEqual(expect.arrayContaining([expect.stringContaining("provider_model_unavailable")]));
-      recordEngineHealth(fixture.context, { engineName: "claude-default", fingerprint, installed: true, authenticated: true, modelAccessible: true, diagnosticCode: null, remediation: null, checkedAt: "2026-07-17T10:00:00.000Z" });
+      recordEngineHealth(fixture.context, { engineName: "claude-default", fingerprint, installed: true, authenticated: true, modelAccessible: true, diagnosticCode: null, remediation: null, checkedAt: "2026-07-17T05:00:00.000Z" });
       expect(previewRun(fixture.context, { issue: fixture.issue.identifier }, runtime).errors).toEqual(expect.arrayContaining([expect.stringContaining("engine_health_stale")]));
       recordEngineHealth(fixture.context, { engineName: "claude-default", fingerprint, installed: true, authenticated: true, modelAccessible: true, diagnosticCode: null, remediation: null, checkedAt: "2026-07-17T12:00:00.000Z" });
       const healthy = previewRun(fixture.context, { issue: fixture.issue.identifier }, runtime);

@@ -3,7 +3,7 @@ import { existsSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 
 import {
-  assertContained, claimRunAction, completeParticipantAction, completeParticipantActionInputSchema, completeRunAction, confirmRunStopped, engineHealthFingerprint, failRunAction, getEngineHealth, getRun, heartbeatRunAction, heartbeatRunParticipant, heartbeatSupervisor, listRuns, markRunStalled, recordArtifact, recordEngineHealth,
+  assertContained, claimRunAction, completeParticipantAction, completeParticipantActionInputSchema, completeRunAction, confirmRunStopped, engineHealthFingerprint, engineHealthFresh, failRunAction, getEngineHealth, resolveEngineHealthTtlMs, getRun, heartbeatRunAction, heartbeatRunParticipant, heartbeatSupervisor, listRuns, markRunStalled, recordArtifact, recordEngineHealth,
   recordParticipantProcess, recordProcessExit, recordProviderEvent, recordReviewFinding, recordVerification, registerSupervisor, releaseExpiredRunActions, resolveReviewFindings, startRunParticipant, workContextForPrompt,
   type EngineDefinition, type ServiceContext
 } from "@issue-tracker/core";
@@ -15,6 +15,8 @@ import { WorktreeManager } from "./worktrees.js";
 import { publishDraftPullRequest } from "./publishers/github-cli.js";
 
 export interface SupervisorOptions {
+  /** How long a healthy engine probe is trusted. Defaults to ISSUE_TRACKER_ENGINE_HEALTH_TTL_MS or 6h. */
+  engineHealthTtlMs?: number;
   id: string;
   context: ServiceContext;
   dataRoot: string;
@@ -265,7 +267,7 @@ export class Supervisor {
     for (const [engineName, engine] of Object.entries(this.options.engines).sort(([left], [right]) => left.localeCompare(right))) {
       const fingerprint = engineHealthFingerprint(engineName, engine);
       const existing = getEngineHealth(this.options.context, engineName, fingerprint);
-      if (existing && this.options.context.clock.now().getTime() - Date.parse(existing.checkedAt) <= 15 * 60_000) continue;
+      if (engineHealthFresh(existing, this.options.context.clock.now(), this.options.engineHealthTtlMs ?? resolveEngineHealthTtlMs())) continue;
       const adapter = this.options.adapters[engine.adapter];
       const health = adapter ? await adapter.probe({ executable: engine.executable, model: engine.model, options: engine, env: inheritedEnvironment(engine.envNames) }) : { installed: false, authenticated: false, modelAccessible: false, diagnosticCode: "provider_adapter_unavailable", remediation: `Configure adapter ${engine.adapter} in tracker-agentd.` };
       recordEngineHealth(this.options.context, { engineName, fingerprint, ...health });
