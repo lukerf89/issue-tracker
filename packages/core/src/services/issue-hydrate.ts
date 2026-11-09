@@ -3,6 +3,7 @@ import { asc, eq, inArray } from "drizzle-orm";
 import type { ServiceContext } from "../context.js";
 import { actors, issueDependencies, issues, workflowStates, type Issue, type Label } from "../db/schema.js";
 import { issueReference, type IssueReference } from "./issue-reference.js";
+import { listIssueRelationReferences } from "./issue-relations.js";
 import { listLabelsForIssues } from "./label.js";
 
 // Internal to core (not exported from the barrel). Projects the relation and readable
@@ -11,7 +12,7 @@ import { listLabelsForIssues } from "./label.js";
 // attachments are never loaded: they are full-fidelity only via getIssue.
 
 export type HydratableIssueField =
-  | "labels" | "parent" | "children" | "blockedBy" | "blocks"
+  | "labels" | "parent" | "children" | "blockedBy" | "blocks" | "related" | "followUpOf" | "followUps"
   | "stateName" | "stateType" | "assigneeHandle";
 
 export type HydratedIssue = Issue & {
@@ -20,6 +21,9 @@ export type HydratedIssue = Issue & {
   children?: IssueReference[];
   blockedBy?: IssueReference[];
   blocks?: IssueReference[];
+  related?: IssueReference[];
+  followUpOf?: IssueReference[];
+  followUps?: IssueReference[];
   stateName?: string;
   stateType?: string;
   assigneeHandle?: string | null;
@@ -91,6 +95,16 @@ export function hydrateIssuePageRows(
       .orderBy(...referenceOrder)
       .all());
     for (const row of rows) row.blocks = byBlocking.get(row.id) ?? [];
+  }
+
+  if (requested.has("related") || requested.has("followUpOf") || requested.has("followUps")) {
+    const byIssue = listIssueRelationReferences(context, ids);
+    for (const row of rows) {
+      const refs = byIssue.get(row.id)!;
+      if (requested.has("related")) row.related = refs.related;
+      if (requested.has("followUpOf")) row.followUpOf = refs.followUpOf;
+      if (requested.has("followUps")) row.followUps = refs.followUps;
+    }
   }
 
   if (requested.has("stateName") || requested.has("stateType")) {

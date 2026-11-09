@@ -42,6 +42,8 @@ export const ISSUE_FILTER_OPTIONS: Readonly<Record<keyof ListIssueFilters, Filte
   },
   blockedBy: { flags: "--blocked-by <issue>", description: "issues blocked by this issue" },
   blocks: { flags: "--blocks <issue>", description: "issues blocking this issue" },
+  related: { flags: "--related <issue>", description: "issues linked as related to this issue" },
+  followUpOf: { flags: "--follow-up-of <issue>", description: "issues that are follow-ups of this issue" },
   repository: { flags: "--repository <repository>", description: "effective repository ID/name" },
   updatedSince: { flags: "--updated-since <timestamp>", description: "inclusive ISO timestamp" },
   dueFrom: { flags: "--due-from <date>", description: "inclusive due date YYYY-MM-DD" },

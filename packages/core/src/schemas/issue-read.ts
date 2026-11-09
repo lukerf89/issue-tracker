@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { nonEmptyStringSchema } from "./common.js";
-export const detailFieldSchema = z.enum(["id", "identifier", "revision", "teamId", "number", "title", "description", "stateId", "priority", "assigneeId", "creatorId", "projectId", "cycleId", "parentId", "parent", "children", "blockedBy", "blocks", "comments", "commentCount", "attachments", "estimate", "dueDate", "sortOrder", "createdAt", "updatedAt", "startedAt", "completedAt", "canceledAt", "archivedAt", "labels"]);
+export const detailFieldSchema = z.enum(["id", "identifier", "revision", "teamId", "number", "title", "description", "stateId", "priority", "assigneeId", "creatorId", "projectId", "cycleId", "parentId", "parent", "children", "blockedBy", "blocks", "related", "followUpOf", "followUps", "comments", "commentCount", "attachments", "estimate", "dueDate", "sortOrder", "createdAt", "updatedAt", "startedAt", "completedAt", "canceledAt", "archivedAt", "labels"]);
 export const detailBudgetSchema = z.number().int().min(1024).max(65536);
 export const detailPathSchema = z.array(z.union([z.string().min(1).max(50), z.number().int().nonnegative()])).min(1).max(6);
 export const readIssueSectionInputSchema = z.strictObject({

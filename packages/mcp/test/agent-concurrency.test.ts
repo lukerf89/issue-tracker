@@ -143,6 +143,8 @@ it("keeps every revision trigger installed after all migrations", async () => {
       "issue_labels_delete_revision",
       "issue_labels_insert_revision",
       "issue_labels_update_revision",
+      "issue_relations_delete_revision",
+      "issue_relations_insert_revision",
       "issue_scalar_revision"
     ]);
   } finally { await f.close(); }

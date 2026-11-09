@@ -83,6 +83,9 @@ export function serializeIssue(
     children?: IssueReference[];
     blockedBy?: IssueReference[];
     blocks?: IssueReference[];
+    related?: IssueReference[];
+    followUpOf?: IssueReference[];
+    followUps?: IssueReference[];
     comments?: Array<Comment & { author: Actor }>;
     commentCount?: number;
     hasMoreComments?: boolean;
@@ -102,6 +105,15 @@ export function serializeIssue(
       : {}),
     ...(hasOwn(issue, "blocks")
       ? { blocks: (issue.blocks ?? []).map(serializeIssueReference) }
+      : {}),
+    ...(hasOwn(issue, "related")
+      ? { related: (issue.related ?? []).map(serializeIssueReference) }
+      : {}),
+    ...(hasOwn(issue, "followUpOf")
+      ? { followUpOf: (issue.followUpOf ?? []).map(serializeIssueReference) }
+      : {}),
+    ...(hasOwn(issue, "followUps")
+      ? { followUps: (issue.followUps ?? []).map(serializeIssueReference) }
       : {}),
     ...(hasOwn(issue, "comments")
       ? { comments: (issue.comments ?? []).map(serializeComment) }
@@ -168,6 +180,9 @@ const ISSUE_PROJECTION_KEY_ORDER = [
   "children",
   "blockedBy",
   "blocks",
+  "related",
+  "followUpOf",
+  "followUps",
   "estimate",
   "dueDate",
   "sortOrder",

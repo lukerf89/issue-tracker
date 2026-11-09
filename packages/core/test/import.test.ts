@@ -47,6 +47,7 @@ describe("importSnapshot", () => {
     try {
       const snapshot = exportSnapshot(source.context);
       const child = snapshot.issues.find((issue) => issue.parentId !== null);
+      expect(snapshot.issueRelations.map((relation) => relation.kind)).toEqual(["follow_up", "related"]);
       const parentComment = snapshot.comments.find((comment) => comment.parentId === null);
 
       expect(child).toBeDefined();
@@ -66,6 +67,7 @@ describe("importSnapshot", () => {
         labels: 2,
         issueLabels: 2,
         issueDependencies: 1,
+        issueRelations: 2,
         issueCriteria: 0,
         issueBlockers: 0,
         comments: 2,
@@ -279,6 +281,7 @@ describe("importSnapshot", () => {
         labels: [],
         issueLabels: [],
         issueDependencies: [],
+        issueRelations: [],
         issueCriteria: [],
         issueBlockers: [],
         comments: [],
@@ -405,7 +408,7 @@ function populatedContext() {
   });
 
   context.context.clock = fixedClock("2026-05-01T00:03:30.000Z");
-  updateIssue(context.context, child.identifier, { blockedBy: [parent.identifier] });
+  updateIssue(context.context, child.identifier, { blockedBy: [parent.identifier], related: [parent.identifier], followUpOf: [parent.identifier] });
 
   context.context.clock = fixedClock("2026-05-01T00:04:00.000Z");
   const comment = addComment(context.context, {

@@ -232,8 +232,10 @@ Issue updates require at least one supplied field (empty arrays alone do not cou
 Use either a reference (`team`, `state`, `assignee`, `project`, `cycle`, `parent`)
 or its `Id` alias, never both. References accept the names/handles/identifiers
 advertised by each tool; IDs are exact. Omit a field to preserve it; explicit
-`null` clears a nullable field. `labels`, `blockedBy`, and `blocks` add entries;
-use the corresponding remove fields to remove them. Page limits are integers
+`null` clears a nullable field. `labels`, `blockedBy`, `blocks`, `related`, and `followUpOf` add
+entries; use the corresponding remove fields to remove them. `related` (symmetric) and
+`followUpOf` (directional; the other side reads `followUps`) are non-blocking links: they never
+affect progress, blockers, children, or `ready`. Page limits are integers
 from 1 through 250 (paginated issue reads default to 50). Search splits free text
 into alphanumeric tokens and ANDs their prefix matches; it does not execute FTS
 operators supplied in the query.
@@ -287,7 +289,7 @@ handles are explicit null; archived actor references remain readable.
 ### Finding actionable work
 
 `list_issues` and `search` accept `ready`, `stateTypes` (workflow categories, any of),
-`parent` (null or `--no-parent` means no parent), `blockedBy`, `blocks`, `repository`, `updatedSince`, inclusive `dueFrom`
+`parent` (null or `--no-parent` means no parent), `blockedBy`, `blocks`, `related`, `followUpOf`, `repository`, `updatedSince`, inclusive `dueFrom`
 and `dueTo`, and `sort` (`identifier`, `priority`, `updatedAt`). Saved views retain
 these filters. Corresponding CLI flags use kebab-case; `--not-ready` selects the
 complement of readiness. CLI `issue search` accepts the same filter flags as

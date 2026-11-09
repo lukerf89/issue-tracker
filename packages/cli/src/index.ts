@@ -654,6 +654,8 @@ export function createProgram(): Command {
     .option("--parent <issue>", "parent issue identifier or id")
     .option("--blocked-by <issue>", "issue that blocks this one (repeatable)", collectValues, [])
     .option("--blocks <issue>", "issue that this one blocks (repeatable)", collectValues, [])
+    .option("--related <issue>", "link a related issue, non-blocking (repeatable)", collectValues, [])
+    .option("--follow-up-of <issue>", "mark this issue as a follow-up of another, non-blocking (repeatable)", collectValues, [])
     .option("--priority <number>", "priority", parseInteger)
     .option("--assignee <actor>", "assignee id or handle")
     .option("--state <state>", "workflow state")
@@ -813,6 +815,10 @@ export function createProgram(): Command {
     .option("--remove-blocked-by <issue>", "remove a blocking issue (repeatable)", collectValues, [])
     .option("--blocks <issue>", "add an issue this one blocks (repeatable)", collectValues, [])
     .option("--remove-blocks <issue>", "remove an issue this one blocks (repeatable)", collectValues, [])
+    .option("--related <issue>", "link a related issue, non-blocking (repeatable)", collectValues, [])
+    .option("--remove-related <issue>", "remove a related link (repeatable)", collectValues, [])
+    .option("--follow-up-of <issue>", "mark this issue as a follow-up of another, non-blocking (repeatable)", collectValues, [])
+    .option("--remove-follow-up-of <issue>", "remove a follow-up-of link (repeatable)", collectValues, [])
     .option("--label <label>", "add label by name or id", collectValues, [])
     .option("--remove-label <label>", "remove label by name or id", collectValues, [])
     .option("--estimate <number>", "estimate", parseInteger)
@@ -1475,6 +1481,8 @@ function issueCreateInput(
     labels: stringArrayOption(options.label),
     blockedBy: stringArrayOption(options.blockedBy),
     blocks: stringArrayOption(options.blocks),
+    related: stringArrayOption(options.related),
+    followUpOf: stringArrayOption(options.followUpOf),
     idempotencyKey: stringOption(options.idempotencyKey)
   });
 }
@@ -1513,6 +1521,8 @@ function issueListFilters(options: Record<string, unknown>, defaultTeam?: string
     parent: options.parent === false ? null : nullableStringOption(options.parent),
     blockedBy: stringOption(options.blockedBy),
     blocks: stringOption(options.blocks),
+    related: stringOption(options.related),
+    followUpOf: stringOption(options.followUpOf),
     repository: stringOption(options.repository),
     updatedSince: stringOption(options.updatedSince),
     dueFrom: stringOption(options.dueFrom),
@@ -1652,6 +1662,10 @@ function issueUpdateInput(options: Record<string, unknown>): UpdateIssueInput {
     removeBlockedBy: stringArrayOption(options.removeBlockedBy),
     blocks: stringArrayOption(options.blocks),
     removeBlocks: stringArrayOption(options.removeBlocks),
+    related: stringArrayOption(options.related),
+    removeRelated: stringArrayOption(options.removeRelated),
+    followUpOf: stringArrayOption(options.followUpOf),
+    removeFollowUpOf: stringArrayOption(options.removeFollowUpOf),
     estimate,
     dueDate
   }));

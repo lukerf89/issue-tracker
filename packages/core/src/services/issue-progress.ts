@@ -6,6 +6,7 @@ import { AppError, AppErrorCode } from "../errors.js";
 import { uuid } from "../ids.js";
 import { getIssueProgressInputSchema, updateIssueProgressInputSchema, type GetIssueProgressInput, type UpdateIssueProgressInput } from "../schemas/issue-progress.js";
 import { appendActivityInTransaction } from "./activity.js";
+import { getIssueRelationReferences } from "./issue-relations.js";
 import { assertIssueRevision } from "./issue-revision.js";
 
 type Operation = ReturnType<typeof updateIssueProgressInputSchema.parse>["operations"][number];
@@ -97,6 +98,23 @@ function progressFor(context: ServiceContext, issueId: string) {
   return { criteria, blockers, dependencyBlockers };
 }
 
+// Informational only: relations never count as blockers, children, or criteria.
+function relationSummaries(context: ServiceContext, issueId: string) {
+  const refs = getIssueRelationReferences(context, issueId);
+  const summarize = (list: typeof refs.related) => {
+    if (list.length === 0) return [];
+    const rows = context.db.select({ id: issues.id, identifier: issues.identifier, archivedAt: issues.archivedAt, state: workflowStates.name })
+      .from(issues).innerJoin(workflowStates, eq(workflowStates.id, issues.stateId))
+      .where(inArray(issues.id, list.map((ref) => ref.id))).all();
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    return list.map((ref) => {
+      const row = byId.get(ref.id)!;
+      return { identifier: row.identifier, state: row.state, archived: row.archivedAt !== null };
+    });
+  };
+  return { related: summarize(refs.related), followUpOf: summarize(refs.followUpOf), followUps: summarize(refs.followUps) };
+}
+
 function deliveryLinks(context: ServiceContext, issueId: string) {
   return context.db.query.attachments.findMany({ where: and(eq(attachments.issueId, issueId), inArray(attachments.kind, ["branch", "commit", "pr"])), orderBy: [asc(attachments.createdAt), asc(attachments.id)] }).sync().map((row) => ({ kind: row.kind, title: row.title, url: row.url, branchName: row.branchName, commitSha: row.commitSha }));
 }
@@ -148,7 +166,8 @@ export function getIssueProgress(context: ServiceContext, input: GetIssueProgres
       dependencyBlockers: own.dependencyBlockers,
       children: page, childCount, nextChildOffset: parsed.childOffset + page.length < childCount ? parsed.childOffset + page.length : null,
       statusCounts: counts,
-      remainingCriteria, unresolvedBlockers, links
+      remainingCriteria, unresolvedBlockers, links,
+      ...relationSummaries(tx, issue.id)
     };
   });
 }
