@@ -3,7 +3,7 @@ import { existsSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 
 import {
-  assertContained, claimRunAction, completeParticipantAction, completeParticipantActionInputSchema, completeRunAction, confirmRunStopped, engineHealthFingerprint, engineHealthFresh, failRunAction, getEngineHealth, resolveEngineHealthTtlMs, getRun, heartbeatRunAction, heartbeatRunParticipant, heartbeatSupervisor, listRuns, markRunStalled, recordArtifact, recordEngineHealth,
+  assertContained, claimRunAction, completeParticipantAction, completeParticipantActionInputSchema, completeRunAction, confirmRunStopped, engineHealthFingerprint, engineHealthFresh, failRunAction, getEngineHealth, listProfiles, resolveEngineHealthTtlMs, getRun, heartbeatRunAction, heartbeatRunParticipant, heartbeatSupervisor, listRuns, markRunStalled, recordArtifact, recordEngineHealth,
   recordParticipantProcess, recordProcessExit, recordProviderEvent, recordReviewFinding, recordVerification, registerSupervisor, releaseExpiredRunActions, resolveReviewFindings, startRunParticipant, workContextForPrompt,
   type EngineDefinition, type ServiceContext
 } from "@issue-tracker/core";
@@ -264,7 +264,11 @@ export class Supervisor {
   }
 
   private async refreshEngineHealth() {
+    // Health only gates run preview, which resolves engines from live profiles. Probing engines no
+    // profile references (e.g. an archived Opus profile's engine) is a model call spent for nothing.
+    const referenced = new Set(listProfiles(this.options.context).flatMap((profile) => Object.values(profile.configuration.roles)));
     for (const [engineName, engine] of Object.entries(this.options.engines).sort(([left], [right]) => left.localeCompare(right))) {
+      if (!referenced.has(engineName)) continue;
       const fingerprint = engineHealthFingerprint(engineName, engine);
       const existing = getEngineHealth(this.options.context, engineName, fingerprint);
       if (engineHealthFresh(existing, this.options.context.clock.now(), this.options.engineHealthTtlMs ?? resolveEngineHealthTtlMs())) continue;
