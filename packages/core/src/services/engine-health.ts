@@ -14,6 +14,22 @@ export const engineHealthSnapshotSchema = z.object({
 
 export type EngineHealthSnapshot = z.infer<typeof engineHealthSnapshotSchema>;
 
+/** Every probe is a real model call, so healthy results are trusted for hours rather than minutes. */
+export const DEFAULT_ENGINE_HEALTH_TTL_MS = 6 * 60 * 60_000;
+/** An unhealthy result is re-probed sooner so a transient outage does not block runs for the full TTL. */
+export const FAILED_ENGINE_HEALTH_TTL_MS = 15 * 60_000;
+
+export function resolveEngineHealthTtlMs(env: NodeJS.ProcessEnv = process.env) {
+  const configured = Number(env.ISSUE_TRACKER_ENGINE_HEALTH_TTL_MS);
+  return Number.isInteger(configured) && configured > 0 ? configured : DEFAULT_ENGINE_HEALTH_TTL_MS;
+}
+
+export function engineHealthFresh(snapshot: EngineHealthSnapshot | null, now: Date, ttlMs: number) {
+  if (!snapshot) return false;
+  const healthy = snapshot.installed && snapshot.authenticated && snapshot.modelAccessible && !snapshot.diagnosticCode;
+  return now.getTime() - Date.parse(snapshot.checkedAt) <= (healthy ? ttlMs : Math.min(ttlMs, FAILED_ENGINE_HEALTH_TTL_MS));
+}
+
 export function engineHealthFingerprint(name: string, engine: EngineDefinition) {
   return createHash("sha256").update(stableStringify({ name, adapter: engine.adapter, executable: engine.executable, model: engine.model, reasoningEffort: engine.reasoningEffort ?? null, sandbox: engine.sandbox ?? null, writableRoots: [...(engine.writableRoots ?? [])].sort(), permissionMode: engine.permissionMode, envNames: [...engine.envNames].sort() })).digest("hex");
 }

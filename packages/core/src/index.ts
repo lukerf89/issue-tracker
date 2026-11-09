@@ -17,7 +17,7 @@ export {
   type EngineCatalog,
   type EngineDefinition
 } from "./schemas/engine.js";
-export { engineHealthSnapshotSchema, engineHealthFingerprint, recordEngineHealth, getEngineHealth, listEngineHealth, engineHealthProblem, type EngineHealthSnapshot } from "./services/engine-health.js";
+export { engineHealthSnapshotSchema, engineHealthFingerprint, recordEngineHealth, getEngineHealth, listEngineHealth, engineHealthProblem, engineHealthFresh, resolveEngineHealthTtlMs, DEFAULT_ENGINE_HEALTH_TTL_MS, FAILED_ENGINE_HEALTH_TTL_MS, type EngineHealthSnapshot } from "./services/engine-health.js";
 export {
   commandSpecSchema,
   addRepositoryInputSchema,
