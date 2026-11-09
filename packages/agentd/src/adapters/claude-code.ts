@@ -37,12 +37,17 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
   readonly capabilities = { resume: true, redirect: false, interactivePermissions: true, structuredOutput: true, childParticipants: false, usage: true };
 
   async probe(input: ProviderProbe) {
+    // A probe only needs to prove auth + model access. Running in an empty directory with user MCP
+    // servers, settings, skills, built-in tools and the default system prompt stripped drops it from
+    // ~150K tokens to under 1K (the Airtable MCP schema alone is ~140K).
+    const probeDirectory = mkdtempSync(join(tmpdir(), "tracker-probe-"));
     try {
       const schema = participantResultOutputSchema("claude-code", "orchestrator");
-      const result = await runProcess(input.executable, ["--print", "--output-format", "json", "--model", input.model, "--json-schema", JSON.stringify(schema), healthPrompt("orchestrator")], { cwd: process.cwd(), env: providerEnvironment(input.env) });
+      const result = await runProcess(input.executable, [...probeIsolationArgs(), "--print", "--output-format", "json", "--model", input.model, "--json-schema", JSON.stringify(schema), healthPrompt("orchestrator")], { cwd: probeDirectory, env: providerEnvironment(input.env) });
       const failure = providerFailure(result.exitCode, `${result.stdout}\n${result.stderr}`);
       return healthFromFailure(failure);
     } catch { return { installed: false, authenticated: false, modelAccessible: false, diagnosticCode: "engine_not_installed", remediation: "Install Claude Code or correct the configured executable." }; }
+    finally { rmSync(probeDirectory, { recursive: true, force: true }); }
   }
 
   async run(launch: ProviderLaunch, signal?: AbortSignal) {
@@ -100,6 +105,10 @@ function explicitModel(events: unknown[]) {
 
 function invalidResultFailure(exitCode: number | null, candidate: unknown, structuredResult: Record<string, unknown> | null) {
   return exitCode === 0 && candidate !== undefined && structuredResult === null ? { code: "provider_result_invalid" as const, message: "The provider returned a result that did not match the participant contract." } : null;
+}
+
+export function probeIsolationArgs() {
+  return ["--strict-mcp-config", "--mcp-config", JSON.stringify({ mcpServers: {} }), "--setting-sources", "", "--disable-slash-commands", "--tools", "", "--system-prompt", "Answer exactly as instructed."];
 }
 
 function healthPrompt(role: string) { return `Return only this structured no-op result: ${JSON.stringify({ role, summary: "Provider health check", files: [], tests: [], risks: [], findings: [], verifiedTestsPassed: true, riskNotes: [] })}`; }
