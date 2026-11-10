@@ -70,6 +70,7 @@ export const workContextSchema = z.strictObject({
     issue: revisionRefSchema,
     parent: revisionRefSchema.nullable(),
     blockers: z.array(revisionRefSchema),
+    relations: z.array(revisionRefSchema).optional(),
     comments: workContextCommentWatermarkSchema,
     repositories: z.strictObject({
       routingFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
@@ -135,7 +136,7 @@ export const workContextSchema = z.strictObject({
   }))
 });
 
-const revisionChangeSchema = (kind: "issue" | "parent" | "blocker") => z.strictObject({
+const revisionChangeSchema = (kind: "issue" | "parent" | "blocker" | "relation") => z.strictObject({
   kind: z.literal(kind),
   identifier: z.string().min(1),
   change: z.enum(["added", "removed", "changed"]),
@@ -145,6 +146,7 @@ const revisionChangeSchema = (kind: "issue" | "parent" | "blocker") => z.strictO
 
 export const workContextChangeSchema = z.discriminatedUnion("kind", [
   revisionChangeSchema("blocker"),
+  revisionChangeSchema("relation"),
   revisionChangeSchema("issue"),
   revisionChangeSchema("parent"),
   z.strictObject({

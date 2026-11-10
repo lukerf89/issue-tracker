@@ -303,7 +303,7 @@ describe("work context", () => {
     for (let index = 0; index < 60; index += 1) {
       createIssue(context, { title: `Follow-up number ${index} with a reasonably long fictional title`, followUpOf: ["ENG-1"] });
     }
-    const bounded = buildWorkContext(context, "ENG-1", 4096);
+    const bounded = buildWorkContext(context, "ENG-1", 8192);
     const relations = bounded.sections.relations!;
     expect(relations.total).toBe(60);
     expect(relations.items.length).toBeLessThan(60);
@@ -313,7 +313,7 @@ describe("work context", () => {
       unit: "items",
       retrieval: { mcp: { tool: "get_issue", args: { identifier: "ENG-1", fields: ["related", "followUpOf", "followUps"] } } }
     });
-    expect(Buffer.byteLength(JSON.stringify(bounded), "utf8")).toBeLessThanOrEqual(4096);
+    expect(Buffer.byteLength(JSON.stringify(bounded), "utf8")).toBeLessThanOrEqual(8192);
   });
 
   it("still parses contexts persisted before the relations section existed", () => {

@@ -137,6 +137,7 @@ function sourceRevisionsOf(sources: WorkSources): WorkContext["sourceRevisions"]
     issue: { identifier: sources.issue.identifier, revision: sources.issue.revision },
     parent: sources.parent ? { identifier: sources.parent.issue.identifier, revision: sources.parent.issue.revision } : null,
     blockers: sources.blockers.map(({ issue }) => ({ identifier: issue.identifier, revision: issue.revision })).sort((left, right) => compareIdentifiers(left.identifier, right.identifier)),
+    relations: [...new Map(sources.relations.map(({ issue }) => [issue.identifier, { identifier: issue.identifier, revision: issue.revision }])).values()].sort((left, right) => compareIdentifiers(left.identifier, right.identifier)),
     comments: {
       count: sources.decisions.length + sources.recentComments.length,
       decisionCount: sources.decisions.length,
@@ -408,6 +409,16 @@ export function workContextStaleness(stored: WorkContext["sourceRevisions"], cur
     else if (after !== before) changes.push({ kind: "blocker", identifier, change: "changed", before, after });
   }
   for (const [identifier, after] of currentBlockers) if (!storedBlockers.has(identifier)) changes.push({ kind: "blocker", identifier, change: "added", before: null, after });
+  const storedRelations = new Map((stored.relations ?? []).map((entry) => [entry.identifier, entry.revision]));
+  const currentRelations = new Map((current.relations ?? []).map((entry) => [entry.identifier, entry.revision]));
+  if (stored.relations !== undefined) {
+    for (const [identifier, before] of storedRelations) {
+      const after = currentRelations.get(identifier);
+      if (after === undefined) changes.push({ kind: "relation", identifier, change: "removed", before, after: null });
+      else if (after !== before) changes.push({ kind: "relation", identifier, change: "changed", before, after });
+    }
+    for (const [identifier, after] of currentRelations) if (!storedRelations.has(identifier)) changes.push({ kind: "relation", identifier, change: "added", before: null, after });
+  }
   if (stableStringify(stored.comments) !== stableStringify(current.comments)) changes.push({ kind: "comments", before: stored.comments, after: current.comments });
   const storedRouting = stored.repositories, currentRouting = current.repositories;
   if (storedRouting.routingFingerprint !== currentRouting.routingFingerprint) {
