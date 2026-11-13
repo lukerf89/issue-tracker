@@ -28,6 +28,7 @@ const tableNames = [
   "labels",
   "issue_labels",
   "issue_dependencies",
+  "issue_relations",
   "issue_criteria",
   "issue_blockers",
   "repositories",
@@ -368,6 +369,30 @@ describe("core database foundation", () => {
       expect(db.query.attachments.findFirst().sync()).toMatchObject({ id: "attachment-before-runs", title: "Fictional design" });
       expect(db.query.activity.findFirst().sync()).toMatchObject({ id: "activity-before-runs", action: "linked", data: { title: "Fictional design" } });
       expect(db.query.orchestrationProfiles.findFirst().sync()).toMatchObject({ name: "issue-delivery", isDefault: true, isBuiltin: true });
+    } finally { db.$client.close(); }
+  });
+
+  it("adds issue relation storage on a populated database without rewriting existing rows", () => {
+    const db = openTempDb();
+    try {
+      const journal = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../src/migrations/meta/_journal.json"), "utf8")) as { entries: Array<{ tag: string }> };
+      const before = journal.entries.map((entry) => entry.tag).filter((tag) => tag !== "0014_issue_relations");
+      applyMigrations(db, { migrationsFolder: partialMigrationsFolder(before) });
+      insertIssueFixture(db);
+      const issueBefore = db.$client.prepare("select * from issues").all();
+      expect(listUserTables(db)).not.toContain("issue_relations");
+
+      applyMigrations(db);
+
+      expect(db.$client.prepare("select * from issues").all()).toEqual(issueBefore);
+      expect(db.$client.prepare("select count(*) as n from issue_relations").get()).toEqual({ n: 0 });
+      // Revision triggers fire for both endpoints; the self-link and canonical-order checks hold.
+      db.$client.prepare("insert into issues (id, identifier, team_id, number, title, state_id, creator_id, created_at, updated_at) values ('issue-eng-2', 'ENG-2', 'team-eng', 2, 'Second', 'state-todo', 'actor-human', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')").run();
+      db.$client.prepare("insert into issue_relations (kind, source_issue_id, target_issue_id, created_at) values ('follow_up', 'issue-eng-1', 'issue-eng-2', '2026-01-01T00:00:00.000Z')").run();
+      const revisions = db.$client.prepare("select id, revision from issues order by id").all();
+      expect(revisions).toEqual([{ id: "issue-eng-1", revision: 2 }, { id: "issue-eng-2", revision: 2 }]);
+      expect(() => db.$client.prepare("insert into issue_relations (kind, source_issue_id, target_issue_id, created_at) values ('related', 'issue-eng-1', 'issue-eng-1', 'x')").run()).toThrow();
+      expect(() => db.$client.prepare("insert into issue_relations (kind, source_issue_id, target_issue_id, created_at) values ('related', 'issue-eng-2', 'issue-eng-1', 'x')").run()).toThrow();
     } finally { db.$client.close(); }
   });
 });

@@ -58,6 +58,8 @@ export const createIssueInputSchema = z.strictObject({
   labels: z.array(nonEmptyStringSchema).optional().describe("Add labels by name or ID; does not replace existing labels."),
   blockedBy: z.array(nonEmptyStringSchema).optional().describe("Add blocking issue identifiers or IDs; use removeBlockedBy to remove edges."),
   blocks: z.array(nonEmptyStringSchema).optional().describe("Add issues this one blocks, by identifier or ID; use removeBlocks to remove edges."),
+  related: z.array(nonEmptyStringSchema).optional().describe("Link issues as related (symmetric, non-blocking), by identifier or ID."),
+  followUpOf: z.array(nonEmptyStringSchema).optional().describe("Mark this issue as a follow-up of these issues (non-blocking), by identifier or ID."),
   // Bounded; blank/whitespace keys are normalized to "no key" by the service, so an empty
   // string stays back-compatible with today's keyless create rather than erroring.
   idempotencyKey: z.string().max(255).nullable().optional()
@@ -70,6 +72,8 @@ export const listIssueFiltersSchema = z.strictObject({
   parent: optionalNullableStringSchema,
   blockedBy: nonEmptyStringSchema.optional(),
   blocks: nonEmptyStringSchema.optional(),
+  related: nonEmptyStringSchema.optional().describe("Issues linked as related to this issue (identifier or ID)."),
+  followUpOf: nonEmptyStringSchema.optional().describe("Issues that are follow-ups of this issue (identifier or ID)."),
   repository: nonEmptyStringSchema.optional().describe("Effective repository ID/name; issue overrides replace project routing."),
   updatedSince: z.iso.datetime({ offset: true }).optional(),
   dueFrom: dateOnlyStringSchema.optional(),
@@ -122,7 +126,11 @@ export const updateIssueInputSchema = z.strictObject({
   blockedBy: z.array(nonEmptyStringSchema).optional().describe("Add blocking issue identifiers or IDs; use removeBlockedBy to remove edges."),
   removeBlockedBy: z.array(nonEmptyStringSchema).optional().describe("Remove blocking issues by identifier or ID."),
   blocks: z.array(nonEmptyStringSchema).optional().describe("Add issues this one blocks, by identifier or ID; use removeBlocks to remove edges."),
-  removeBlocks: z.array(nonEmptyStringSchema).optional().describe("Remove issues this one blocks, by identifier or ID.")
+  removeBlocks: z.array(nonEmptyStringSchema).optional().describe("Remove issues this one blocks, by identifier or ID."),
+  related: z.array(nonEmptyStringSchema).optional().describe("Link issues as related (symmetric, non-blocking), by identifier or ID."),
+  removeRelated: z.array(nonEmptyStringSchema).optional().describe("Remove related links by identifier or ID."),
+  followUpOf: z.array(nonEmptyStringSchema).optional().describe("Mark this issue as a follow-up of these issues (non-blocking), by identifier or ID."),
+  removeFollowUpOf: z.array(nonEmptyStringSchema).optional().describe("Remove follow-up-of links by identifier or ID.")
 }).superRefine(validateIssueUpdate) satisfies z.ZodType<UpdateIssueInput>;
 
 export const updateIssueToolInputSchema = updateIssueInputSchema.safeExtend({

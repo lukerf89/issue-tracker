@@ -4,7 +4,7 @@ import { getRepository } from "./repository.js";
 import { and, asc, desc, gte, lte, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 
 import { inTransaction, type ServiceContext, type ServiceTransaction } from "../context.js";
-import { actors, issueDependencies, issues, projects, teams, workflowStates, type Actor, type Attachment, type Issue } from "../db/schema.js";
+import { actors, issueDependencies, issueRelations, issues, projects, teams, workflowStates, type Actor, type Attachment, type Issue } from "../db/schema.js";
 import { AppError, AppErrorCode } from "../errors.js";
 import { identifier, uuid } from "../ids.js";
 import { appendActivityInTransaction } from "./activity.js";
@@ -27,6 +27,7 @@ import { getState, resolveDefaultUnstartedState } from "./state.js";
 import { getTeam, getTeamByKey } from "./team.js";
 import { hydrateIssuePageRows } from "./issue-hydrate.js";
 import { issueReference, type IssueReference } from "./issue-reference.js";
+import { getIssueRelationReferences } from "./issue-relations.js";
 
 export type { IssueReference } from "./issue-reference.js";
 
@@ -52,6 +53,8 @@ export interface CreateIssueInput {
   labels?: string[];
   blockedBy?: string[];
   blocks?: string[];
+  related?: string[];
+  followUpOf?: string[];
   // Optional, globally-scoped idempotency key. Re-submitting the same key returns the
   // original issue (with `alreadyExisted: true`) instead of filing a duplicate. Absent,
   // null, or blank => no key (today's behavior).
@@ -65,6 +68,8 @@ export interface ListIssueFilters {
   parent?: string | null;
   blockedBy?: string;
   blocks?: string;
+  related?: string;
+  followUpOf?: string;
   repository?: string;
   updatedSince?: string;
   dueFrom?: string;
@@ -105,6 +110,9 @@ export const ISSUE_PROJECTABLE_FIELDS = [
   "children",
   "blockedBy",
   "blocks",
+  "related",
+  "followUpOf",
+  "followUps",
   "stateId",
   "priority",
   "assigneeId",
@@ -180,6 +188,10 @@ export interface UpdateIssueInput extends IssueWriteOptions {
   removeBlockedBy?: string[];
   blocks?: string[];
   removeBlocks?: string[];
+  related?: string[];
+  removeRelated?: string[];
+  followUpOf?: string[];
+  removeFollowUpOf?: string[];
 }
 
 export interface AssignIssueInput extends IssueWriteOptions {
@@ -200,6 +212,9 @@ export type IssueWithDetails = IssueWithLabels & {
   children: IssueReference[];
   blockedBy: IssueReference[];
   blocks: IssueReference[];
+  related: IssueReference[];
+  followUpOf: IssueReference[];
+  followUps: IssueReference[];
   comments: CommentWithAuthor[];
   commentCount: number;
   hasMoreComments: boolean;
@@ -337,12 +352,20 @@ export function createIssue(context: ServiceContext, input: CreateIssueInput): C
       attachLabelInTransaction(txContext, row.id, label.id);
     }
 
-    for (const blocking of resolveDependencyIssues(txContext, input.blockedBy)) {
+    for (const blocking of resolveLinkedIssues(txContext, input.blockedBy)) {
       applyDependencyEdge(txContext, row, blocking, "blockedBy", "add");
     }
 
-    for (const blocked of resolveDependencyIssues(txContext, input.blocks)) {
+    for (const blocked of resolveLinkedIssues(txContext, input.blocks)) {
       applyDependencyEdge(txContext, row, blocked, "blocks", "add");
+    }
+
+    for (const other of resolveLinkedIssues(txContext, input.related)) {
+      applyRelationEdge(txContext, row, other, "related", "add");
+    }
+
+    for (const other of resolveLinkedIssues(txContext, input.followUpOf)) {
+      applyRelationEdge(txContext, row, other, "followUpOf", "add");
     }
 
     return { ...getIssue(txContext, row.identifier), alreadyExisted: false };
@@ -560,6 +583,11 @@ function issueFilterConditions(
   if (filters.parent !== undefined) conditions.push(filters.parent === null ? isNull(issues.parentId) : eq(issues.parentId, getIssueByIdOrIdentifier(context, filters.parent).id));
   if (filters.blockedBy) conditions.push(sql`${issues.id} in (select blocked_issue_id from issue_dependencies where blocking_issue_id = ${getIssueByIdOrIdentifier(context, filters.blockedBy).id})`);
   if (filters.blocks) conditions.push(sql`${issues.id} in (select blocking_issue_id from issue_dependencies where blocked_issue_id = ${getIssueByIdOrIdentifier(context, filters.blocks).id})`);
+  if (filters.related) {
+    const otherId = getIssueByIdOrIdentifier(context, filters.related).id;
+    conditions.push(sql`${issues.id} in (select target_issue_id from issue_relations where kind = 'related' and source_issue_id = ${otherId} union select source_issue_id from issue_relations where kind = 'related' and target_issue_id = ${otherId})`);
+  }
+  if (filters.followUpOf) conditions.push(sql`${issues.id} in (select target_issue_id from issue_relations where kind = 'follow_up' and source_issue_id = ${getIssueByIdOrIdentifier(context, filters.followUpOf).id})`);
   if (filters.updatedSince) conditions.push(gte(issues.updatedAt, new Date(filters.updatedSince).toISOString()));
   if (filters.dueFrom) conditions.push(gte(issues.dueDate, filters.dueFrom));
   if (filters.dueTo) conditions.push(lte(issues.dueDate, filters.dueTo));
@@ -644,12 +672,18 @@ export function updateIssue(context: ServiceContext, issueIdentifier: string, in
     const addLabels = resolveIssueLabels(txContext, input.labels);
     const removeLabels = resolveIssueLabels(txContext, input.removeLabels);
     assertNoLabelOverlap(addLabels, removeLabels);
-    const addBlockedBy = resolveDependencyIssues(txContext, input.blockedBy);
-    const removeBlockedBy = resolveDependencyIssues(txContext, input.removeBlockedBy);
-    const addBlocks = resolveDependencyIssues(txContext, input.blocks);
-    const removeBlocks = resolveDependencyIssues(txContext, input.removeBlocks);
+    const addBlockedBy = resolveLinkedIssues(txContext, input.blockedBy);
+    const removeBlockedBy = resolveLinkedIssues(txContext, input.removeBlockedBy);
+    const addBlocks = resolveLinkedIssues(txContext, input.blocks);
+    const removeBlocks = resolveLinkedIssues(txContext, input.removeBlocks);
     assertNoDependencyOverlap(addBlockedBy, removeBlockedBy, "blockedBy");
     assertNoDependencyOverlap(addBlocks, removeBlocks, "blocks");
+    const addRelated = resolveLinkedIssues(txContext, input.related);
+    const removeRelated = resolveLinkedIssues(txContext, input.removeRelated);
+    const addFollowUpOf = resolveLinkedIssues(txContext, input.followUpOf);
+    const removeFollowUpOf = resolveLinkedIssues(txContext, input.removeFollowUpOf);
+    assertNoDependencyOverlap(addRelated, removeRelated, "related");
+    assertNoDependencyOverlap(addFollowUpOf, removeFollowUpOf, "followUpOf");
 
     if (has(input, "title")) addChange(changes, changedFields, "title", input.title!);
     if (has(input, "description")) {
@@ -731,6 +765,22 @@ export function updateIssue(context: ServiceContext, issueIdentifier: string, in
 
     for (const blocked of addBlocks) {
       applyDependencyEdge(txContext, issue, blocked, "blocks", "add");
+    }
+
+    for (const other of removeRelated) {
+      applyRelationEdge(txContext, issue, other, "related", "remove");
+    }
+
+    for (const other of removeFollowUpOf) {
+      applyRelationEdge(txContext, issue, other, "followUpOf", "remove");
+    }
+
+    for (const other of addRelated) {
+      applyRelationEdge(txContext, issue, other, "related", "add");
+    }
+
+    for (const other of addFollowUpOf) {
+      applyRelationEdge(txContext, issue, other, "followUpOf", "add");
     }
 
     return getIssue(txContext, issueIdentifier);
@@ -955,6 +1005,7 @@ function withIssueDetails(
     children: listChildIssueReferences(context, issue.id),
     blockedBy: listBlockedByReferences(context, issue.id),
     blocks: listBlocksReferences(context, issue.id),
+    ...getIssueRelationReferences(context, issue.id),
     comments,
     commentCount,
     hasMoreComments: commentMode === "latest" && (paged
@@ -1049,7 +1100,7 @@ function assertValidParent(
   }
 }
 
-function resolveDependencyIssues(context: ServiceContext, refs: string[] | undefined): Issue[] {
+function resolveLinkedIssues(context: ServiceContext, refs: string[] | undefined): Issue[] {
   if (!refs || refs.length === 0) {
     return [];
   }
@@ -1129,6 +1180,73 @@ function applyDependencyEdge(
       blockedIdentifier: blocked.identifier
     }
   });
+}
+
+/**
+ * Adds or removes a non-blocking relation from the perspective of `subject`. `followUpOf`
+ * means `subject` is a follow-up of `other`; `related` is symmetric and stored once in
+ * canonical (source < target) order. Re-adding or removing a missing link is a no-op.
+ * Both endpoints are touched and get an activity row, so the link is visible from either side.
+ */
+function applyRelationEdge(
+  context: ServiceContext & { db: ServiceTransaction },
+  subject: Issue,
+  other: Issue,
+  kind: "related" | "followUpOf",
+  mode: "add" | "remove"
+): void {
+  const actor = requireActor(context);
+
+  if (subject.id === other.id) {
+    throw new AppError(
+      AppErrorCode.CONSTRAINT_VIOLATION,
+      `Issue ${subject.identifier} cannot be linked to itself.`,
+      { issueId: subject.id, issueIdentifier: subject.identifier, kind }
+    );
+  }
+
+  const [source, target] = kind === "followUpOf"
+    ? [other, subject]
+    : subject.id < other.id ? [subject, other] : [other, subject];
+  const storedKind = kind === "followUpOf" ? "follow_up" : "related";
+  const edgeCondition = and(
+    eq(issueRelations.kind, storedKind),
+    eq(issueRelations.sourceIssueId, source.id),
+    eq(issueRelations.targetIssueId, target.id)
+  );
+  const existing = context.db.query.issueRelations.findFirst({ where: edgeCondition }).sync();
+
+  if (mode === "add") {
+    if (existing) return;
+    context.db
+      .insert(issueRelations)
+      .values({
+        kind: storedKind,
+        sourceIssueId: source.id,
+        targetIssueId: target.id,
+        createdAt: context.clock.now().toISOString()
+      })
+      .run();
+  } else {
+    if (!existing) return;
+    context.db.delete(issueRelations).where(edgeCondition).run();
+  }
+
+  for (const endpoint of [source, target]) {
+    touchIssue(context, endpoint.id);
+    appendActivityInTransaction(context, {
+      issueId: endpoint.id,
+      actorId: actor.id,
+      action: mode === "add" ? "relation_added" : "relation_removed",
+      data: {
+        kind: storedKind,
+        sourceId: source.id,
+        targetId: target.id,
+        sourceIdentifier: source.identifier,
+        targetIdentifier: target.identifier
+      }
+    });
+  }
 }
 
 /**
@@ -1453,7 +1571,7 @@ function assertNoLabelOverlap(addLabels: Array<{ id: string }>, removeLabels: Ar
 function assertNoDependencyOverlap(
   addIssues: Issue[],
   removeIssues: Issue[],
-  direction: "blockedBy" | "blocks"
+  direction: "blockedBy" | "blocks" | "related" | "followUpOf"
 ): void {
   const addedIds = new Set(addIssues.map((issue) => issue.id));
   const overlap = removeIssues.find((issue) => addedIds.has(issue.id));

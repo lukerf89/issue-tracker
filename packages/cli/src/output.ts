@@ -457,6 +457,9 @@ function printIssueRelations(issue: Issue): void {
     children?: IssueReference[];
     blockedBy?: IssueReference[];
     blocks?: IssueReference[];
+    related?: IssueReference[];
+    followUpOf?: IssueReference[];
+    followUps?: IssueReference[];
     comments?: CommentWithAuthor[];
     attachments?: Attachment[];
   };
@@ -487,6 +490,18 @@ function printIssueRelations(issue: Issue): void {
 
     for (const blocked of detail.blocks) {
       lines.push(`  ${pc.bold(blocked.identifier)}  ${blocked.title}`);
+    }
+  }
+
+  for (const [key, label] of [["related", "Related"], ["followUpOf", "Follow-up of"], ["followUps", "Follow-ups"]] as const) {
+    const references = hasOwn(detail, key) ? detail[key] : undefined;
+
+    if (references && references.length > 0) {
+      lines.push(label);
+
+      for (const reference of references) {
+        lines.push(`  ${pc.bold(reference.identifier)}  ${reference.title}`);
+      }
     }
   }
 

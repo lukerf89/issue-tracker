@@ -24,7 +24,7 @@ const stateTypeSchema = z.enum(["backlog", "unstarted", "started", "blocked", "c
 const overrideKindSchema = z.enum(["replace", "additional"]);
 const routingSourceSchema = z.enum(["issue_override", "project"]).nullable();
 const routingStatusSchema = z.enum(["resolved", "ambiguous", "missing"]);
-const sectionNameSchema = z.enum(["task", "acceptanceCriteria", "blockers", "parent", "repositories", "decisions", "recentComments"]);
+const sectionNameSchema = z.enum(["task", "acceptanceCriteria", "blockers", "parent", "repositories", "decisions", "recentComments", "relations"]);
 
 export const workContextRetrievalSchema = z.strictObject({
   mcp: z.strictObject({ tool: z.string().min(1), args: z.record(z.string(), z.unknown()) }),
@@ -70,6 +70,7 @@ export const workContextSchema = z.strictObject({
     issue: revisionRefSchema,
     parent: revisionRefSchema.nullable(),
     blockers: z.array(revisionRefSchema),
+    relations: z.array(revisionRefSchema).optional(),
     comments: workContextCommentWatermarkSchema,
     repositories: z.strictObject({
       routingFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
@@ -114,7 +115,17 @@ export const workContextSchema = z.strictObject({
       }))
     }),
     decisions: z.strictObject({ ...sectionBase, total: z.number().int().nonnegative(), items: z.array(commentItemSchema) }),
-    recentComments: z.strictObject({ ...sectionBase, total: z.number().int().nonnegative(), items: z.array(commentItemSchema) })
+    recentComments: z.strictObject({ ...sectionBase, total: z.number().int().nonnegative(), items: z.array(commentItemSchema) }),
+    // Present only when the issue has related / follow-up links, so contexts for unlinked issues
+    // (and snapshots persisted before relations existed) are unchanged.
+    relations: z.strictObject({
+      ...sectionBase,
+      total: z.number().int().nonnegative(),
+      items: z.array(z.strictObject({
+        relation: z.enum(["related", "followUpOf", "followUp"]),
+        identifier: z.string().min(1), title: z.string(), state: stateSchema, archived: z.boolean()
+      }))
+    }).optional()
   }),
   omissions: z.array(z.strictObject({
     section: sectionNameSchema,
@@ -125,7 +136,7 @@ export const workContextSchema = z.strictObject({
   }))
 });
 
-const revisionChangeSchema = (kind: "issue" | "parent" | "blocker") => z.strictObject({
+const revisionChangeSchema = (kind: "issue" | "parent" | "blocker" | "relation") => z.strictObject({
   kind: z.literal(kind),
   identifier: z.string().min(1),
   change: z.enum(["added", "removed", "changed"]),
@@ -135,6 +146,7 @@ const revisionChangeSchema = (kind: "issue" | "parent" | "blocker") => z.strictO
 
 export const workContextChangeSchema = z.discriminatedUnion("kind", [
   revisionChangeSchema("blocker"),
+  revisionChangeSchema("relation"),
   revisionChangeSchema("issue"),
   revisionChangeSchema("parent"),
   z.strictObject({

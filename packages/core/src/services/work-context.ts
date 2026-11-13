@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 
 import type { ServiceContext } from "../context.js";
 import { actors, agentRuns, comments, issueDependencies, issues, workflowStates, type Issue } from "../db/schema.js";
@@ -7,6 +7,7 @@ import {
   getWorkContextInputSchema, workContextResponseSchema, workContextSchema, WORK_CONTEXT_DEFAULT_MAX_BYTES, WORK_CONTEXT_MAX_CHANGES,
   type GetWorkContextInput, type WorkContext, type WorkContextChange, type WorkContextResponse, type WorkContextRoutingEntry, type WorkContextStaleness
 } from "../schemas/work-context.js";
+import { getIssueRelationReferences } from "./issue-relations.js";
 import { fitStringPrefix, jsonBytes } from "./json-budget.js";
 import { repositoryRoutingForIssue, repositoryRoutingStatus, type RepositoryRoutingCandidate, type RepositoryRoutingSource } from "./repository.js";
 import { stableHash, stableStringify } from "./stable-hash.js";
@@ -43,6 +44,7 @@ interface WorkSources {
   state: StateRef;
   parent: { issue: Issue; state: StateRef } | null;
   blockers: Array<{ issue: Issue; state: StateRef; resolved: boolean }>;
+  relations: Array<{ relation: "related" | "followUpOf" | "followUp"; issue: Issue; state: StateRef }>;
   routing: { source: RepositoryRoutingSource; status: "resolved" | "ambiguous" | "missing"; primaryRepositoryId: string | null; candidates: RepositoryRoutingCandidate[] };
   decisions: CommentSource[];
   recentComments: CommentSource[];
@@ -98,6 +100,17 @@ function loadSources(context: ServiceContext, identifier: string): WorkSources {
     .where(eq(issueDependencies.blockedIssueId, issue.id)).all()
     .map(({ issue: blocker, state }) => ({ issue: blocker, state: { name: state.name, type: state.type }, resolved: state.type === "completed" || state.type === "canceled" }))
     .sort((left, right) => Number(left.resolved) - Number(right.resolved) || compareIdentifiers(left.issue.identifier, right.issue.identifier));
+  const relationRefs = getIssueRelationReferences(context, issue.id);
+  const relationList = ([["related", relationRefs.related], ["followUpOf", relationRefs.followUpOf], ["followUp", relationRefs.followUps]] as const)
+    .flatMap(([relation, refs]) => refs.map((ref) => ({ relation, id: ref.id })));
+  const relationRows = new Map(relationList.length === 0 ? [] : context.db.select({ issue: issues, state: workflowStates }).from(issues)
+    .innerJoin(workflowStates, eq(workflowStates.id, issues.stateId))
+    .where(inArray(issues.id, relationList.map((entry) => entry.id))).all()
+    .map((row) => [row.issue.id, row]));
+  const relations = relationList.map(({ relation, id }) => {
+    const row = relationRows.get(id)!;
+    return { relation, issue: row.issue, state: { name: row.state.name, type: row.state.type } };
+  });
   const history = context.db.select({ id: comments.id, author: actors.handle, createdAt: comments.createdAt, body: comments.body }).from(comments)
     .leftJoin(actors, eq(actors.id, comments.authorId))
     .where(eq(comments.issueId, issue.id)).orderBy(desc(comments.createdAt), desc(comments.id)).all();
@@ -106,6 +119,7 @@ function loadSources(context: ServiceContext, identifier: string): WorkSources {
     state: stateOf(context, issue.stateId),
     parent: parentRow ? { issue: parentRow, state: stateOf(context, parentRow.stateId) } : null,
     blockers,
+    relations,
     routing: repositoryRoutingForIssue(context, issue),
     decisions: history.filter((comment) => DECISION_PATTERN.test(comment.body)),
     recentComments: history.filter((comment) => !DECISION_PATTERN.test(comment.body)),
@@ -123,6 +137,7 @@ function sourceRevisionsOf(sources: WorkSources): WorkContext["sourceRevisions"]
     issue: { identifier: sources.issue.identifier, revision: sources.issue.revision },
     parent: sources.parent ? { identifier: sources.parent.issue.identifier, revision: sources.parent.issue.revision } : null,
     blockers: sources.blockers.map(({ issue }) => ({ identifier: issue.identifier, revision: issue.revision })).sort((left, right) => compareIdentifiers(left.identifier, right.identifier)),
+    relations: [...new Map(sources.relations.map(({ issue }) => [issue.identifier, { identifier: issue.identifier, revision: issue.revision }])).values()].sort((left, right) => compareIdentifiers(left.identifier, right.identifier)),
     comments: {
       count: sources.decisions.length + sources.recentComments.length,
       decisionCount: sources.decisions.length,
@@ -147,7 +162,8 @@ function retrievals(sources: WorkSources): Record<Section, Retrieval> {
       : { mcp: { tool: "get_issue", args: { identifier: id, fields: ["parent"] } }, cli: `tracker issue view ${id} --fields parent --json` },
     repositories: { mcp: { tool: "get_work_context", args: { identifier: id, maxBytes: 65536 } }, cli: `tracker issue context ${id} --max-bytes 65536 --json` },
     decisions: commentPath,
-    recentComments: commentPath
+    recentComments: commentPath,
+    relations: { mcp: { tool: "get_issue", args: { identifier: id, fields: ["related", "followUpOf", "followUps"] } }, cli: `tracker issue view ${id} --fields related,followUpOf,followUps --json` }
   };
 }
 
@@ -159,6 +175,7 @@ interface Fill {
   candidates: number;
   decisions: number;
   comments: number;
+  relations: number;
 }
 
 /**
@@ -177,6 +194,7 @@ function render(sources: WorkSources, maxBytes: number, fill: Fill, usedBytes: n
   const candidates = sources.routing.candidates.slice(0, fill.candidates);
   const decisions = sources.decisions.slice(0, fill.decisions);
   const recent = sources.recentComments.slice(0, fill.comments);
+  const relations = sources.relations.slice(0, fill.relations);
   const commentItem = (comment: CommentSource) => {
     const body = excerpt(comment.body, COMMENT_BODY_LIMIT);
     return { id: comment.id, author: comment.author, createdAt: comment.createdAt, body: body.text, bodyTruncated: body.truncated };
@@ -191,6 +209,7 @@ function render(sources: WorkSources, maxBytes: number, fill: Fill, usedBytes: n
   omit("repositories", "budget", "items", sources.routing.candidates.length - candidates.length);
   omit("decisions", decisions.length < Math.min(DECISION_LIMIT, sources.decisions.length) ? "budget" : "limit", "items", sources.decisions.length - decisions.length);
   omit("recentComments", recent.length < Math.min(RECENT_COMMENT_LIMIT, sources.recentComments.length) ? "budget" : "limit", "items", sources.recentComments.length - recent.length);
+  omit("relations", "budget", "items", sources.relations.length - relations.length);
   // Bodies of included comments are capped at COMMENT_BODY_LIMIT; report the cut characters too.
   const cutCharacters = (included: CommentSource[]) => included.reduce((total, comment) => total + comment.body.length - excerpt(comment.body, COMMENT_BODY_LIMIT).text.length, 0);
   omit("decisions", "limit", "characters", cutCharacters(decisions));
@@ -238,7 +257,14 @@ function render(sources: WorkSources, maxBytes: number, fill: Fill, usedBytes: n
       recentComments: {
         provenance: { source: "comments", ids: recent.map((comment) => comment.id), revision: issue.revision }, retrieval: retrieval.recentComments, truncated: truncated("recentComments"),
         total: sources.recentComments.length, items: recent.map(commentItem)
-      }
+      },
+      ...(sources.relations.length > 0 ? {
+        relations: {
+          provenance: { source: "issue_relations", ids: relations.map((entry) => entry.issue.id), revision: issue.revision }, retrieval: retrieval.relations, truncated: truncated("relations"),
+          total: sources.relations.length,
+          items: relations.map((entry) => ({ relation: entry.relation, identifier: entry.issue.identifier, title: entry.issue.title, state: entry.state, archived: entry.issue.archivedAt !== null }))
+        }
+      } : {})
     },
     omissions
   };
@@ -266,7 +292,7 @@ interface Slot {
 
 function slotsOf(sources: WorkSources): Slot[] {
   const prefix = (text: string, fitsAt: (end: number) => boolean) => fitStringPrefix(text, 0, (slice) => slice.length < text.length && fitsAt(slice.length));
-  const items = (key: "blockers" | "candidates" | "decisions" | "comments", available: number): Slot => ({
+  const items = (key: "blockers" | "candidates" | "decisions" | "comments" | "relations", available: number): Slot => ({
     complete: { [key]: available },
     zero: { [key]: 0 },
     partial: (fitsWith) => {
@@ -297,7 +323,8 @@ function slotsOf(sources: WorkSources): Slot[] {
     },
     items("candidates", sources.routing.candidates.length),
     items("decisions", Math.min(DECISION_LIMIT, sources.decisions.length)),
-    items("comments", Math.min(RECENT_COMMENT_LIMIT, sources.recentComments.length))
+    items("comments", Math.min(RECENT_COMMENT_LIMIT, sources.recentComments.length)),
+    items("relations", sources.relations.length)
   ];
 }
 
@@ -321,7 +348,7 @@ export function buildWorkContext(context: ServiceContext, identifier: string, ma
   const size = (candidate: Fill) => jsonBytes(render(sources, maxBytes, candidate, maxBytes, PLACEHOLDER_FINGERPRINT));
   const fits = (candidate: Fill) => size(candidate) <= maxBytes;
   const slots = slotsOf(sources);
-  const zero: Fill = { descriptionEnd: 0, blockers: 0, parent: false, parentExcerptEnd: 0, candidates: 0, decisions: 0, comments: 0 };
+  const zero: Fill = { descriptionEnd: 0, blockers: 0, parent: false, parentExcerptEnd: 0, candidates: 0, decisions: 0, comments: 0, relations: 0 };
   const complete: Fill = Object.assign({ ...zero }, ...slots.map((slot) => slot.complete));
   let fill: Fill;
   if (fits(complete)) {
@@ -382,6 +409,16 @@ export function workContextStaleness(stored: WorkContext["sourceRevisions"], cur
     else if (after !== before) changes.push({ kind: "blocker", identifier, change: "changed", before, after });
   }
   for (const [identifier, after] of currentBlockers) if (!storedBlockers.has(identifier)) changes.push({ kind: "blocker", identifier, change: "added", before: null, after });
+  const storedRelations = new Map((stored.relations ?? []).map((entry) => [entry.identifier, entry.revision]));
+  const currentRelations = new Map((current.relations ?? []).map((entry) => [entry.identifier, entry.revision]));
+  if (stored.relations !== undefined) {
+    for (const [identifier, before] of storedRelations) {
+      const after = currentRelations.get(identifier);
+      if (after === undefined) changes.push({ kind: "relation", identifier, change: "removed", before, after: null });
+      else if (after !== before) changes.push({ kind: "relation", identifier, change: "changed", before, after });
+    }
+    for (const [identifier, after] of currentRelations) if (!storedRelations.has(identifier)) changes.push({ kind: "relation", identifier, change: "added", before: null, after });
+  }
   if (stableStringify(stored.comments) !== stableStringify(current.comments)) changes.push({ kind: "comments", before: stored.comments, after: current.comments });
   const storedRouting = stored.repositories, currentRouting = current.repositories;
   if (storedRouting.routingFingerprint !== currentRouting.routingFingerprint) {

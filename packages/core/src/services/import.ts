@@ -11,6 +11,7 @@ import {
   config,
   cycles,
   issueDependencies,
+  issueRelations,
   issueCriteria,
   issueBlockers,
   issueRepositories,
@@ -81,6 +82,7 @@ export interface ImportSnapshotSummary {
   labels: number;
   issueLabels: number;
   issueDependencies: number;
+  issueRelations: number;
   issueCriteria: number;
   issueBlockers: number;
   comments: number;
@@ -214,6 +216,13 @@ const issueDependencySnapshotSchema = z.strictObject({
   createdAt: isoTimestampSchema
 });
 
+const issueRelationSnapshotSchema = z.strictObject({
+  kind: z.enum(["related", "follow_up"]),
+  sourceIssueId: z.string(),
+  targetIssueId: z.string(),
+  createdAt: isoTimestampSchema
+});
+
 const issueCriterionSnapshotSchema = z.strictObject({
   id: z.string(), issueId: z.string(), text: z.string(), status: z.enum(["pending", "passed", "failed", "waived"]),
   evidenceUrl: nullableStringSchema, createdAt: isoTimestampSchema, updatedAt: isoTimestampSchema, archivedAt: nullableIsoTimestampSchema
@@ -300,6 +309,7 @@ export const importSnapshotSchema = z.strictObject({
   labels: z.array(labelSnapshotSchema),
   issueLabels: z.array(issueLabelSnapshotSchema),
   issueDependencies: z.array(issueDependencySnapshotSchema).default([]),
+  issueRelations: z.array(issueRelationSnapshotSchema).default([]),
   issueCriteria: z.array(issueCriterionSnapshotSchema).default([]),
   issueBlockers: z.array(issueBlockerSnapshotSchema).default([]),
   comments: z.array(commentSnapshotSchema),
@@ -335,6 +345,7 @@ export function importSnapshot(
 ): ImportSnapshotSummary {
   const parsed = importSnapshotSchema.parse(snapshot);
   assertAcyclicIssueDependencies(parsed.issueDependencies);
+  assertValidIssueRelations(parsed.issueRelations);
   assertAutonomousRunGraph(parsed);
 
   return inTransaction(context, (txContext) => {
@@ -384,6 +395,9 @@ export function importSnapshot(
     }
     if (parsed.issueDependencies.length > 0) {
       txContext.db.insert(issueDependencies).values(parsed.issueDependencies).run();
+    }
+    if (parsed.issueRelations.length > 0) {
+      txContext.db.insert(issueRelations).values(parsed.issueRelations).run();
     }
     if (parsed.issueCriteria.length > 0) txContext.db.insert(issueCriteria).values(parsed.issueCriteria).run();
     if (parsed.issueBlockers.length > 0) txContext.db.insert(issueBlockers).values(parsed.issueBlockers).run();
@@ -479,6 +493,24 @@ function assertAutonomousRunGraph(snapshot: ImportSnapshot): void {
   }
 }
 
+function assertValidIssueRelations(relations: ImportSnapshot["issueRelations"]): void {
+  const seen = new Set<string>();
+  for (const relation of relations) {
+    const { kind, sourceIssueId, targetIssueId } = relation;
+    const key = `${kind}\0${sourceIssueId}\0${targetIssueId}`;
+    if (sourceIssueId === targetIssueId) {
+      throw new AppError(AppErrorCode.VALIDATION_FAILED, "Import snapshot contains an issue related to itself.", { issueId: sourceIssueId, kind });
+    }
+    if (kind === "related" && sourceIssueId > targetIssueId) {
+      throw new AppError(AppErrorCode.VALIDATION_FAILED, "Import snapshot contains a related link that is not in canonical order.", { sourceIssueId, targetIssueId });
+    }
+    if (seen.has(key)) {
+      throw new AppError(AppErrorCode.VALIDATION_FAILED, "Import snapshot contains a duplicate issue relation.", { kind, sourceIssueId, targetIssueId });
+    }
+    seen.add(key);
+  }
+}
+
 function assertAcyclicIssueDependencies(dependencies: ImportSnapshot["issueDependencies"]): void {
   const blockedIssueIdsByBlocker = new Map<string, string[]>();
   const inDegree = new Map<string, number>();
@@ -559,6 +591,7 @@ function existingWorkspaceTables(context: ServiceContext & { db: ServiceTransact
     ["labels", context.db.query.labels.findFirst().sync()],
     ["issue_labels", context.db.query.issueLabels.findFirst().sync()],
     ["issue_dependencies", context.db.query.issueDependencies.findFirst().sync()],
+    ["issue_relations", context.db.query.issueRelations.findFirst().sync()],
     ["issue_criteria", context.db.query.issueCriteria.findFirst().sync()],
     ["issue_blockers", context.db.query.issueBlockers.findFirst().sync()],
     ["comments", context.db.query.comments.findFirst().sync()],
@@ -593,6 +626,7 @@ function clearWorkspace(context: ServiceContext & { db: ServiceTransaction }): v
   context.db.delete(comments).run();
   context.db.delete(issueLabels).run();
   context.db.delete(issueDependencies).run();
+  context.db.delete(issueRelations).run();
   context.db.delete(issueCriteria).run();
   context.db.delete(issueBlockers).run();
   context.db.delete(issues).run();
@@ -672,6 +706,7 @@ function summarizeSnapshot(snapshot: ImportSnapshot, reviewStatesAdded: number):
     labels: snapshot.labels.length,
     issueLabels: snapshot.issueLabels.length,
     issueDependencies: snapshot.issueDependencies.length,
+    issueRelations: snapshot.issueRelations.length,
     issueCriteria: snapshot.issueCriteria.length,
     issueBlockers: snapshot.issueBlockers.length,
     comments: snapshot.comments.length,

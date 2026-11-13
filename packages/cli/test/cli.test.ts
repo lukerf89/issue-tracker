@@ -365,6 +365,7 @@ describe("tracker CLI", () => {
       "labels",
       "issueLabels",
       "issueDependencies",
+      "issueRelations",
       "issueCriteria",
       "issueBlockers",
       "comments",
@@ -2127,9 +2128,9 @@ describe("issue filter flag registration (LF-141)", () => {
       return command.options.map((option) => option.long).sort();
     };
     const filters = [
-      "--assignee", "--blocked-by", "--blocks", "--cycle", "--due-from", "--due-to", "--include-archived",
+      "--assignee", "--blocked-by", "--blocks", "--cycle", "--due-from", "--due-to", "--follow-up-of", "--include-archived",
       "--label", "--no-parent", "--no-project", "--not-ready", "--parent", "--priority", "--project", "--ready",
-      "--repository", "--sort", "--state", "--state-types", "--team", "--unassigned", "--updated-since"
+      "--related", "--repository", "--sort", "--state", "--state-types", "--team", "--unassigned", "--updated-since"
     ];
     expect(longFlags(["issue", "list"])).toEqual(
       [...filters, "--limit", "--view", "--query", "--cursor", "--fields", "--json"].sort()

@@ -15,6 +15,7 @@ import {
   config,
   cycles,
   issueDependencies,
+  issueRelations,
   issueCriteria,
   issueBlockers,
   issueRepositories,
@@ -47,6 +48,7 @@ import {
   type ConfigEntry,
   type Issue,
   type IssueDependency,
+  type IssueRelation,
   type IssueLabel,
   type Milestone,
   type SavedView,
@@ -79,6 +81,7 @@ export interface ExportSnapshot {
   labels: ReturnType<typeof serializeLabel>[];
   issueLabels: SerializedIssueLabel[];
   issueDependencies: SerializedIssueDependency[];
+  issueRelations: SerializedIssueRelation[];
   issueCriteria: Array<typeof issueCriteria.$inferSelect>;
   issueBlockers: Array<typeof issueBlockers.$inferSelect>;
   comments: SerializedComment[];
@@ -170,6 +173,13 @@ interface SerializedIssueDependency {
   createdAt: string;
 }
 
+interface SerializedIssueRelation {
+  kind: "related" | "follow_up";
+  sourceIssueId: string;
+  targetIssueId: string;
+  createdAt: string;
+}
+
 interface SerializedComment {
   id: string;
   issueId: string;
@@ -249,6 +259,9 @@ export function exportSnapshot(context: ServiceContext, options: { includeRawLog
     issueDependencies: context.db.query.issueDependencies.findMany({
       orderBy: [asc(issueDependencies.blockingIssueId), asc(issueDependencies.blockedIssueId)]
     }).sync().map(serializeIssueDependency),
+    issueRelations: context.db.query.issueRelations.findMany({
+      orderBy: [asc(issueRelations.kind), asc(issueRelations.sourceIssueId), asc(issueRelations.targetIssueId)]
+    }).sync().map(serializeIssueRelation),
     issueCriteria: context.db.query.issueCriteria.findMany({ orderBy: [asc(issueCriteria.issueId), asc(issueCriteria.createdAt), asc(issueCriteria.id)] }).sync(),
     issueBlockers: context.db.query.issueBlockers.findMany({ orderBy: [asc(issueBlockers.issueId), asc(issueBlockers.createdAt), asc(issueBlockers.id)] }).sync(),
     comments: context.db.query.comments.findMany({
@@ -379,6 +392,15 @@ function serializeIssueDependency(row: IssueDependency): SerializedIssueDependen
   return {
     blockingIssueId: row.blockingIssueId,
     blockedIssueId: row.blockedIssueId,
+    createdAt: toIso(row.createdAt)
+  };
+}
+
+function serializeIssueRelation(row: IssueRelation): SerializedIssueRelation {
+  return {
+    kind: row.kind,
+    sourceIssueId: row.sourceIssueId,
+    targetIssueId: row.targetIssueId,
     createdAt: toIso(row.createdAt)
   };
 }

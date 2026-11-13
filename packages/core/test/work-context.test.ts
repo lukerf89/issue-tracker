@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  addComment, addRepository, applyMigrations, archiveRepository, associateRepository, buildWorkContext, createIssue, createProject, errorEnvelope,
+  addComment, addRepository, archiveIssue, applyMigrations, archiveRepository, associateRepository, buildWorkContext, createIssue, createProject, errorEnvelope,
   exportSnapshot, getRun, getWorkContext, importSnapshot, init, moveIssue, openDb, parseAcceptanceCriteria, previewRun, readIssueSection,
   resolveIssueRepositories, resolveIssueRepositoryRouting, startRun, updateIssue, workContextForPrompt, workContextSchema,
   type RepositoryInspector, type ServiceContext
@@ -364,6 +364,23 @@ describe("work context contract", () => {
       const changes = getWorkContext(f.context, { identifier: "ENG-1", run: run.id }).staleness!.changes;
       expect(changes.map((change) => [change.kind, "identifier" in change ? change.identifier : null, "change" in change ? change.change : null])).toEqual([
         ["blocker", "ENG-2", "changed"], ["blocker", "ENG-3", "removed"], ["blocker", "ENG-4", "added"], ["issue", "ENG-1", "changed"]
+      ]);
+    } finally { f.close(); }
+  });
+
+  it("reports linked related and follow-up issue changes as snapshot staleness", () => {
+    const f = setup();
+    try {
+      createIssue(f.context, { title: "Fictional follow-up", related: ["ENG-1"] });
+      const live = getWorkContext(f.context, { identifier: "ENG-1" }).context;
+      expect(live.sourceRevisions.relations!.map((entry) => entry.identifier)).toEqual(["ENG-2"]);
+      const run = f.launch();
+      expect(getWorkContext(f.context, { identifier: "ENG-1", run: run.id }).staleness!.stale).toBe(false);
+      moveIssue(f.context, "ENG-2", "Done");
+      archiveIssue(f.context, "ENG-2");
+      const changes = getWorkContext(f.context, { identifier: "ENG-1", run: run.id }).staleness!.changes;
+      expect(changes.filter((change) => change.kind === "relation")).toEqual([
+        { kind: "relation", identifier: "ENG-2", change: "changed", before: live.sourceRevisions.relations![0]!.revision, after: expect.any(Number) }
       ]);
     } finally { f.close(); }
   });

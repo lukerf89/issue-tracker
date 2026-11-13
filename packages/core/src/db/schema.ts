@@ -201,6 +201,33 @@ export const issueDependencies = sqliteTable(
   (table) => [primaryKey({ columns: [table.blockingIssueId, table.blockedIssueId] })]
 );
 
+// `follow_up`: target_issue_id is a follow-up of source_issue_id. `related`: symmetric, stored
+// once in canonical order (source < target). Neither kind carries workflow meaning. Revision
+// triggers live in migrations/0014_issue_relations.sql.
+export const issueRelations = sqliteTable(
+  "issue_relations",
+  {
+    kind: text("kind", { enum: ["related", "follow_up"] }).notNull(),
+    sourceIssueId: text("source_issue_id")
+      .notNull()
+      .references(() => issues.id),
+    targetIssueId: text("target_issue_id")
+      .notNull()
+      .references(() => issues.id),
+    createdAt: text("created_at").notNull()
+  },
+  (table) => [
+    primaryKey({ columns: [table.kind, table.sourceIssueId, table.targetIssueId] }),
+    index("issue_relations_target_idx").on(table.targetIssueId, table.kind),
+    check("issue_relations_kind_check", sql`${table.kind} IN ('related', 'follow_up')`),
+    check("issue_relations_not_self_check", sql`${table.sourceIssueId} <> ${table.targetIssueId}`),
+    check(
+      "issue_relations_related_order_check",
+      sql`${table.kind} <> 'related' OR ${table.sourceIssueId} < ${table.targetIssueId}`
+    )
+  ]
+);
+
 export const issueCriteria = sqliteTable("issue_criteria", {
   id: text("id").primaryKey(),
   issueId: text("issue_id").notNull().references(() => issues.id),
@@ -749,6 +776,8 @@ export type IssueLabel = InferSelectModel<typeof issueLabels>;
 export type NewIssueLabel = InferInsertModel<typeof issueLabels>;
 export type IssueDependency = InferSelectModel<typeof issueDependencies>;
 export type NewIssueDependency = InferInsertModel<typeof issueDependencies>;
+export type IssueRelation = InferSelectModel<typeof issueRelations>;
+export type NewIssueRelation = InferInsertModel<typeof issueRelations>;
 export type Comment = InferSelectModel<typeof comments>;
 export type NewComment = InferInsertModel<typeof comments>;
 export type Actor = InferSelectModel<typeof actors>;

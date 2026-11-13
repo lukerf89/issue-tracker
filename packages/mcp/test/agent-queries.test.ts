@@ -139,6 +139,8 @@ function seedSearchParity(f: AgentFixture) {
   createIssue(f.context, { title: "CI ops runbook", team: "OPS" }); // OPS-1
   moveIssue(f.context, "ENG-2", "In Progress");
   archiveIssue(f.context, "ENG-5");
+  updateIssue(f.context, "ENG-4", { related: ["ENG-6"] });
+  updateIssue(f.context, "ENG-3", { followUpOf: ["ENG-4"] });
   f.context.clock = { now: () => new Date("2026-01-10T00:00:00Z") };
   updateIssue(f.context, "ENG-3", { title: "CI flaky retries fixed" });
 }
@@ -164,6 +166,8 @@ const PARITY_ROWS: ParityRow[] = [
   { key: "parent", mcp: { parent: null }, cli: ["--no-parent"], expected: ["ENG-1", "ENG-3", "ENG-4", "OPS-1"] },
   { key: "blockedBy", mcp: { blockedBy: "ENG-4" }, cli: ["--blocked-by", "ENG-4"], expected: ["ENG-3"] },
   { key: "blocks", mcp: { blocks: "ENG-3" }, cli: ["--blocks", "ENG-3"], expected: ["ENG-4"] },
+  { key: "related", mcp: { related: "ENG-6" }, cli: ["--related", "ENG-6"], expected: ["ENG-4"] },
+  { key: "followUpOf", mcp: { followUpOf: "ENG-4" }, cli: ["--follow-up-of", "ENG-4"], expected: ["ENG-3"] },
   { key: "repository", mcp: { repository: "build" }, cli: ["--repository", "build"], expected: ["ENG-1"] },
   { key: "updatedSince", mcp: { updatedSince: "2026-01-05T00:00:00Z" }, cli: ["--updated-since", "2026-01-05T00:00:00Z"], expected: ["ENG-3"] },
   { key: "dueFrom", mcp: { dueFrom: "2026-03-01" }, cli: ["--due-from", "2026-03-01"], expected: ["ENG-2"] },
